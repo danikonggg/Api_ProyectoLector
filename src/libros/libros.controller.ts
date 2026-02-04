@@ -10,6 +10,7 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
   Body,
   Param,
   ParseIntPipe,
@@ -17,9 +18,14 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+  Request,
   HttpCode,
   HttpStatus,
+  StreamableFile,
 } from '@nestjs/common';
+import { createReadStream } from 'fs';
 import { FileInterceptor } from '@nestjs/platform-express';
 import * as multer from 'multer';
 import {
@@ -33,6 +39,8 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
+import { AdminOrDirectorGuard } from '../auth/guards/admin-or-director.guard';
+import { AdminOrDirectorOrAlumnoGuard } from '../auth/guards/admin-or-director-or-alumno.guard';
 import { LibrosService } from './libros.service';
 import { CargarLibroDto } from './dto/cargar-libro.dto';
 
@@ -40,7 +48,7 @@ const PDF_MAX_SIZE = 50 * 1024 * 1024; // 50 MB
 
 @ApiTags('Libros')
 @Controller('libros')
-@UseGuards(JwtAuthGuard, AdminGuard)
+@UseGuards(JwtAuthGuard)
 @ApiBearerAuth('JWT-auth')
 export class LibrosController {
   constructor(private readonly librosService: LibrosService) {}
@@ -50,6 +58,7 @@ export class LibrosController {
    * Subir PDF + metadatos. Backend extrae texto, limpia, segmenta, guarda.
    */
   @Post('cargar')
+  @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(
     FileInterceptor('pdf', {
@@ -98,9 +107,10 @@ export class LibrosController {
 
   /**
    * GET /libros
-   * Listar todos los libros.
+   * Listar todos los libros (solo admin).
    */
   @Get()
+  @UseGuards(AdminGuard)
   @ApiOperation({ summary: 'Listar libros. Requiere admin.' })
   @ApiResponse({ status: 200, description: 'Lista de libros.' })
   @ApiResponse({ status: 401, description: 'No autenticado.' })
@@ -110,17 +120,84 @@ export class LibrosController {
   }
 
   /**
+   * GET /libros/:id/pdf
+   * Descargar el PDF. Admin, director o alumno (solo libros de su escuela).
+   */
+  @Get(':id/pdf')
+  @UseGuards(AdminOrDirectorOrAlumnoGuard)
+  @ApiOperation({ summary: 'Descargar PDF. Alumnos solo libros de su escuela.' })
+  @ApiParam({ name: 'id', type: 'number' })
+  @ApiResponse({ status: 200, description: 'Archivo PDF.' })
+  @ApiResponse({ status: 401, description: 'No autenticado.' })
+  @ApiResponse({ status: 403, description: 'No autorizado.' })
+  @ApiResponse({ status: 404, description: 'Libro o PDF no encontrado.' })
+  async descargarPdf(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req: { user?: { tipoPersona?: string; alumno?: { escuelaId: number } } },
+  ): Promise<StreamableFile> {
+    if (req.user?.tipoPersona === 'alumno' && req.user?.alumno?.escuelaId) {
+      const puede = await this.librosService.libroPerteneceAEscuela(
+        id,
+        req.user.alumno.escuelaId,
+      );
+      if (!puede) {
+        throw new ForbiddenException(
+          'Este libro no está asignado a tu escuela.',
+        );
+      }
+    }
+    const ruta = await this.librosService.rutaPdfAbsoluta(id);
+    if (!ruta) {
+      throw new NotFoundException('No se encontró el PDF para este libro.');
+    }
+    const stream = createReadStream(ruta);
+    return new StreamableFile(stream, { type: 'application/pdf' });
+  }
+
+  /**
    * GET /libros/:id
-   * Obtener libro con unidades y segmentos (contenido listo para front).
+   * Obtener libro con unidades y segmentos. Admin, director o alumno (solo libros de su escuela).
    */
   @Get(':id')
-  @ApiOperation({ summary: 'Obtener libro por ID (unidades + segmentos). Requiere admin.' })
+  @UseGuards(AdminOrDirectorOrAlumnoGuard)
+  @ApiOperation({ summary: 'Obtener libro por ID. Alumnos solo ven libros de su escuela.' })
   @ApiParam({ name: 'id', type: 'number' })
   @ApiResponse({ status: 200, description: 'Libro con unidades y segmentos.' })
   @ApiResponse({ status: 401, description: 'No autenticado.' })
+  @ApiResponse({ status: 403, description: 'No autorizado.' })
+  @ApiResponse({ status: 404, description: 'Libro no encontrado.' })
+  async obtenerPorId(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req: { user?: { tipoPersona?: string; alumno?: { escuelaId: number } } },
+  ) {
+    if (req.user?.tipoPersona === 'alumno' && req.user?.alumno?.escuelaId) {
+      const puede = await this.librosService.libroPerteneceAEscuela(
+        id,
+        req.user.alumno.escuelaId,
+      );
+      if (!puede) {
+        throw new ForbiddenException(
+          'Este libro no está asignado a tu escuela.',
+        );
+      }
+    }
+    return this.librosService.obtenerPorId(id);
+  }
+
+  /**
+   * DELETE /libros/:id
+   * Elimina el libro por completo: asignaciones a escuelas, PDF, unidades, segmentos.
+   */
+  @Delete(':id')
+  @UseGuards(AdminGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Eliminar libro por completo. Requiere admin.' })
+  @ApiParam({ name: 'id', type: 'number' })
+  @ApiResponse({ status: 200, description: 'Libro eliminado.' })
+  @ApiResponse({ status: 401, description: 'No autenticado.' })
   @ApiResponse({ status: 403, description: 'No es administrador.' })
   @ApiResponse({ status: 404, description: 'Libro no encontrado.' })
-  async obtenerPorId(@Param('id', ParseIntPipe) id: number) {
-    return this.librosService.obtenerPorId(id);
+  async eliminar(@Param('id', ParseIntPipe) id: number) {
+    return this.librosService.eliminar(id);
   }
 }

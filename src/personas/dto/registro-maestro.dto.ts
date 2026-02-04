@@ -47,14 +47,15 @@ export class RegistroMaestroDto {
   @IsOptional()
   fechaNacimiento?: string;
 
-  @ApiProperty({ 
+  @ApiProperty({
     example: 1,
-    description: 'ID de la escuela a la que pertenece el maestro',
-    required: true
+    description:
+      'ID de la escuela. Obligatorio para admin. Opcional para director (se usa su escuela automáticamente).',
+    required: false,
   })
   @IsNumber()
-  @IsNotEmpty()
-  idEscuela: number;
+  @IsOptional()
+  idEscuela?: number;
 
   @IsString()
   @IsOptional()

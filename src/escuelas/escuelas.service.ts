@@ -16,6 +16,9 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Escuela } from '../personas/entities/escuela.entity';
+import { EscuelaLibro } from './entities/escuela-libro.entity';
+import { EscuelaLibroPendiente } from './entities/escuela-libro-pendiente.entity';
+import { Libro } from '../libros/entities/libro.entity';
 import { CrearEscuelaDto } from './dto/crear-escuela.dto';
 import { ActualizarEscuelaDto } from './dto/actualizar-escuela.dto';
 
@@ -24,6 +27,12 @@ export class EscuelasService {
   constructor(
     @InjectRepository(Escuela)
     private readonly escuelaRepository: Repository<Escuela>,
+    @InjectRepository(EscuelaLibro)
+    private readonly escuelaLibroRepository: Repository<EscuelaLibro>,
+    @InjectRepository(EscuelaLibroPendiente)
+    private readonly escuelaLibroPendienteRepository: Repository<EscuelaLibroPendiente>,
+    @InjectRepository(Libro)
+    private readonly libroRepository: Repository<Libro>,
   ) {}
 
   /**
@@ -217,5 +226,293 @@ export class EscuelasService {
     return await this.escuelaRepository.findOne({
       where: { id },
     });
+  }
+
+  /**
+   * PASO 1 - Admin otorga un libro a una escuela.
+   * Crea registro pendiente. El libro NO aparece en la escuela hasta que ella canjee.
+   */
+  async otorgarLibroPorCodigo(escuelaId: number, codigo: string) {
+    const escuela = await this.escuelaRepository.findOne({
+      where: { id: escuelaId },
+    });
+    if (!escuela) {
+      throw new NotFoundException(`No se encontró la escuela con ID ${escuelaId}`);
+    }
+
+    const libro = await this.libroRepository.findOne({
+      where: { codigo: codigo.trim() },
+    });
+    if (!libro) {
+      throw new NotFoundException(
+        `No se encontró ningún libro con código "${codigo}". Verifica el código en la lista de libros.`,
+      );
+    }
+
+    // Ya canjeado = ya está en Escuela_Libro
+    const yaCanjeado = await this.escuelaLibroRepository.findOne({
+      where: { escuelaId, libroId: libro.id },
+    });
+    if (yaCanjeado) {
+      throw new ConflictException(
+        `El libro "${libro.titulo}" (${codigo}) ya está activo en esta escuela (ya fue canjeado).`,
+      );
+    }
+
+    // Ya otorgado pendiente de canje
+    const yaPendiente = await this.escuelaLibroPendienteRepository.findOne({
+      where: { escuelaId, libroId: libro.id },
+    });
+    if (yaPendiente) {
+      throw new ConflictException(
+        `El libro "${libro.titulo}" (${codigo}) ya fue otorgado a esta escuela. La escuela debe canjear el código.`,
+      );
+    }
+
+    const pendiente = this.escuelaLibroPendienteRepository.create({
+      escuelaId,
+      libroId: libro.id,
+    });
+    await this.escuelaLibroPendienteRepository.save(pendiente);
+
+    console.log(
+      `✅ Libro otorgado (pendiente de canje): "${libro.titulo}" (${codigo}) → escuela ID ${escuelaId}`,
+    );
+
+    return {
+      message: 'Libro otorgado a la escuela correctamente.',
+      description: `El libro "${libro.titulo}" (código ${codigo}) está disponible para que la escuela lo canjee. La escuela debe introducir el código para activarlo.`,
+      data: {
+        pendienteId: pendiente.id,
+        escuelaId,
+        libroId: libro.id,
+        codigo: libro.codigo,
+        titulo: libro.titulo,
+        estado: 'pendiente_de_canje',
+      },
+    };
+  }
+
+  /**
+   * PASO 2 - La escuela (director) canjea el código.
+   * Solo funciona si el admin ya otorgó ese libro a la escuela.
+   * Crea Escuela_Libro y elimina el pendiente.
+   */
+  async canjearLibroPorCodigo(escuelaId: number, codigo: string) {
+    const escuela = await this.escuelaRepository.findOne({
+      where: { id: escuelaId },
+    });
+    if (!escuela) {
+      throw new NotFoundException(`No se encontró la escuela con ID ${escuelaId}`);
+    }
+
+    const libro = await this.libroRepository.findOne({
+      where: { codigo: codigo.trim() },
+    });
+    if (!libro) {
+      throw new NotFoundException(
+        `No se encontró ningún libro con código "${codigo}". Verifica el código.`,
+      );
+    }
+
+    // Verificar que el admin otorgó este libro a esta escuela
+    const pendiente = await this.escuelaLibroPendienteRepository.findOne({
+      where: { escuelaId, libroId: libro.id },
+    });
+    if (!pendiente) {
+      throw new BadRequestException(
+        `Este libro (código ${codigo}) no ha sido otorgado a tu escuela por el administrador. Solicita que te asignen el libro primero.`,
+      );
+    }
+
+    // Ya no debe existir en Escuela_Libro (por si acaso)
+    const yaActivo = await this.escuelaLibroRepository.findOne({
+      where: { escuelaId, libroId: libro.id },
+    });
+    if (yaActivo) {
+      await this.escuelaLibroPendienteRepository.remove(pendiente);
+      throw new ConflictException(
+        `El libro "${libro.titulo}" (${codigo}) ya está activo en tu escuela.`,
+      );
+    }
+
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+
+    const el = this.escuelaLibroRepository.create({
+      escuelaId,
+      libroId: libro.id,
+      activo: true,
+      fechaInicio: hoy,
+      fechaFin: null,
+    });
+    await this.escuelaLibroRepository.save(el);
+    await this.escuelaLibroPendienteRepository.remove(pendiente);
+
+    console.log(
+      `✅ Libro canjeado: "${libro.titulo}" (${codigo}) → escuela ID ${escuelaId}`,
+    );
+
+    return {
+      message: 'Libro canjeado correctamente.',
+      description: `El libro "${libro.titulo}" ya está activo en tu escuela.`,
+      data: {
+        escuelaLibroId: el.id,
+        escuelaId,
+        libroId: libro.id,
+        codigo: libro.codigo,
+        titulo: libro.titulo,
+        fechaInicio: el.fechaInicio,
+      },
+    };
+  }
+
+  /**
+   * Listar libros pendientes de canjear (otorgados por admin, aún no canjeados por la escuela).
+   * Director: solo ve título y grado (no código) para que no pueda copiarlo sin que el admin se lo entregue.
+   * Admin: ve toda la información incluyendo el código.
+   */
+  async listarLibrosPendientesDeEscuela(escuelaId: number, paraDirector = false) {
+    const escuela = await this.escuelaRepository.findOne({
+      where: { id: escuelaId },
+    });
+    if (!escuela) {
+      throw new NotFoundException(`No se encontró la escuela con ID ${escuelaId}`);
+    }
+
+    const pendientes = await this.escuelaLibroPendienteRepository.find({
+      where: { escuelaId },
+      relations: ['libro', 'libro.materia'],
+      order: { fechaOtorgado: 'DESC' },
+    });
+
+    const libros = pendientes.map((p) => {
+      if (paraDirector) {
+        // Director: solo nombre y grado. Sin código ni ids sensibles.
+        return {
+          titulo: p.libro.titulo,
+          grado: p.libro.grado,
+          fechaOtorgado: p.fechaOtorgado,
+        };
+      }
+      // Admin: información completa
+      return {
+        ...p.libro,
+        fechaOtorgado: p.fechaOtorgado,
+        pendienteId: p.id,
+      };
+    });
+
+    return {
+      message: 'Libros pendientes de canjear obtenidos correctamente.',
+      description: paraDirector
+        ? `Hay ${libros.length} libro(s) pendientes de canjear. Solicita el código al administrador para activarlos.`
+        : `Hay ${libros.length} libro(s) otorgados pendientes de canjear.`,
+      total: libros.length,
+      data: libros,
+    };
+  }
+
+  /**
+   * Listar maestros de una escuela.
+   */
+  async listarMaestrosDeEscuela(escuelaId: number) {
+    const escuela = await this.escuelaRepository.findOne({
+      where: { id: escuelaId },
+      relations: ['maestros', 'maestros.persona'],
+    });
+    if (!escuela) {
+      throw new NotFoundException(`No se encontró la escuela con ID ${escuelaId}`);
+    }
+    const maestros = (escuela.maestros || []).map((m) => ({
+      id: m.id,
+      personaId: m.personaId,
+      escuelaId: m.escuelaId,
+      especialidad: m.especialidad,
+      fechaContratacion: m.fechaContratacion,
+      persona: m.persona
+        ? {
+            id: m.persona.id,
+            nombre: m.persona.nombre,
+            apellido: m.persona.apellido,
+            correo: m.persona.correo,
+            telefono: m.persona.telefono,
+          }
+        : null,
+    }));
+    return {
+      message: 'Maestros de la escuela obtenidos correctamente.',
+      description: `La escuela tiene ${maestros.length} maestro(s).`,
+      total: maestros.length,
+      data: maestros,
+    };
+  }
+
+  /**
+   * Listar alumnos de una escuela.
+   */
+  async listarAlumnosDeEscuela(escuelaId: number) {
+    const escuela = await this.escuelaRepository.findOne({
+      where: { id: escuelaId },
+      relations: ['alumnos', 'alumnos.persona'],
+    });
+    if (!escuela) {
+      throw new NotFoundException(`No se encontró la escuela con ID ${escuelaId}`);
+    }
+    const alumnos = (escuela.alumnos || []).map((a) => ({
+      id: a.id,
+      personaId: a.personaId,
+      escuelaId: a.escuelaId,
+      grado: a.grado,
+      grupo: a.grupo,
+      cicloEscolar: a.cicloEscolar,
+      persona: a.persona
+        ? {
+            id: a.persona.id,
+            nombre: a.persona.nombre,
+            apellido: a.persona.apellido,
+            correo: a.persona.correo,
+            telefono: a.persona.telefono,
+          }
+        : null,
+    }));
+    return {
+      message: 'Alumnos de la escuela obtenidos correctamente.',
+      description: `La escuela tiene ${alumnos.length} alumno(s).`,
+      total: alumnos.length,
+      data: alumnos,
+    };
+  }
+
+  /**
+   * Listar los libros asignados a una escuela (los que la escuela puede ver).
+   */
+  async listarLibrosDeEscuela(escuelaId: number) {
+    const escuela = await this.escuelaRepository.findOne({
+      where: { id: escuelaId },
+    });
+    if (!escuela) {
+      throw new NotFoundException(`No se encontró la escuela con ID ${escuelaId}`);
+    }
+
+    const asignaciones = await this.escuelaLibroRepository.find({
+      where: { escuelaId, activo: true },
+      relations: ['libro', 'libro.materia'],
+      order: { fechaInicio: 'DESC' },
+    });
+
+    const libros = asignaciones.map((a) => ({
+      ...a.libro,
+      fechaInicio: a.fechaInicio,
+      fechaFin: a.fechaFin,
+      escuelaLibroId: a.id,
+    }));
+
+    return {
+      message: 'Libros de la escuela obtenidos correctamente.',
+      description: `La escuela tiene ${libros.length} libro(s) asignado(s).`,
+      total: libros.length,
+      data: libros,
+    };
   }
 }

@@ -31,7 +31,7 @@ import {
   ApiResponse,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, BadRequestException } from '@nestjs/common';
 import { PersonasService } from './personas.service';
 import { RegistroPadreDto } from './dto/registro-padre.dto';
 import { RegistroAlumnoDto } from './dto/registro-alumno.dto';
@@ -118,14 +118,22 @@ export class PersonasController {
   @ApiResponse({ status: 409, description: 'Email ya registrado' })
   async registrarAlumno(@Body() registroDto: RegistroAlumnoDto, @Req() req: Request) {
     const user = req.user as any;
-    
-    // Si es director, validar que solo pueda registrar en su escuela
+
     if (user.tipoPersona === 'director' && user.director) {
-      if (registroDto.idEscuela !== user.director.escuelaId) {
+      const miEscuelaId = Number(user.director.escuelaId ?? user.director.escuela?.id);
+      // Director: si no envía idEscuela, se usa su escuela
+      if (registroDto.idEscuela == null || registroDto.idEscuela === undefined) {
+        registroDto.idEscuela = miEscuelaId;
+      } else if (Number(registroDto.idEscuela) !== miEscuelaId) {
         throw new ForbiddenException('Los directores solo pueden registrar alumnos en su propia escuela');
       }
+    } else {
+      // Admin: idEscuela es obligatorio
+      if (registroDto.idEscuela == null || registroDto.idEscuela === undefined) {
+        throw new BadRequestException('Debe indicar el ID de la escuela (idEscuela)');
+      }
     }
-    
+
     return await this.personasService.registrarAlumno(registroDto);
   }
 
@@ -164,14 +172,22 @@ export class PersonasController {
   @ApiResponse({ status: 409, description: 'Email ya registrado' })
   async registrarMaestro(@Body() registroDto: RegistroMaestroDto, @Req() req: Request) {
     const user = req.user as any;
-    
-    // Si es director, validar que solo pueda registrar en su escuela
+
     if (user.tipoPersona === 'director' && user.director) {
-      if (registroDto.idEscuela !== user.director.escuelaId) {
+      const miEscuelaId = Number(user.director.escuelaId ?? user.director.escuela?.id);
+      // Director: si no envía idEscuela, se usa su escuela automáticamente
+      if (registroDto.idEscuela == null || registroDto.idEscuela === undefined) {
+        registroDto.idEscuela = miEscuelaId;
+      } else if (Number(registroDto.idEscuela) !== miEscuelaId) {
         throw new ForbiddenException('Los directores solo pueden registrar maestros en su propia escuela');
       }
+    } else {
+      // Admin: idEscuela es obligatorio
+      if (registroDto.idEscuela == null || registroDto.idEscuela === undefined) {
+        throw new BadRequestException('Debe indicar el ID de la escuela (idEscuela)');
+      }
     }
-    
+
     return await this.personasService.registrarMaestro(registroDto);
   }
 

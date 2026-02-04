@@ -7,10 +7,9 @@ Documento para el equipo de front. Solo lo necesario para consumir la API de lib
 ## Base URL y autenticación
 
 - **Base URL**: `http://localhost:3000` (o la que use el backend en tu entorno).
-- **Libros**: todos los endpoints exigen **JWT de admin**.
 - **Header**: `Authorization: Bearer <access_token>`.
 
-El `access_token` se obtiene con `POST /auth/login` (email + password de un admin).
+El `access_token` se obtiene con `POST /auth/login` (email + password).
 
 ---
 
@@ -18,10 +17,15 @@ El `access_token` se obtiene con `POST /auth/login` (email + password de un admi
 
 | Acción | Método | Ruta | Auth |
 |--------|--------|------|------|
-| Login (admin) | `POST` | `/auth/login` | No |
+| Login | `POST` | `/auth/login` | No |
+| Mis libros (alumno) | `GET` | `/escuelas/mis-libros` | Sí (alumno) |
 | Cargar libro | `POST` | `/libros/cargar` | Sí (admin) |
 | Listar libros | `GET` | `/libros` | Sí (admin) |
-| Ver libro (unidades + segmentos) | `GET` | `/libros/:id` | Sí (admin) |
+| Ver libro (unidades + segmentos) | `GET` | `/libros/:id` | Sí (admin, director, alumno*) |
+| Descargar PDF del libro | `GET` | `/libros/:id/pdf` | Sí (admin, director, alumno*) |
+| Eliminar libro | `DELETE` | `/libros/:id` | Sí (admin) |
+
+\* Alumno: solo libros asignados a su escuela.
 
 ---
 
@@ -59,7 +63,36 @@ Guardar `access_token` y usarlo en el header `Authorization: Bearer <access_toke
 
 ---
 
-## 2. Cargar libro
+## 2. Mis libros (solo alumnos)
+
+**`GET /escuelas/mis-libros`**
+
+- **Headers**: `Authorization: Bearer <access_token>`
+- **Requiere**: Usuario autenticado como **alumno**.
+
+**Respuesta 200**:
+```json
+{
+  "message": "Libros obtenidos correctamente",
+  "data": [
+    {
+      "id": 1,
+      "titulo": "El principito",
+      "grado": 5,
+      "descripcion": "Libro de lectura",
+      "codigo": "LIB-1735123456-abc12345"
+    }
+  ]
+}
+```
+
+Sirve para mostrar la biblioteca digital del alumno: libros asignados a la escuela donde estudia.
+
+**Errores:** 401 (no autenticado), 403 (solo alumnos).
+
+---
+
+## 3. Cargar libro
 
 **`POST /libros/cargar`**
 
@@ -96,7 +129,7 @@ const res = await fetch('/libros/cargar', {
 ```json
 {
   "message": "Libro cargado y procesado correctamente.",
-  "description": "Se extrajeron 42 segmentos de 15 páginas. Estado: listo.",
+  "description": "Se extrajeron 42 segmentos de 15 páginas. PDF guardado en pdfs/.... Estado: listo.",
   "data": {
     "id": 1,
     "titulo": "El principito",
@@ -106,6 +139,7 @@ const res = await fetch('/libros/cargar', {
     "descripcion": "Libro de lectura",
     "estado": "listo",
     "numPaginas": 15,
+    "rutaPdf": "pdfs/LIB-1735123456-abc12345_1.pdf",
     "materia": null,
     "unidades": []
   }
@@ -116,7 +150,7 @@ const res = await fetch('/libros/cargar', {
 
 ---
 
-## 3. Listar libros
+## 4. Listar libros
 
 **`GET /libros`**
 
@@ -154,16 +188,32 @@ const res = await fetch('/libros/cargar', {
 }
 ```
 
-Sirve para grids, listas, etc.
+Sirve para grids, listas, etc. Cada libro puede incluir `rutaPdf` si tiene PDF almacenado (ej. `pdfs/COD_1.pdf`).
 
 ---
 
-## 4. Obtener libro (unidades + segmentos)
+## 5. Descargar PDF del libro
+
+**`GET /libros/:id/pdf`**
+
+- **Headers**: `Authorization: Bearer <access_token>`
+- **Params**: `id` = ID del libro.
+
+**Respuesta 200**: el cuerpo es el archivo PDF (`Content-Type: application/pdf`). Se puede usar como `href` de enlace de descarga o abrir en nueva pestaña.
+
+**404**: el libro no existe o no tiene PDF guardado.
+
+- **Alumno:** Solo puede descargar libros asignados a su escuela. Si intenta descargar un libro de otra escuela → 403.
+
+---
+
+## 6. Obtener libro (unidades + segmentos)
 
 **`GET /libros/:id`**
 
 - **Headers**: `Authorization: Bearer <access_token>`
 - **Params**: `id` = ID del libro (número).
+- **Alumno:** Solo puede ver libros asignados a su escuela. Si intenta acceder a un libro de otra escuela → 403.
 
 **Respuesta 200**:
 ```json
@@ -178,6 +228,7 @@ Sirve para grids, listas, etc.
     "descripcion": "Libro de lectura",
     "estado": "listo",
     "numPaginas": 15,
+    "rutaPdf": "pdfs/LIB-1735123456-abc12345_1.pdf",
     "materia": null,
     "unidades": [
       {
@@ -218,6 +269,22 @@ El front solo debe leer y mostrar `data.unidades` y `data.unidades[].segmentos`;
 
 ---
 
+## 7. Eliminar libro
+
+**`DELETE /libros/:id`**
+
+- **Headers**: `Authorization: Bearer <access_token>`
+- **Params**: `id` = ID del libro.
+- **Requiere**: **Admin**.
+
+Elimina el libro por completo: asignaciones a escuelas, archivo PDF, unidades y segmentos.
+
+**Respuesta 200:** Libro eliminado.
+
+**Errores:** 401, 403 (no es administrador), 404 (libro no encontrado).
+
+---
+
 ## Errores habituales
 
 | Código | Causa | Acción en frontend |
@@ -232,23 +299,35 @@ El front solo debe leer y mostrar `data.unidades` y `data.unidades[].segmentos`;
 
 ---
 
+## Escuela – Libros (doble verificación)
+
+Admin otorga (`POST /escuelas/:id/libros`). Director canjea (`POST /escuelas/:id/libros/canjear`). Ver pendientes: `GET /escuelas/:id/libros/pendientes` (director solo título/grado). Activos: `GET /escuelas/:id/libros`. Ver [FLUJO_LIBROS_DOBLE_VERIFICACION.md](./FLUJO_LIBROS_DOBLE_VERIFICACION.md).
+
+---
+
 ## Resumen rápido para integración
 
 1. **Login**  
    `POST /auth/login` con `{ email, password }` → guardar `access_token`.
 
-2. **Cargar libro**  
+2. **Alumno – Biblioteca digital**  
+   `GET /escuelas/mis-libros` con `Authorization: Bearer <token>` → listar libros de la escuela del alumno. Luego `GET /libros/:id` para contenido y `GET /libros/:id/pdf` para descargar (solo libros de su escuela).
+
+3. **Cargar libro** (admin)  
    `POST /libros/cargar` con `multipart/form-data`:  
    - `pdf` (file), `titulo` (string), `grado` (number) obligatorios.  
    - `descripcion`, `codigo`, `materiaId` opcionales (ahora solo lectura, se puede omitir materia).  
    - Header `Authorization: Bearer <token>`.  
    - Mostrar “Procesando…” mientras dura la petición.
 
-3. **Listar**  
+4. **Listar** (admin)  
    `GET /libros` con `Authorization: Bearer <token>` → usar `data` para listas/grids.
 
-4. **Ver contenido**  
-   `GET /libros/:id` con `Authorization: Bearer <token>` → usar `data.unidades` y `data.unidades[].segmentos` para mostrar el texto del libro. Tras cargar un libro, usa el `data.id` de la respuesta y llama a este endpoint para obtener unidades y segmentos.
+5. **Ver contenido**  
+   `GET /libros/:id` con `Authorization: Bearer <token>` → usar `data.unidades` y `data.unidades[].segmentos` para mostrar el texto del libro. Admin y director: cualquier libro. Alumno: solo libros de su escuela.
+
+6. **Eliminar libro** (admin)  
+   `DELETE /libros/:id` con `Authorization: Bearer <token>`.
 
 ---
 
@@ -261,4 +340,4 @@ Si el backend expone Swagger:
 
 ---
 
-**Última actualización**: Libros de lectura sin materia (testing). Solo backend; la UI la implementa el front consumiendo estos endpoints.
+**Última actualización**: Febrero 2025. Alumnos pueden acceder a libros de su escuela (`GET /escuelas/mis-libros`, `GET /libros/:id`, `GET /libros/:id/pdf`). Admin puede eliminar libros (`DELETE /libros/:id`). Frontend con biblioteca digital para alumnos.

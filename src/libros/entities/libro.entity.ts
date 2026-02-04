@@ -42,6 +42,9 @@ export class Libro {
   @Column({ name: 'num_paginas', type: 'bigint', nullable: true })
   numPaginas: number | null;
 
+  @Column({ name: 'ruta_pdf', type: 'varchar', length: 512, nullable: true })
+  rutaPdf: string | null;
+
   @ManyToOne(() => Materia, { nullable: true })
   @JoinColumn({ name: 'materia_id' })
   materia: Materia | null;

@@ -163,8 +163,8 @@ export class AuthService {
   async getProfile(userId: number) {
     const persona = await this.personaRepository.findOne({
       where: { id: userId },
-      relations: ['administrador', 'padre', 'alumno', 'maestro'],
-      select: ['id', 'nombre', 'apellido', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
+      relations: ['administrador', 'padre', 'alumno', 'maestro', 'director', 'director.escuela'],
+      select: ['id', 'nombre', 'apellido', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'tipoPersona'],
     });
 
     if (!persona) {

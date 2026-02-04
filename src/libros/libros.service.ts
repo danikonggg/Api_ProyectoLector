@@ -17,9 +17,13 @@ import { Libro } from './entities/libro.entity';
 import { Unidad } from './entities/unidad.entity';
 import { Segmento } from './entities/segmento.entity';
 import { Materia } from '../personas/entities/materia.entity';
+import { EscuelaLibro } from '../escuelas/entities/escuela-libro.entity';
+import { EscuelaLibroPendiente } from '../escuelas/entities/escuela-libro-pendiente.entity';
 import { LibrosPdfService } from './libros-pdf.service';
+import { PdfStorageService } from './pdf-storage.service';
 import type { SegmentoDto } from './libros-pdf.service';
 import { CargarLibroDto } from './dto/cargar-libro.dto';
+import { PDF } from './constants/pdf.constants';
 import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
@@ -33,7 +37,12 @@ export class LibrosService {
     private readonly segmentoRepository: Repository<Segmento>,
     @InjectRepository(Materia)
     private readonly materiaRepository: Repository<Materia>,
+    @InjectRepository(EscuelaLibro)
+    private readonly escuelaLibroRepository: Repository<EscuelaLibro>,
+    @InjectRepository(EscuelaLibroPendiente)
+    private readonly escuelaLibroPendienteRepository: Repository<EscuelaLibroPendiente>,
     private readonly librosPdfService: LibrosPdfService,
+    private readonly pdfStorageService: PdfStorageService,
   ) {}
 
   /**
@@ -44,7 +53,7 @@ export class LibrosService {
     dto: CargarLibroDto,
   ): Promise<{ message: string; description?: string; data: Libro }> {
     console.log(`📚 Intento de cargar libro: titulo="${dto?.titulo ?? '?'}", grado=${dto?.grado ?? '?'}, materiaId=${dto?.materiaId ?? 'null'}`);
-    if (!buffer || buffer.length < 100) {
+    if (!buffer || buffer.length < PDF.MIN_SIZE) {
       throw new BadRequestException('Archivo PDF inválido o vacío.');
     }
 
@@ -108,6 +117,12 @@ export class LibrosService {
 
       libro.estado = 'listo';
       libro.numPaginas = numPaginas;
+      const rutaPdf = await this.pdfStorageService.guardar(
+        buffer,
+        libro.id,
+        codigo,
+      );
+      libro.rutaPdf = rutaPdf;
       await this.libroRepository.save(libro);
 
       const saved = await this.libroRepository.findOne({
@@ -115,11 +130,11 @@ export class LibrosService {
         relations: ['materia', 'unidades'],
       });
 
-      console.log(`✅ Libro cargado y listo: id=${saved.id}, titulo="${saved.titulo}", segmentos=${segmentos.length}, paginas=${numPaginas}`);
+      console.log(`✅ Libro cargado y listo: id=${saved.id}, titulo="${saved.titulo}", segmentos=${segmentos.length}, paginas=${numPaginas}, pdf=${rutaPdf}`);
 
       return {
         message: 'Libro cargado y procesado correctamente.',
-        description: `Se extrajeron ${segmentos.length} segmentos de ${numPaginas} páginas. Estado: listo.`,
+        description: `Se extrajeron ${segmentos.length} segmentos de ${numPaginas} páginas. PDF guardado en ${rutaPdf}. Estado: listo.`,
         data: saved,
       };
     } catch (e) {
@@ -176,5 +191,57 @@ export class LibrosService {
       message: 'Libro obtenido correctamente.',
       data: libro,
     };
+  }
+
+  /**
+   * Elimina un libro por completo: asignaciones a escuelas, PDF en disco,
+   * unidades, segmentos y el registro del libro.
+   */
+  async eliminar(id: number): Promise<{ message: string }> {
+    const libro = await this.libroRepository.findOne({
+      where: { id },
+      select: ['id', 'titulo', 'rutaPdf'],
+    });
+
+    if (!libro) {
+      throw new NotFoundException(`No se encontró el libro con ID ${id}`);
+    }
+
+    await this.escuelaLibroRepository.delete({ libroId: id });
+    await this.escuelaLibroPendienteRepository.delete({ libroId: id });
+
+    if (libro.rutaPdf) {
+      await this.pdfStorageService.eliminarArchivo(libro.rutaPdf);
+    }
+
+    await this.libroRepository.delete(id);
+
+    console.log(`🗑️ Libro eliminado: id=${id}, titulo="${libro.titulo}"`);
+
+    return {
+      message: `Libro "${libro.titulo}" eliminado correctamente de todo el sistema.`,
+    };
+  }
+
+  /**
+   * Verifica si un libro está asignado a una escuela (para alumnos).
+   */
+  async libroPerteneceAEscuela(libroId: number, escuelaId: number): Promise<boolean> {
+    const el = await this.escuelaLibroRepository.findOne({
+      where: { libroId, escuelaId, activo: true },
+    });
+    return !!el;
+  }
+
+  /**
+   * Obtiene la ruta absoluta del PDF guardado para un libro (para streaming).
+   */
+  async rutaPdfAbsoluta(id: number): Promise<string | null> {
+    const libro = await this.libroRepository.findOne({
+      where: { id },
+      select: ['id', 'rutaPdf'],
+    });
+    if (!libro?.rutaPdf) return null;
+    return this.pdfStorageService.rutaAbsoluta(libro.rutaPdf);
   }
 }

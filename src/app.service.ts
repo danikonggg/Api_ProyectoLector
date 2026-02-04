@@ -15,6 +15,6 @@ export class AppService {
    * Retorna un mensaje de bienvenida
    */
   getHello(): string {
-    return '¡Bienvenido a la API REST con NestJS y PostgreSQL!';
+    return '¡Bienvenido a la API,  TEAM VL!';
   }
 }
