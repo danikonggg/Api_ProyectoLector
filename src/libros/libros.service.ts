@@ -10,6 +10,7 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -25,9 +26,17 @@ import type { SegmentoDto } from './libros-pdf.service';
 import { CargarLibroDto } from './dto/cargar-libro.dto';
 import { PDF } from './constants/pdf.constants';
 import { v4 as uuidv4 } from 'uuid';
+import { AuditService } from '../audit/audit.service';
+
+export interface AuditContext {
+  usuarioId?: number | null;
+  ip?: string | null;
+}
 
 @Injectable()
 export class LibrosService {
+  private readonly logger = new Logger(LibrosService.name);
+
   constructor(
     @InjectRepository(Libro)
     private readonly libroRepository: Repository<Libro>,
@@ -43,6 +52,7 @@ export class LibrosService {
     private readonly escuelaLibroPendienteRepository: Repository<EscuelaLibroPendiente>,
     private readonly librosPdfService: LibrosPdfService,
     private readonly pdfStorageService: PdfStorageService,
+    private readonly auditService: AuditService,
   ) {}
 
   /**
@@ -51,8 +61,9 @@ export class LibrosService {
   async cargar(
     buffer: Buffer,
     dto: CargarLibroDto,
+    auditContext?: AuditContext,
   ): Promise<{ message: string; description?: string; data: Libro }> {
-    console.log(`📚 Intento de cargar libro: titulo="${dto?.titulo ?? '?'}", grado=${dto?.grado ?? '?'}, materiaId=${dto?.materiaId ?? 'null'}`);
+    this.logger.log(`Intento de cargar libro: titulo="${dto?.titulo ?? '?'}", grado=${dto?.grado ?? '?'}, materiaId=${dto?.materiaId ?? 'null'}`);
     if (!buffer || buffer.length < PDF.MIN_SIZE) {
       throw new BadRequestException('Archivo PDF inválido o vacío.');
     }
@@ -90,7 +101,7 @@ export class LibrosService {
       numPaginas: null,
     });
     await this.libroRepository.save(libro);
-    console.log(`📚 Libro creado (procesando): id=${libro.id}, titulo="${libro.titulo}", codigo=${codigo}`);
+    this.logger.log(`Libro creado (procesando): id=${libro.id}, titulo="${libro.titulo}", codigo=${codigo}`);
 
     try {
       const { numPaginas, segmentos } =
@@ -130,7 +141,13 @@ export class LibrosService {
         relations: ['materia', 'unidades'],
       });
 
-      console.log(`✅ Libro cargado y listo: id=${saved.id}, titulo="${saved.titulo}", segmentos=${segmentos.length}, paginas=${numPaginas}, pdf=${rutaPdf}`);
+      this.logger.log(`Libro cargado y listo: id=${saved.id}, titulo="${saved.titulo}", segmentos=${segmentos.length}, paginas=${numPaginas}, pdf=${rutaPdf}`);
+
+      await this.auditService.log('libro_cargar', {
+        usuarioId: auditContext?.usuarioId ?? null,
+        ip: auditContext?.ip ?? null,
+        detalles: `${saved.titulo} (id: ${saved.id}, codigo: ${codigo})`,
+      });
 
       return {
         message: 'Libro cargado y procesado correctamente.',
@@ -140,7 +157,7 @@ export class LibrosService {
     } catch (e) {
       libro.estado = 'error';
       await this.libroRepository.save(libro);
-      console.log(`❌ Libro id=${libro.id} falló al procesar PDF. Estado → error.`, e?.message ?? e);
+      this.logger.error(`Libro id=${libro.id} falló al procesar PDF. Estado → error. ${e?.message ?? e}`);
       throw e;
     }
   }
@@ -153,7 +170,7 @@ export class LibrosService {
       order: { id: 'DESC' },
       relations: ['materia'],
     });
-    console.log(`📋 GET /libros → ${data.length} libros. IDs: ${data.map((l) => l.id).join(', ') || '(ninguno)'}`);
+    this.logger.log(`GET /libros → ${data.length} libros. IDs: ${data.map((l) => l.id).join(', ') || '(ninguno)'}`);
     return {
       message: 'Libros obtenidos correctamente.',
       total: data.length,
@@ -171,12 +188,12 @@ export class LibrosService {
     });
 
     if (!libro) {
-      console.log(`❌ GET /libros/${id} → Libro no encontrado`);
+      this.logger.warn(`GET /libros/${id} → Libro no encontrado`);
       throw new NotFoundException(`No se encontró el libro con ID ${id}`);
     }
 
     const numSegmentos = libro.unidades?.reduce((acc, u) => acc + (u.segmentos?.length ?? 0), 0) ?? 0;
-    console.log(`📖 GET /libros/${id} → "${libro.titulo}", ${libro.unidades?.length ?? 0} unidades, ${numSegmentos} segmentos`);
+    this.logger.log(`GET /libros/${id} → "${libro.titulo}", ${libro.unidades?.length ?? 0} unidades, ${numSegmentos} segmentos`);
 
     if (libro.unidades?.length) {
       libro.unidades.sort((a, b) => Number(a.orden) - Number(b.orden));
@@ -197,7 +214,7 @@ export class LibrosService {
    * Elimina un libro por completo: asignaciones a escuelas, PDF en disco,
    * unidades, segmentos y el registro del libro.
    */
-  async eliminar(id: number): Promise<{ message: string }> {
+  async eliminar(id: number, auditContext?: AuditContext): Promise<{ message: string }> {
     const libro = await this.libroRepository.findOne({
       where: { id },
       select: ['id', 'titulo', 'rutaPdf'],
@@ -216,7 +233,13 @@ export class LibrosService {
 
     await this.libroRepository.delete(id);
 
-    console.log(`🗑️ Libro eliminado: id=${id}, titulo="${libro.titulo}"`);
+    this.logger.log(`Libro eliminado: id=${id}, titulo="${libro.titulo}"`);
+
+    await this.auditService.log('libro_eliminar', {
+      usuarioId: auditContext?.usuarioId ?? null,
+      ip: auditContext?.ip ?? null,
+      detalles: `${libro.titulo} (id: ${id})`,
+    });
 
     return {
       message: `Libro "${libro.titulo}" eliminado correctamente de todo el sistema.`,

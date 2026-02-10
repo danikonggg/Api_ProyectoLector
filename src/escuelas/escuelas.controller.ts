@@ -27,6 +27,7 @@ import {
   UseGuards,
   ForbiddenException,
   Request,
+  Query,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -44,6 +45,16 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { AdminOrDirectorGuard } from '../auth/guards/admin-or-director.guard';
 import { AlumnoGuard } from '../auth/guards/alumno.guard';
+import type { AuditContext } from './escuelas.service';
+import type { Request as ExpressRequest } from 'express';
+
+function getAuditContext(req: ExpressRequest): AuditContext {
+  const ip = req.ip ?? (Array.isArray(req.headers?.['x-forwarded-for']) ? req.headers['x-forwarded-for'][0] : req.headers?.['x-forwarded-for']) ?? req.headers?.['x-real-ip'];
+  return {
+    usuarioId: (req.user as any)?.id ?? null,
+    ip: typeof ip === 'string' ? ip : undefined,
+  };
+}
 
 type ReqUser = {
   tipoPersona?: string;
@@ -60,7 +71,6 @@ function directorSoloSuEscuela(user: ReqUser | undefined, escuelaId: number): vo
   }
 }
 
-@ApiTags('Escuelas')
 @Controller('escuelas')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth('JWT-auth')
@@ -74,6 +84,7 @@ export class EscuelasController {
   @Post()
   @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.CREATED)
+  @ApiTags('Solo Administrador')
   @ApiOperation({ summary: 'Crear una nueva escuela (requiere admin)' })
   @ApiResponse({
     status: 201,
@@ -96,8 +107,8 @@ export class EscuelasController {
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'No es administrador' })
   @ApiResponse({ status: 409, description: 'Escuela con nombre o clave duplicada' })
-  async crear(@Body() crearEscuelaDto: CrearEscuelaDto) {
-    return await this.escuelasService.crear(crearEscuelaDto);
+  async crear(@Body() crearEscuelaDto: CrearEscuelaDto, @Request() req: ExpressRequest) {
+    return await this.escuelasService.crear(crearEscuelaDto, getAuditContext(req));
   }
 
   /**
@@ -106,6 +117,7 @@ export class EscuelasController {
    */
   @Get()
   @UseGuards(AdminGuard)
+  @ApiTags('Solo Administrador')
   @ApiOperation({ summary: 'Listar todas las escuelas (requiere admin)' })
   @ApiResponse({
     status: 200,
@@ -130,8 +142,13 @@ export class EscuelasController {
   })
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'No es administrador' })
-  async obtenerTodas() {
-    return await this.escuelasService.obtenerTodas();
+  async obtenerTodas(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const pageNum = page ? parseInt(page, 10) : undefined;
+    const limitNum = limit ? parseInt(limit, 10) : undefined;
+    return await this.escuelasService.obtenerTodas(pageNum, limitNum);
   }
 
   /**
@@ -140,6 +157,7 @@ export class EscuelasController {
    */
   @Get('mis-libros')
   @UseGuards(AlumnoGuard)
+  @ApiTags('Solo Alumno')
   @ApiOperation({ summary: 'Libros de mi escuela (solo alumnos)' })
   @ApiResponse({ status: 200, description: 'Libros asignados a la escuela del alumno.' })
   @ApiResponse({ status: 401, description: 'No autenticado.' })
@@ -157,18 +175,19 @@ export class EscuelasController {
    * Libros otorgados por admin, pendientes de canjear por la escuela.
    */
   @Get(':id/libros/pendientes')
-  @UseGuards(AdminOrDirectorGuard)
-  @ApiOperation({ summary: 'Libros pendientes de canjear (otorgados por admin)' })
+  @UseGuards(AdminGuard)
+  @ApiTags('Solo Administrador')
+  @ApiOperation({
+    summary: 'Libros pendientes de canjear (solo admin)',
+    description: 'Requiere id de escuela en la URL. **Directores:** usar GET /director/libros/pendientes (tag Director, sin id).',
+  })
   @ApiParam({ name: 'id', type: 'number', description: 'ID de la escuela' })
   @ApiResponse({ status: 200, description: 'Libros pendientes de canjear.' })
-  @ApiResponse({ status: 403, description: 'Director solo puede ver su escuela.' })
+  @ApiResponse({ status: 403, description: 'Solo administradores.' })
   async listarLibrosPendientes(
     @Param('id', ParseIntPipe) id: number,
-    @Request() req: { user?: ReqUser },
   ) {
-    directorSoloSuEscuela(req.user, id);
-    const esDirector = req.user?.tipoPersona === 'director';
-    return await this.escuelasService.listarLibrosPendientesDeEscuela(id, esDirector);
+    return await this.escuelasService.listarLibrosPendientesDeEscuela(id, false);
   }
 
   /**
@@ -176,9 +195,13 @@ export class EscuelasController {
    * La escuela (director) canjea el código. Solo si el admin ya otorgó ese libro.
    */
   @Post(':id/libros/canjear')
-  @UseGuards(AdminOrDirectorGuard)
+  @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Canjear libro (Paso 2: escuela canjea código otorgado por admin)' })
+  @ApiTags('Solo Administrador')
+  @ApiOperation({
+    summary: 'Canjear libro (Paso 2) — solo admin',
+    description: 'Requiere id de escuela en la URL. **Directores:** usar POST /director/canjear-libro (tag Director, sin id en la ruta).',
+  })
   @ApiParam({ name: 'id', type: 'number', description: 'ID de la escuela' })
   @ApiBody({
     schema: {
@@ -189,14 +212,13 @@ export class EscuelasController {
   })
   @ApiResponse({ status: 201, description: 'Libro canjeado correctamente.' })
   @ApiResponse({ status: 400, description: 'El admin no otorgó este libro a la escuela.' })
-  @ApiResponse({ status: 403, description: 'Director solo puede canjear en su escuela.' })
+  @ApiResponse({ status: 403, description: 'Solo administradores.' })
   async canjearLibro(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: AsignarLibroEscuelaDto,
-    @Request() req: { user?: ReqUser },
+    @Request() req: ExpressRequest,
   ) {
-    directorSoloSuEscuela(req.user, id);
-    return await this.escuelasService.canjearLibroPorCodigo(id, dto.codigo);
+    return await this.escuelasService.canjearLibroPorCodigo(id, dto.codigo, getAuditContext(req));
   }
 
   /**
@@ -204,18 +226,18 @@ export class EscuelasController {
    * Listar libros activos de la escuela (solo los ya canjeados).
    */
   @Get(':id/libros')
-  @UseGuards(AdminOrDirectorGuard)
-  @ApiOperation({ summary: 'Listar libros activos de la escuela (canjeados)' })
+  @UseGuards(AdminGuard)
+  @ApiTags('Solo Administrador')
+  @ApiOperation({
+    summary: 'Listar libros activos de la escuela (solo admin)',
+    description: 'Requiere id de escuela en la URL. **Directores:** usar GET /director/libros (tag Director, sin id).',
+  })
   @ApiParam({ name: 'id', type: 'number', description: 'ID de la escuela' })
   @ApiResponse({ status: 200, description: 'Libros activos de la escuela.' })
   @ApiResponse({ status: 401, description: 'No autenticado.' })
-  @ApiResponse({ status: 403, description: 'No autorizado (director solo puede ver su escuela).' })
+  @ApiResponse({ status: 403, description: 'Solo administradores.' })
   @ApiResponse({ status: 404, description: 'Escuela no encontrada.' })
-  async listarLibros(
-    @Param('id', ParseIntPipe) id: number,
-    @Request() req: { user?: ReqUser },
-  ) {
-    directorSoloSuEscuela(req.user, id);
+  async listarLibros(@Param('id', ParseIntPipe) id: number) {
     return await this.escuelasService.listarLibrosDeEscuela(id);
   }
 
@@ -225,6 +247,7 @@ export class EscuelasController {
    */
   @Get(':id/maestros')
   @UseGuards(AdminOrDirectorGuard)
+  @ApiTags('Admin o Director')
   @ApiOperation({ summary: 'Listar maestros de la escuela (admin o director de esa escuela)' })
   @ApiParam({ name: 'id', type: 'number', description: 'ID de la escuela' })
   @ApiResponse({ status: 200, description: 'Maestros de la escuela.' })
@@ -245,6 +268,7 @@ export class EscuelasController {
    */
   @Get(':id/alumnos')
   @UseGuards(AdminOrDirectorGuard)
+  @ApiTags('Admin o Director')
   @ApiOperation({ summary: 'Listar alumnos de la escuela (admin o director de esa escuela)' })
   @ApiParam({ name: 'id', type: 'number', description: 'ID de la escuela' })
   @ApiResponse({ status: 200, description: 'Alumnos de la escuela.' })
@@ -267,6 +291,7 @@ export class EscuelasController {
   @Post(':id/libros')
   @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.CREATED)
+  @ApiTags('Solo Administrador')
   @ApiOperation({
     summary: 'Otorgar libro a la escuela (Paso 1: admin otorga; la escuela debe canjear después)',
   })
@@ -296,6 +321,7 @@ export class EscuelasController {
    */
   @Get(':id')
   @UseGuards(AdminOrDirectorGuard)
+  @ApiTags('Admin o Director')
   @ApiOperation({ summary: 'Obtener escuela por ID (admin o director de esa escuela)' })
   @ApiParam({ name: 'id', type: 'number', description: 'ID de la escuela' })
   @ApiResponse({
@@ -335,6 +361,7 @@ export class EscuelasController {
    */
   @Put(':id')
   @UseGuards(AdminGuard)
+  @ApiTags('Solo Administrador')
   @ApiOperation({ summary: 'Actualizar una escuela (requiere admin)' })
   @ApiParam({ name: 'id', type: 'number', description: 'ID de la escuela' })
   @ApiResponse({
@@ -362,8 +389,9 @@ export class EscuelasController {
   async actualizar(
     @Param('id', ParseIntPipe) id: number,
     @Body() actualizarEscuelaDto: ActualizarEscuelaDto,
+    @Request() req: ExpressRequest,
   ) {
-    return await this.escuelasService.actualizar(id, actualizarEscuelaDto);
+    return await this.escuelasService.actualizar(id, actualizarEscuelaDto, getAuditContext(req));
   }
 
   /**
@@ -373,6 +401,7 @@ export class EscuelasController {
   @Delete(':id')
   @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.OK)
+  @ApiTags('Solo Administrador')
   @ApiOperation({ summary: 'Eliminar una escuela (requiere admin)' })
   @ApiParam({ name: 'id', type: 'number', description: 'ID de la escuela' })
   @ApiResponse({
@@ -389,7 +418,7 @@ export class EscuelasController {
   @ApiResponse({ status: 403, description: 'No es administrador' })
   @ApiResponse({ status: 404, description: 'Escuela no encontrada' })
   @ApiResponse({ status: 400, description: 'No se puede eliminar porque tiene alumnos o maestros asociados' })
-  async eliminar(@Param('id', ParseIntPipe) id: number) {
-    return await this.escuelasService.eliminar(id);
+  async eliminar(@Param('id', ParseIntPipe) id: number, @Request() req: ExpressRequest) {
+    return await this.escuelasService.eliminar(id, getAuditContext(req));
   }
 }

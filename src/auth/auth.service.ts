@@ -6,7 +6,7 @@
  * Servicio que maneja la autenticación y generación de tokens JWT.
  */
 
-import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -15,10 +15,12 @@ import { Persona } from '../personas/entities/persona.entity';
 import { Administrador } from '../personas/entities/administrador.entity';
 import { LoginDto } from './dto/login.dto';
 import { RegistroAdminDto } from './dto/registro-admin.dto';
+import { AuditService } from '../audit/audit.service';
 
 @Injectable()
 export class AuthService {
-  private readonly MAX_ADMINS_INICIALES = 3;
+  private readonly logger = new Logger(AuthService.name);
+  private readonly MAX_ADMINS = 5;
 
   constructor(
     @InjectRepository(Persona)
@@ -26,13 +28,14 @@ export class AuthService {
     @InjectRepository(Administrador)
     private administradorRepository: Repository<Administrador>,
     private jwtService: JwtService,
+    private readonly auditService: AuditService,
   ) {}
 
   /**
    * Validar credenciales y generar token JWT
    */
-  async login(loginDto: LoginDto) {
-    console.log(`🔐 Intento de login: ${loginDto.email}`);
+  async login(loginDto: LoginDto, ip?: string) {
+    this.logger.log(`Intento de login: ${loginDto.email}`);
     
     const persona = await this.personaRepository.findOne({
       where: { correo: loginDto.email },
@@ -41,33 +44,54 @@ export class AuthService {
     });
 
     if (!persona) {
-      console.log(`❌ Login fallido: Usuario no encontrado - ${loginDto.email}`);
+      this.logger.warn(`Login fallido: Usuario no encontrado - ${loginDto.email}`);
+      await this.auditService.log('login_fallido', {
+        usuarioId: null,
+        ip: ip ?? null,
+        detalles: `usuario_no_encontrado | ${loginDto.email}`,
+      });
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
     // Verificar contraseña
     const isPasswordValid = await bcrypt.compare(loginDto.password, persona.password);
-    
+
     if (!isPasswordValid) {
-      console.log(`❌ Login fallido: Contraseña incorrecta - ${loginDto.email}`);
+      this.logger.warn(`Login fallido: Contraseña incorrecta - ${loginDto.email}`);
+      await this.auditService.log('login_fallido', {
+        usuarioId: persona.id,
+        ip: ip ?? null,
+        detalles: `contraseña_incorrecta | ${persona.correo}`,
+      });
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
     if (!persona.activo) {
-      console.log(`❌ Login fallido: Usuario inactivo - ${loginDto.email}`);
+      this.logger.warn(`Login fallido: Usuario inactivo - ${loginDto.email}`);
+      await this.auditService.log('login_fallido', {
+        usuarioId: persona.id,
+        ip: ip ?? null,
+        detalles: `usuario_inactivo | ${persona.correo}`,
+      });
       throw new UnauthorizedException('Usuario inactivo');
     }
 
     // Generar token JWT
     const payload = {
       sub: persona.id,
-      email: persona.email,
+      email: persona.correo,
       tipoPersona: persona.tipoPersona,
     };
 
     const accessToken = this.jwtService.sign(payload);
-    
-    console.log(`✅ Login exitoso: ${persona.nombre} ${persona.apellidoPaterno} (${persona.tipoPersona}) - ID: ${persona.id}`);
+
+    this.logger.log(`Login exitoso: ${persona.nombre} ${persona.apellido} (${persona.tipoPersona}) - ID: ${persona.id}`);
+
+    await this.auditService.log('login', {
+      usuarioId: persona.id,
+      ip: ip ?? null,
+      detalles: persona.correo,
+    });
 
     return {
       message: 'Login exitoso',
@@ -79,7 +103,7 @@ export class AuthService {
         id: persona.id,
         nombre: persona.nombre,
         apellido: persona.apellido,
-        email: persona.email,
+        email: persona.correo,
         tipoPersona: persona.tipoPersona,
       },
     };
@@ -88,16 +112,16 @@ export class AuthService {
   /**
    * Registrar un administrador inicial (máximo 3)
    */
-  async registrarAdmin(registroDto: RegistroAdminDto) {
-    console.log(`📝 Intento de registro de administrador: ${registroDto.email}`);
+  async registrarAdmin(registroDto: RegistroAdminDto, ip?: string) {
+    this.logger.log(`Intento de registro de administrador: ${registroDto.email}`);
     
     // Verificar cantidad de administradores
     const cantidadAdmins = await this.administradorRepository.count();
     
-    if (cantidadAdmins >= this.MAX_ADMINS_INICIALES) {
-      console.log(`❌ Registro fallido: Límite de administradores alcanzado (${cantidadAdmins}/${this.MAX_ADMINS_INICIALES})`);
+    if (cantidadAdmins >= this.MAX_ADMINS) {
+      this.logger.warn(`Registro fallido: Límite de administradores alcanzado (${cantidadAdmins}/${this.MAX_ADMINS})`);
       throw new ConflictException(
-        `Ya se han registrado ${this.MAX_ADMINS_INICIALES} administradores iniciales. Los nuevos administradores deben ser creados por un administrador existente.`,
+        `Ya se han registrado los ${this.MAX_ADMINS} administradores permitidos.`,
       );
     }
 
@@ -109,7 +133,7 @@ export class AuthService {
     });
 
     if (personaExistente) {
-      console.log(`❌ Registro fallido: Email ya registrado - ${registroDto.email}`);
+      this.logger.warn(`Registro fallido: Email ya registrado - ${registroDto.email}`);
       throw new ConflictException('El email ya está registrado');
     }
 
@@ -141,14 +165,20 @@ export class AuthService {
 
     await this.administradorRepository.save(administrador);
 
-    console.log(`✅ Administrador creado exitosamente: ${personaGuardada.nombre} ${personaGuardada.apellido} - ID: ${personaGuardada.id} - Email: ${personaGuardada.email}`);
-    console.log(`📊 Total de administradores registrados: ${cantidadAdmins + 1}/${this.MAX_ADMINS_INICIALES}`);
+    this.logger.log(`Administrador creado exitosamente: ${personaGuardada.nombre} ${personaGuardada.apellido} - ID: ${personaGuardada.id}`);
+    this.logger.log(`Total de administradores registrados: ${cantidadAdmins + 1}/${this.MAX_ADMINS}`);
+
+    await this.auditService.log('registro_admin', {
+      usuarioId: personaGuardada.id,
+      ip: ip ?? null,
+      detalles: personaGuardada.correo,
+    });
 
     // Retornar la persona sin la contraseña
     const { password, ...result } = personaGuardada;
     return {
       message: 'Administrador registrado exitosamente',
-      description: `El administrador ha sido creado correctamente. Puede iniciar sesión con su email y contraseña. Total de administradores: ${cantidadAdmins + 1}/${this.MAX_ADMINS_INICIALES}`,
+      description: `El administrador ha sido creado correctamente. Puede iniciar sesión con su email y contraseña. Total de administradores: ${cantidadAdmins + 1}/${this.MAX_ADMINS}`,
       data: result,
       administrador: {
         id: administrador.id,

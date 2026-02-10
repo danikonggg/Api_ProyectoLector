@@ -22,10 +22,12 @@ El `access_token` se obtiene con `POST /auth/login` (email + password).
 | Cargar libro | `POST` | `/libros/cargar` | Sí (admin) |
 | Listar libros | `GET` | `/libros` | Sí (admin) |
 | Ver libro (unidades + segmentos) | `GET` | `/libros/:id` | Sí (admin, director, alumno*) |
-| Descargar PDF del libro | `GET` | `/libros/:id/pdf` | Sí (admin, director, alumno*) |
+| Descargar PDF del libro | `GET` | `/libros/:id/pdf` | Sí (solo admin) |
 | Eliminar libro | `DELETE` | `/libros/:id` | Sí (admin) |
 
-\* Alumno: solo libros asignados a su escuela.
+\* Alumno: solo libros asignados a su escuela. Director: libros de su escuela.
+
+Para rutas **solo admin** y ejemplos de código en el front de prueba, ver [RUTAS_LIBROS_ADMIN_FRONTEND.md](./RUTAS_LIBROS_ADMIN_FRONTEND.md). Para **director** (libros de mi escuela sin enviar id), ver [RUTAS_DIRECTOR_FRONTEND.md](./RUTAS_DIRECTOR_FRONTEND.md).
 
 ---
 
@@ -96,7 +98,7 @@ Sirve para mostrar la biblioteca digital del alumno: libros asignados a la escue
 
 **`POST /libros/cargar`**
 
-- **Content-Type**: `multipart/form-data`
+- **Body**: `multipart/form-data`. No enviar header `Content-Type`; el navegador lo pone con el boundary.
 - **Headers**: `Authorization: Bearer <access_token>`
 
 **Campos del form:**
@@ -198,12 +200,11 @@ Sirve para grids, listas, etc. Cada libro puede incluir `rutaPdf` si tiene PDF a
 
 - **Headers**: `Authorization: Bearer <access_token>`
 - **Params**: `id` = ID del libro.
+- **Requiere**: **Solo administrador.**
 
-**Respuesta 200**: el cuerpo es el archivo PDF (`Content-Type: application/pdf`). Se puede usar como `href` de enlace de descarga o abrir en nueva pestaña.
+**Respuesta 200**: el cuerpo es el archivo PDF (`Content-Type: application/pdf`). Se puede usar como enlace de descarga o abrir en nueva pestaña.
 
-**404**: el libro no existe o no tiene PDF guardado.
-
-- **Alumno:** Solo puede descargar libros asignados a su escuela. Si intenta descargar un libro de otra escuela → 403.
+**Errores:** 401 (no autenticado), 403 (no es admin), 404 (libro o PDF no encontrado).
 
 ---
 
@@ -301,7 +302,9 @@ Elimina el libro por completo: asignaciones a escuelas, archivo PDF, unidades y 
 
 ## Escuela – Libros (doble verificación)
 
-Admin otorga (`POST /escuelas/:id/libros`). Director canjea (`POST /escuelas/:id/libros/canjear`). Ver pendientes: `GET /escuelas/:id/libros/pendientes` (director solo título/grado). Activos: `GET /escuelas/:id/libros`. Ver [FLUJO_LIBROS_DOBLE_VERIFICACION.md](./FLUJO_LIBROS_DOBLE_VERIFICACION.md).
+- **Admin:** Otorga libro a una escuela: `POST /escuelas/:id/libros` (body: `{ "codigo": "LIB-..." }`). Listar libros de una escuela: `GET /escuelas/:id/libros`, pendientes: `GET /escuelas/:id/libros/pendientes`. El `id` es el ID de la escuela.
+- **Director:** Ve y canjea libros **de su escuela sin enviar id**: `GET /director/libros`, `GET /director/libros/pendientes`, `POST /director/canjear-libro` (body: `{ "codigo": "LIB-..." }`). Ver [RUTAS_DIRECTOR_FRONTEND.md](./RUTAS_DIRECTOR_FRONTEND.md).
+- Flujo: Admin otorga → Director canjea con el código. Detalle en [FLUJO_LIBROS_DOBLE_VERIFICACION.md](./FLUJO_LIBROS_DOBLE_VERIFICACION.md).
 
 ---
 
@@ -340,4 +343,4 @@ Si el backend expone Swagger:
 
 ---
 
-**Última actualización**: Febrero 2025. Alumnos pueden acceder a libros de su escuela (`GET /escuelas/mis-libros`, `GET /libros/:id`, `GET /libros/:id/pdf`). Admin puede eliminar libros (`DELETE /libros/:id`). Frontend con biblioteca digital para alumnos.
+**Última actualización**: Febrero 2025. Descargar PDF (`GET /libros/:id/pdf`) solo administrador. Director usa `/director/libros` y `/director/canjear-libro` sin id de escuela. Alumnos: `GET /escuelas/mis-libros`, `GET /libros/:id` (solo libros de su escuela). Admin: cargar, listar, eliminar, otorgar a escuela. Ver [RUTAS_LIBROS_ADMIN_FRONTEND.md](./RUTAS_LIBROS_ADMIN_FRONTEND.md) para ejemplos de código.

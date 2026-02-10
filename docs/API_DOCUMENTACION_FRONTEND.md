@@ -2,6 +2,8 @@
 
 Documento de referencia para consumir la API del sistema educativo. Incluye todos los endpoints, autenticación, cuerpos de petición y respuestas.
 
+**Seguridad:** Ver [SEGURIDAD.md](./SEGURIDAD.md) para medidas implementadas y checklist de producción.
+
 ---
 
 ## Índice
@@ -12,9 +14,11 @@ Documento de referencia para consumir la API del sistema educativo. Incluye todo
 4. [Personas (registros y admins)](#4-personas-registros-y-admins)
 5. [Escuelas](#5-escuelas)
 6. [Libros](#6-libros)
-7. [Maestros](#7-maestros)
-8. [Permisos por rol](#8-permisos-por-rol)
-9. [Códigos de error](#9-códigos-de-error)
+7. [Director](#7-director)
+8. [Maestros](#8-maestros)
+9. [Auditoría](#9-auditoría)
+10. [Permisos por rol](#10-permisos-por-rol)
+11. [Códigos de error](#11-códigos-de-error)
 
 ---
 
@@ -23,12 +27,12 @@ Documento de referencia para consumir la API del sistema educativo. Incluye todo
 | Concepto | Valor |
 |----------|--------|
 | **Base URL** | `http://localhost:3000` (o la URL del backend en tu entorno) |
-| **Swagger (interactivo)** | `http://localhost:3000/api` |
+| **Swagger (interactivo)** | `http://localhost:3000/api` (solo en desarrollo; desactivado en producción) |
 | **Health check** | `GET /health` |
 
 ### Autenticación JWT
 
-- Casi todos los endpoints (excepto login, registro-admin, admins/cantidad, `/`, `/health`) requieren **JWT**.
+- Casi todos los endpoints (excepto login, `/`, `/health`) requieren **JWT**.
 - **Header**: `Authorization: Bearer <access_token>`.
 - El `access_token` se obtiene con `POST /auth/login` (email + password).
 - El token expira en **24h**; ante **401** hay que volver a hacer login.
@@ -82,10 +86,10 @@ No requiere token.
 
 ---
 
-### 2.2 Registro de administrador inicial
+### 2.2 Registro de administrador
 
 **`POST /auth/registro-admin`**  
-No requiere token. Solo para los **3 primeros** administradores del sistema.
+Requiere: **JWT** + **Admin**. Solo administradores pueden crear nuevos admins. Máximo **5** administradores en el sistema.
 
 **Body** (`application/json`):
 
@@ -97,8 +101,7 @@ No requiere token. Solo para los **3 primeros** administradores del sistema.
   "email": "admin@example.com",
   "password": "password123",
   "telefono": "1234567890",
-  "fechaNacimiento": "1990-01-01",
-  "nivel": "super"
+  "fechaNacimiento": "1990-01-01"
 }
 ```
 
@@ -111,11 +114,10 @@ No requiere token. Solo para los **3 primeros** administradores del sistema.
 | `password` | string | Sí | Mín. 6 caracteres |
 | `telefono` | string | No | Teléfono |
 | `fechaNacimiento` | string | No | ISO 8601 (YYYY-MM-DD) |
-| `nivel` | string | No | Ej. `normal`, `super` |
 
 **Respuesta 201:** Admin creado; puede iniciar sesión con email y contraseña.
 
-**Errores:** 409 (email ya registrado o ya hay 3 admins).
+**Errores:** 401 (no autenticado), 403 (no es admin), 409 (email ya registrado o ya hay 5 admins).
 
 ---
 
@@ -150,15 +152,21 @@ Sin autenticación.
 {
   "status": "ok",
   "message": "API funcionando correctamente",
-  "timestamp": "2025-01-30T12:00:00.000Z"
+  "timestamp": "2025-02-04T12:00:00.000Z",
+  "database": "connected"
 }
 ```
+
+- `status`: `ok` si todo bien, `degraded` si la BD no está disponible.
+- `database`: `connected` | `disconnected`.
 
 ---
 
 ## 4. Personas (registros y admins)
 
-Todos los endpoints de esta sección (excepto `GET /personas/admins/cantidad`) requieren **JWT**. Los registros de padre, alumno, maestro y director requieren rol indicado en la tabla.
+Todos los endpoints de esta sección requieren **JWT**. Los registros requieren el rol indicado en cada sección.
+
+**📋 Flujo padre–alumno:** Ver [FLUJO_PADRE_ALUMNO.md](./FLUJO_PADRE_ALUMNO.md). Registro de alumno sin padre; registro de padre con `alumnoId` opcional para vincular.
 
 ### 4.1 Registrar padre/tutor
 
@@ -176,6 +184,7 @@ Requiere: **JWT** + **Admin**.
 | `password` | string | Sí (mín. 6) |
 | `telefono` | string | No |
 | `fechaNacimiento` | string | No (YYYY-MM-DD) |
+| `alumnoId` | number | No | ID del alumno a vincular. Si se envía, el padre queda asociado a ese alumno. |
 
 **Respuesta 201:** Padre registrado. **Errores:** 401, 403 (no admin), 409 (email ya registrado).
 
@@ -205,9 +214,11 @@ Requiere: **JWT** + **Admin o Director**.
 | `grupo` | string | No | Ej. "A" |
 | `cicloEscolar` | string | No | Ej. "2024-2025" |
 
-**Respuesta 201:** Alumno registrado (incluye datos de alumno, ej. grado, grupo, matrícula).
+**Respuesta 201:** Alumno registrado. El padre se vincula después con `POST /personas/registro-padre` (campo `alumnoId`).
 
 **Errores:** 400 (admin no envió idEscuela), 401, 403 (no admin/director o director en otra escuela), 409 (email ya registrado).
+
+**Paginación:** `GET /personas/alumnos?page=1&limit=20` (opcional).
 
 ---
 
@@ -251,14 +262,14 @@ Requiere: **JWT** + **Admin**.
 | `apellidoMaterno` | string | Sí | |
 | `email` | string | Sí | |
 | `password` | string | Sí (mín. 6) | |
-| `idEscuela` | number | Sí | Escuela de la que será director (una escuela = un director) |
+| `idEscuela` | number | Sí | Escuela de la que será director (máx. 3 directores por escuela) |
 | `telefono` | string | No | |
 | `fechaNacimiento` | string | No | YYYY-MM-DD |
 | `fechaNombramiento` | string | No | YYYY-MM-DD |
 
 **Respuesta 201:** Director registrado.
 
-**Errores:** 401, 403, 409 (email ya registrado o escuela ya tiene director).
+**Errores:** 401, 403, 409 (email ya registrado o escuela ya tiene 3 directores).
 
 ---
 
@@ -287,20 +298,73 @@ Requiere: **JWT** + **Admin**.
 
 ---
 
-### 4.6 Cantidad de administradores (público)
+### 4.6 Cantidad de administradores
 
 **`GET /personas/admins/cantidad`**  
-**No requiere token.** Útil para saber si aún se pueden registrar los 3 admins iniciales.
+Requiere: **JWT** + **Admin**.
 
 **Respuesta 200:**
 
 ```json
 {
-  "cantidad": 1,
-  "maxIniciales": 3,
+  "cantidad": 3,
+  "maxAdmins": 5,
   "mensaje": "Puedes registrar 2 administrador(es) más"
 }
 ```
+
+---
+
+### 4.7 Alumnos y Padres (GET)
+
+#### Listar alumnos
+
+**`GET /personas/alumnos`**  
+**`GET /personas/alumnos?escuelaId=1`**  
+**`GET /personas/alumnos?escuelaId=1&page=1&limit=20`**  
+Requiere: **JWT** + **Admin o Director**.
+
+- **Admin**: todos los alumnos; opcional `?escuelaId=X` para filtrar.
+- **Director**: solo alumnos de su escuela.
+- **Paginación**: `page` y `limit` opcionales.
+
+Incluye `persona`, `escuela` y `padre` (si tiene).
+
+#### Obtener alumno por ID
+
+**`GET /personas/alumnos/:id`**  
+Requiere: **JWT** + **Admin o Director**. Director solo alumnos de su escuela.
+
+Incluye padre (si tiene).
+
+#### Ver padre de un alumno
+
+**`GET /personas/alumnos/:id/padre`**  
+Requiere: **JWT** + **Admin o Director**.
+
+Devuelve el padre del alumno, o `data: null` si no tiene.
+
+#### Listar padres
+
+**`GET /personas/padres`**  
+**`GET /personas/padres?page=1&limit=20`**  
+Requiere: **JWT** + **Admin**.
+
+Lista todos los padres con sus alumnos. Paginación opcional (`page`, `limit`).
+
+#### Obtener padre por ID
+
+**`GET /personas/padres/:id`**  
+Requiere: **JWT** + **Admin**.
+
+Padre con sus alumnos.
+
+#### Ver hijos de un padre
+
+**`GET /personas/padres/:id/alumnos`**  
+Requiere: **JWT** + **Admin**.
+
+Lista de alumnos (hijos) del padre.
 
 ---
 
@@ -332,9 +396,10 @@ Requiere: **JWT** + **Admin**.
 ### 5.2 Listar todas las escuelas
 
 **`GET /escuelas`**  
+**`GET /escuelas?page=1&limit=20`**  
 Requiere: **JWT** + **Admin**.
 
-**Respuesta 200:** `{ message, description, total, data: [ ...escuelas ] }`. Cada escuela incluye `id`, `nombre`, `nivel`, `clave`, `direccion`, `telefono`.
+**Respuesta 200:** `{ message, description, total, data: [ ...escuelas ], meta?: { page, limit, total, totalPages } }`. Paginación opcional.
 
 ---
 
@@ -556,16 +621,13 @@ Requiere: **JWT** + **Admin, Director o Alumno**.
 ### 6.4 Descargar PDF del libro
 
 **`GET /libros/:id/pdf`**  
-Requiere: **JWT** + **Admin, Director o Alumno**.
-
-- **Admin/Director:** Cualquier libro.
-- **Alumno:** Solo libros asignados a su escuela. Si intenta descargar un libro de otra escuela → 403.
+Requiere: **JWT** + **Admin**. Solo administradores pueden descargar el PDF.
 
 **Params:** `id` (number).
 
 **Respuesta 200:** Cuerpo es el archivo PDF (`Content-Type: application/pdf`). Usar como descarga o abrir en nueva pestaña.
 
-**Errores:** 401, 403 (alumno intentando libro de otra escuela), 404 (libro no existe o no tiene PDF).
+**Errores:** 401, 403 (no es administrador), 404 (libro no existe o no tiene PDF).
 
 ---
 
@@ -584,11 +646,54 @@ Requiere: **JWT** + **Admin**.
 
 ---
 
-## 7. Maestros
+## 7. Director
+
+Dashboard exclusivo para directores de escuela. Requiere **JWT** + **Director**.
+
+### 7.1 Dashboard del director
+
+**`GET /director/dashboard`**  
+Requiere: **JWT** + **Director**.
+
+**Propósito:** Obtener estadísticas de la escuela del director autenticado: datos de la escuela, total de estudiantes, profesores y libros disponibles.
+
+**Respuesta 200:**
+
+```json
+{
+  "message": "Dashboard obtenido correctamente",
+  "data": {
+    "escuela": {
+      "id": 1,
+      "nombre": "Escuela Primaria Benito Juárez",
+      "nivel": "Primaria",
+      "clave": "29DPR0123X",
+      "direccion": "Calle Principal #123",
+      "telefono": "5551234567"
+    },
+    "totalEstudiantes": 120,
+    "totalProfesores": 15,
+    "librosDisponibles": 8
+  }
+}
+```
+
+| Campo | Descripción |
+|-------|-------------|
+| `escuela` | Datos de la escuela del director |
+| `totalEstudiantes` | Alumnos en su escuela |
+| `totalProfesores` | Maestros en su escuela |
+| `librosDisponibles` | Libros asignados y activos en su escuela |
+
+**Errores:** 401 (no autenticado), 403 (solo directores).
+
+---
+
+## 8. Maestros
 
 Todos los endpoints requieren **JWT** + **Maestro** (usuario autenticado debe ser maestro). El maestro solo ve/asigna alumnos de su contexto (misma escuela, asignación por materia).
 
-### 7.1 Listar mis alumnos
+### 8.1 Listar mis alumnos
 
 **`GET /maestros/mis-alumnos`**  
 Requiere: **JWT** + **Maestro**.
@@ -599,7 +704,7 @@ Requiere: **JWT** + **Maestro**.
 
 ---
 
-### 7.2 Obtener un alumno por ID
+### 8.2 Obtener un alumno por ID
 
 **`GET /maestros/mis-alumnos/:id`**  
 Requiere: **JWT** + **Maestro**. Solo si el alumno está asignado al maestro.
@@ -612,7 +717,7 @@ Requiere: **JWT** + **Maestro**. Solo si el alumno está asignado al maestro.
 
 ---
 
-### 7.3 Asignar alumno a mi clase
+### 8.3 Asignar alumno a mi clase
 
 **`POST /maestros/asignar-alumno`**  
 Requiere: **JWT** + **Maestro**. El alumno debe ser de la misma escuela.
@@ -637,7 +742,7 @@ Requiere: **JWT** + **Maestro**. El alumno debe ser de la misma escuela.
 
 ---
 
-### 7.4 Desasignar alumno de mi clase
+### 8.4 Desasignar alumno de mi clase
 
 **`DELETE /maestros/mis-alumnos/:alumnoId/materia/:materiaId`**  
 Requiere: **JWT** + **Maestro**.
@@ -652,25 +757,65 @@ Requiere: **JWT** + **Maestro**.
 
 ---
 
-## 8. Permisos por rol
+## 9. Auditoría
+
+Solo administradores pueden consultar los logs de auditoría.
+
+### 9.1 Listar logs de auditoría
+
+**`GET /audit`**  
+**`GET /audit?page=1&limit=20`**  
+Requiere: **JWT** + **Admin**.
+
+**Respuesta 200:**
+
+```json
+{
+  "message": "Logs de auditoría obtenidos correctamente",
+  "total": 50,
+  "meta": { "page": 1, "limit": 20, "total": 50, "totalPages": 3 },
+  "data": [
+    {
+      "id": 1,
+      "accion": "login",
+      "usuarioId": 1,
+      "ip": "192.168.1.1",
+      "detalles": "admin@example.com",
+      "fecha": "2025-02-04T12:00:00.000Z"
+    }
+  ]
+}
+```
+
+**Acciones registradas:** `login`, `login_fallido`, `registro_admin`, `registro_padre`, `registro_alumno`, `registro_maestro`, `registro_director`, `escuela_crear`, `escuela_actualizar`, `escuela_eliminar`, `libro_cargar`, `libro_eliminar`.
+
+Ver [AUDITORIA.md](./AUDITORIA.md) para más detalles.
+
+---
+
+## 10. Permisos por rol
 
 | Recurso | Admin | Director | Maestro | Padre | Alumno |
 |---------|-------|----------|---------|-------|--------|
-| Login, registro-admin, admins/cantidad | Público | Público | Público | Público | Público |
+| Login, `/`, `/health` | Público | Público | Público | Público | Público |
 | Perfil | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Personas: registro padre/director/admins | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Director: GET /director/dashboard | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Personas: registro admin (máx 5) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Personas: registro padre/director | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Personas: registro alumno/maestro | ✅ | ✅ (solo su escuela) | ❌ | ❌ | ❌ |
 | Escuelas: crear, listar, PUT, DELETE, otorgar libro, ver pendientes | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Escuelas: GET :id, :id/libros, :id/libros/pendientes, :id/maestros, :id/alumnos | ✅ | ✅ (solo su escuela) | ❌ | ❌ | ❌ |
 | Escuelas: GET mis-libros | ❌ | ❌ | ❌ | ❌ | ✅ (libros de su escuela) |
 | Escuelas: POST :id/libros/canjear (canjear libro) | ✅ | ✅ (solo su escuela) | ❌ | ❌ | ❌ |
 | Libros: cargar, listar, DELETE :id | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Libros: GET :id, :id/pdf | ✅ | ✅ | ❌ | ❌ | ✅ (solo libros de su escuela) |
+| Libros: GET :id (detalle) | ✅ | ✅ | ❌ | ❌ | ✅ (solo libros de su escuela) |
+| Libros: GET :id/pdf (descargar) | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Maestros: mis-alumnos, asignar, desasignar | ❌ | ❌ | ✅ | ❌ | ❌ |
+| Auditoría: GET /audit | ✅ | ❌ | ❌ | ❌ | ❌ |
 
 ---
 
-## 9. Códigos de error
+## 11. Códigos de error
 
 | Código | Significado | Acción sugerida en frontend |
 |--------|-------------|-----------------------------|
@@ -687,14 +832,15 @@ En respuestas de error el backend suele devolver un objeto con `message` y a vec
 ## Resumen rápido para integración
 
 1. **Login:** `POST /auth/login` con `{ email, password }` → guardar `access_token` y usarlo en `Authorization: Bearer <token>`.
-2. **Registro inicial:** `GET /personas/admins/cantidad` (sin token). Si `cantidad < 3`, permitir `POST /auth/registro-admin`.
-3. **Libros:** Cargar con `POST /libros/cargar` (multipart: `pdf`, `titulo`, `grado`). Listar con `GET /libros`. Detalle y segmentos con `GET /libros/:id`. PDF con `GET /libros/:id/pdf`. Eliminar con `DELETE /libros/:id` (solo admin).
-4. **Escuelas:** CRUD con `/escuelas` (admin). Libros: doble verificación (admin otorga, director canjea). Ver [FLUJO_LIBROS_DOBLE_VERIFICACION.md](./FLUJO_LIBROS_DOBLE_VERIFICACION.md).
-5. **Alumnos:** `GET /escuelas/mis-libros` para listar libros de su escuela. `GET /libros/:id` y `GET /libros/:id/pdf` para leer y descargar (solo libros asignados a su escuela).
+2. **Registro admin:** Solo administradores pueden crear nuevos admins. `GET /personas/admins/cantidad` (con token admin) para ver cupo. `POST /auth/registro-admin` (con token admin). Máx. 5 admins.
+3. **Libros:** Cargar con `POST /libros/cargar` (multipart: `pdf`, `titulo`, `grado`). Listar con `GET /libros`. Detalle y segmentos con `GET /libros/:id`. Descargar PDF con `GET /libros/:id/pdf` (solo admin). Eliminar con `DELETE /libros/:id` (solo admin).
+4. **Escuelas:** CRUD con `/escuelas` (admin). Paginación: `?page=&limit=`. Libros: doble verificación (admin otorga, director canjea). Ver [FLUJO_LIBROS_DOBLE_VERIFICACION.md](./FLUJO_LIBROS_DOBLE_VERIFICACION.md).
+5. **Alumnos/Padres:** Paginación en `GET /personas/alumnos` y `GET /personas/padres` con `?page=&limit=`.
 6. **Maestros:** `GET /maestros/mis-alumnos`, `POST /maestros/asignar-alumno` (`alumnoId`, `materiaId`), `DELETE /maestros/mis-alumnos/:alumnoId/materia/:materiaId`.
+7. **Auditoría:** `GET /audit` (solo admin) con `?page=&limit=`.
 
-Para probar todos los endpoints con el token: **Swagger** en `http://localhost:3000/api`.
+**Swagger** (solo en desarrollo): `http://localhost:3000/api`. Desactivado en producción.
 
 ---
 
-*Última actualización: Febrero 2025. API Lector – Sistema Educativo.*
+*Última actualización: Febrero 2025. API Lector – Sistema Educativo. Ver [SEGURIDAD.md](./SEGURIDAD.md) para medidas de seguridad.*

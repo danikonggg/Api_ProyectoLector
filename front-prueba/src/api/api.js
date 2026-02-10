@@ -3,7 +3,13 @@ const TOKEN_KEY = 'api_lector_token';
 const USER_KEY = 'api_lector_user';
 
 export function getBaseUrl() {
-  return (localStorage.getItem(BASE_URL_KEY) || 'http://localhost:3000').replace(/\/$/, '');
+  const stored = localStorage.getItem(BASE_URL_KEY);
+  if (stored) return stored.replace(/\/$/, '');
+  // En dev con Vite (puerto 5173), usar proxy para evitar CORS
+  if (typeof window !== 'undefined' && window.location.port === '5173') {
+    return window.location.origin;
+  }
+  return 'http://localhost:3000';
 }
 
 export function setBaseUrl(val) {
@@ -52,6 +58,35 @@ export async function api(method, path, body, options = {}) {
   }
   if (!res.ok) {
     const err = new Error(data?.message || data?.error || JSON.stringify(data));
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
+/**
+ * Subir archivo con FormData (multipart/form-data).
+ * No usa Content-Type para que el navegador añada el boundary.
+ */
+export async function apiUpload(path, formData) {
+  const url = `${getBaseUrl()}${path}`;
+  const headers = {};
+  if (getToken()) headers.Authorization = `Bearer ${getToken()}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: formData,
+  });
+  const contentType = res.headers.get('Content-Type') || '';
+  let data;
+  if (contentType.includes('application/json')) {
+    data = await res.json();
+  } else {
+    data = await res.text();
+  }
+  if (!res.ok) {
+    const err = new Error(data?.message || data?.error || String(data));
     err.status = res.status;
     err.data = data;
     throw err;

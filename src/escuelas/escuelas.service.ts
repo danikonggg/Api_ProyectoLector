@@ -12,6 +12,7 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -21,9 +22,17 @@ import { EscuelaLibroPendiente } from './entities/escuela-libro-pendiente.entity
 import { Libro } from '../libros/entities/libro.entity';
 import { CrearEscuelaDto } from './dto/crear-escuela.dto';
 import { ActualizarEscuelaDto } from './dto/actualizar-escuela.dto';
+import { AuditService } from '../audit/audit.service';
+
+export interface AuditContext {
+  usuarioId?: number | null;
+  ip?: string | null;
+}
 
 @Injectable()
 export class EscuelasService {
+  private readonly logger = new Logger(EscuelasService.name);
+
   constructor(
     @InjectRepository(Escuela)
     private readonly escuelaRepository: Repository<Escuela>,
@@ -33,13 +42,14 @@ export class EscuelasService {
     private readonly escuelaLibroPendienteRepository: Repository<EscuelaLibroPendiente>,
     @InjectRepository(Libro)
     private readonly libroRepository: Repository<Libro>,
+    private readonly auditService: AuditService,
   ) {}
 
   /**
    * Crear una nueva escuela
    */
-  async crear(crearEscuelaDto: CrearEscuelaDto) {
-    console.log(`📝 Intento de creación de escuela: ${crearEscuelaDto.nombre}`);
+  async crear(crearEscuelaDto: CrearEscuelaDto, auditContext?: AuditContext) {
+    this.logger.log(`Intento de creación de escuela: ${crearEscuelaDto.nombre}`);
 
     // Verificar si ya existe una escuela con el mismo nombre
     const escuelaExistente = await this.escuelaRepository.findOne({
@@ -47,7 +57,7 @@ export class EscuelasService {
     });
 
     if (escuelaExistente) {
-      console.log(`❌ Creación fallida: Escuela con nombre duplicado - ${crearEscuelaDto.nombre}`);
+      this.logger.warn(`Creación fallida: Escuela con nombre duplicado - ${crearEscuelaDto.nombre}`);
       throw new ConflictException('Ya existe una escuela con ese nombre');
     }
 
@@ -58,7 +68,7 @@ export class EscuelasService {
       });
 
       if (escuelaConClave) {
-        console.log(`❌ Creación fallida: Escuela con clave duplicada - ${crearEscuelaDto.clave}`);
+        this.logger.warn(`Creación fallida: Escuela con clave duplicada - ${crearEscuelaDto.clave}`);
         throw new ConflictException('Ya existe una escuela con esa clave');
       }
     }
@@ -74,7 +84,13 @@ export class EscuelasService {
 
     const escuelaGuardada = await this.escuelaRepository.save(escuela);
 
-    console.log(`✅ Escuela creada exitosamente: ${escuelaGuardada.nombre} - ID: ${escuelaGuardada.id}`);
+    this.logger.log(`Escuela creada exitosamente: ${escuelaGuardada.nombre} - ID: ${escuelaGuardada.id}`);
+
+    await this.auditService.log('escuela_crear', {
+      usuarioId: auditContext?.usuarioId ?? null,
+      ip: auditContext?.ip ?? null,
+      detalles: `${escuelaGuardada.nombre} (id: ${escuelaGuardada.id})`,
+    });
 
     return {
       message: 'Escuela creada exitosamente',
@@ -85,18 +101,34 @@ export class EscuelasService {
 
   /**
    * Obtener todas las escuelas
+   * @param page - Página (1-based). Si no se pasa, devuelve todas.
+   * @param limit - Límite por página (default 50). Si no se pasa con page, devuelve todas.
    */
-  async obtenerTodas() {
-    const escuelas = await this.escuelaRepository.find({
-      order: { nombre: 'ASC' },
-    });
+  async obtenerTodas(page?: number, limit?: number) {
+    const qb = this.escuelaRepository
+      .createQueryBuilder('escuela')
+      .orderBy('escuela.nombre', 'ASC');
 
-    console.log(`📋 Consulta de escuelas: ${escuelas.length} encontradas`);
+    const total = await qb.getCount();
+
+    if (page != null && limit != null && page >= 1 && limit >= 1) {
+      qb.skip((page - 1) * limit).take(limit);
+    }
+
+    const escuelas = await qb.getMany();
+
+    this.logger.log(`Consulta de escuelas: ${escuelas.length} encontradas`);
+
+    const meta =
+      page != null && limit != null
+        ? { page, limit, total, totalPages: Math.ceil(total / limit) }
+        : undefined;
 
     return {
       message: 'Escuelas obtenidas exitosamente',
       description: `Se encontraron ${escuelas.length} escuela(s) en el sistema`,
-      total: escuelas.length,
+      total,
+      ...(meta && { meta }),
       data: escuelas,
     };
   }
@@ -124,8 +156,8 @@ export class EscuelasService {
   /**
    * Actualizar una escuela
    */
-  async actualizar(id: number, actualizarEscuelaDto: ActualizarEscuelaDto) {
-    console.log(`📝 Intento de actualización de escuela ID: ${id}`);
+  async actualizar(id: number, actualizarEscuelaDto: ActualizarEscuelaDto, auditContext?: AuditContext) {
+    this.logger.log(`Intento de actualización de escuela ID: ${id}`);
 
     const escuela = await this.escuelaRepository.findOne({
       where: { id },
@@ -162,7 +194,13 @@ export class EscuelasService {
 
     const escuelaActualizada = await this.escuelaRepository.save(escuela);
 
-    console.log(`✅ Escuela actualizada exitosamente: ${escuelaActualizada.nombre} - ID: ${escuelaActualizada.id}`);
+    this.logger.log(`Escuela actualizada exitosamente: ${escuelaActualizada.nombre} - ID: ${escuelaActualizada.id}`);
+
+    await this.auditService.log('escuela_actualizar', {
+      usuarioId: auditContext?.usuarioId ?? null,
+      ip: auditContext?.ip ?? null,
+      detalles: `id: ${id} | ${escuelaActualizada.nombre}`,
+    });
 
     return {
       message: 'Escuela actualizada exitosamente',
@@ -174,8 +212,8 @@ export class EscuelasService {
   /**
    * Eliminar una escuela
    */
-  async eliminar(id: number) {
-    console.log(`🗑️ Intento de eliminación de escuela ID: ${id}`);
+  async eliminar(id: number, auditContext?: AuditContext) {
+    this.logger.log(`Intento de eliminación de escuela ID: ${id}`);
 
     const escuela = await this.escuelaRepository.findOne({
       where: { id },
@@ -201,7 +239,13 @@ export class EscuelasService {
 
     await this.escuelaRepository.remove(escuela);
 
-    console.log(`✅ Escuela eliminada exitosamente: ${escuela.nombre} - ID: ${id}`);
+    this.logger.log(`Escuela eliminada exitosamente: ${escuela.nombre} - ID: ${id}`);
+
+    await this.auditService.log('escuela_eliminar', {
+      usuarioId: auditContext?.usuarioId ?? null,
+      ip: auditContext?.ip ?? null,
+      detalles: `${escuela.nombre} (id: ${id})`,
+    });
 
     return {
       message: 'Escuela eliminada exitosamente',
@@ -275,8 +319,8 @@ export class EscuelasService {
     });
     await this.escuelaLibroPendienteRepository.save(pendiente);
 
-    console.log(
-      `✅ Libro otorgado (pendiente de canje): "${libro.titulo}" (${codigo}) → escuela ID ${escuelaId}`,
+    this.logger.log(
+      `Libro otorgado (pendiente de canje): "${libro.titulo}" (${codigo}) → escuela ID ${escuelaId}`,
     );
 
     return {
@@ -298,7 +342,7 @@ export class EscuelasService {
    * Solo funciona si el admin ya otorgó ese libro a la escuela.
    * Crea Escuela_Libro y elimina el pendiente.
    */
-  async canjearLibroPorCodigo(escuelaId: number, codigo: string) {
+  async canjearLibroPorCodigo(escuelaId: number, codigo: string, auditContext?: AuditContext) {
     const escuela = await this.escuelaRepository.findOne({
       where: { id: escuelaId },
     });
@@ -349,9 +393,15 @@ export class EscuelasService {
     await this.escuelaLibroRepository.save(el);
     await this.escuelaLibroPendienteRepository.remove(pendiente);
 
-    console.log(
-      `✅ Libro canjeado: "${libro.titulo}" (${codigo}) → escuela ID ${escuelaId}`,
+    this.logger.log(
+      `Libro canjeado: "${libro.titulo}" (${codigo}) → escuela ID ${escuelaId}`,
     );
+
+    await this.auditService.log('libro_canjear', {
+      usuarioId: auditContext?.usuarioId ?? null,
+      ip: auditContext?.ip ?? null,
+      detalles: `${libro.titulo} (id: ${libro.id}, codigo: ${codigo}) → escuela ID ${escuelaId}`,
+    });
 
     return {
       message: 'Libro canjeado correctamente.',
@@ -450,11 +500,12 @@ export class EscuelasService {
 
   /**
    * Listar alumnos de una escuela.
+   * Incluye persona y padre (si tiene) para ver de quién es hijo cada alumno.
    */
   async listarAlumnosDeEscuela(escuelaId: number) {
     const escuela = await this.escuelaRepository.findOne({
       where: { id: escuelaId },
-      relations: ['alumnos', 'alumnos.persona'],
+      relations: ['alumnos', 'alumnos.persona', 'alumnos.padre', 'alumnos.padre.persona'],
     });
     if (!escuela) {
       throw new NotFoundException(`No se encontró la escuela con ID ${escuelaId}`);
@@ -463,6 +514,7 @@ export class EscuelasService {
       id: a.id,
       personaId: a.personaId,
       escuelaId: a.escuelaId,
+      padreId: a.padreId ?? null,
       grado: a.grado,
       grupo: a.grupo,
       cicloEscolar: a.cicloEscolar,
@@ -473,6 +525,21 @@ export class EscuelasService {
             apellido: a.persona.apellido,
             correo: a.persona.correo,
             telefono: a.persona.telefono,
+          }
+        : null,
+      padre: a.padre
+        ? {
+            id: a.padre.id,
+            parentesco: a.padre.parentesco,
+            persona: a.padre.persona
+              ? {
+                  id: a.padre.persona.id,
+                  nombre: a.padre.persona.nombre,
+                  apellido: a.padre.persona.apellido,
+                  correo: a.padre.persona.correo,
+                  telefono: a.padre.persona.telefono,
+                }
+              : null,
           }
         : null,
     }));

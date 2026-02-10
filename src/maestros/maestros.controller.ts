@@ -32,7 +32,6 @@ import { AsignarAlumnoDto } from './dto/asignar-alumno.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { MaestroGuard } from '../auth/guards/maestro.guard';
 
-@ApiTags('Maestros')
 @Controller('maestros')
 @UseGuards(JwtAuthGuard, MaestroGuard)
 @ApiBearerAuth('JWT-auth')
@@ -44,6 +43,7 @@ export class MaestrosController {
    * Listar alumnos asignados al maestro.
    */
   @Get('mis-alumnos')
+  @ApiTags('Solo Maestro')
   @ApiOperation({ summary: 'Listar mis alumnos (requiere maestro)' })
   @ApiResponse({ status: 200, description: 'Lista de alumnos asignados' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
@@ -58,6 +58,7 @@ export class MaestrosController {
    * Obtener un alumno por ID. Solo si está asignado al maestro.
    */
   @Get('mis-alumnos/:id')
+  @ApiTags('Solo Maestro')
   @ApiOperation({ summary: 'Obtener un alumno (solo si está en tu clase)' })
   @ApiParam({ name: 'id', description: 'ID del alumno' })
   @ApiResponse({ status: 200, description: 'Alumno encontrado' })
@@ -79,6 +80,7 @@ export class MaestrosController {
    */
   @Post('asignar-alumno')
   @HttpCode(HttpStatus.CREATED)
+  @ApiTags('Solo Maestro')
   @ApiOperation({ summary: 'Asignar alumno a mi clase (misma escuela)' })
   @ApiResponse({ status: 201, description: 'Alumno asignado' })
   @ApiResponse({ status: 400, description: 'Datos inválidos' })
@@ -97,6 +99,7 @@ export class MaestrosController {
    */
   @Delete('mis-alumnos/:alumnoId/materia/:materiaId')
   @HttpCode(HttpStatus.OK)
+  @ApiTags('Solo Maestro')
   @ApiOperation({ summary: 'Desasignar alumno de mi clase' })
   @ApiParam({ name: 'alumnoId', description: 'ID del alumno' })
   @ApiParam({ name: 'materiaId', description: 'ID de la materia' })

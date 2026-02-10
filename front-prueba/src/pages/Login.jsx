@@ -1,11 +1,14 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api, setBaseUrl } from '../api/api';
 import { setToken, setUser } from '../api/api';
 
 export default function Login() {
-  const [baseUrl, setBaseUrlState] = useState(localStorage.getItem('api_lector_base_url') || 'http://localhost:3000');
+  const defaultUrl = typeof window !== 'undefined' && window.location.port === '5173'
+    ? window.location.origin
+    : 'http://localhost:3000';
+  const [baseUrl, setBaseUrlState] = useState(localStorage.getItem('api_lector_base_url') || defaultUrl);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -59,6 +62,7 @@ export default function Login() {
         <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
           <h1 style={{ fontSize: '1.75rem', marginBottom: '0.5rem' }}>API Lector</h1>
           <p style={{ color: 'var(--text-muted)' }}>Inicia sesión con tu cuenta</p>
+          <Link to="/pruebas" style={{ fontSize: '0.9rem', color: 'var(--accent)' }}>🧪 Ir a pruebas de registro</Link>
         </div>
         <form onSubmit={handleSubmit}>
           <div className="form-grid" style={{ gridTemplateColumns: '1fr' }}>
@@ -68,8 +72,13 @@ export default function Login() {
                 type="text"
                 value={baseUrl}
                 onChange={(e) => setBaseUrlState(e.target.value)}
-                placeholder="http://localhost:3000"
+                placeholder={defaultUrl}
               />
+              {defaultUrl.includes('5173') && (
+                <small style={{ color: 'var(--text-muted)', display: 'block', marginTop: 4 }}>
+                  Usa esta URL para que el proxy evite CORS (API debe estar en :3000)
+                </small>
+              )}
             </label>
             <label>
               <span>Correo</span>

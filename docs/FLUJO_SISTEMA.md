@@ -1,13 +1,40 @@
-# 📊 ANÁLISIS COMPLETO DEL FLUJO DEL SISTEMA
+# 📊 Flujo del sistema – API Lector
 
-## 🎯 Resumen Ejecutivo
+Análisis completo de fases, permisos y flujos del sistema educativo.
 
-Sistema educativo con roles jerárquicos donde:
-- **Administradores**: Gestionan todo el sistema (escuelas, directores, usuarios)
-- **Directores**: Gestionan su propia escuela (alumnos y maestros)
-- **Maestros**: Enseñan en una escuela específica
-- **Alumnos**: Estudian en una escuela específica
-- **Padres**: Tienen hijos (alumnos) en el sistema
+---
+
+## Índice
+
+1. [Resumen ejecutivo](#-resumen-ejecutivo)
+2. [Fase 1: Inicialización](#fase-1-inicialización-sin-autenticación)
+3. [Fase 2: Autenticación](#fase-2-autenticación)
+4. [Fase 3: Gestión de escuelas](#fase-3-gestión-de-escuelas-solo-administradores)
+5. [Fase 4: Gestión de directores](#fase-4-gestión-de-directores-solo-administradores)
+6. [Fase 5: Registro de alumnos](#fase-5-registro-de-alumnos-admin-o-director)
+7. [Fase 6: Registro de maestros](#fase-6-registro-de-maestros-admin-o-director)
+8. [Fase 7: Padres y alumnos (consultas)](#fase-7-registro-de-padres-y-alumnos-padrealumno)
+9. [Fase 8: Acceso de alumnos a libros](#fase-8-acceso-de-alumnos-a-libros)
+10. [Fase 9: Consultas admin](#fase-9-consultas-solo-administradores)
+11. [Guards y permisos](#-sistema-de-seguridad-y-permisos)
+12. [Matriz de permisos](#-matriz-de-permisos)
+13. [Flujos típicos](#-flujo-típico-de-uso)
+14. [Modelo de datos](#-modelo-de-datos)
+15. [Documentación relacionada](#-documentación-relacionada)
+
+---
+
+## 🎯 Resumen ejecutivo
+
+Sistema educativo con roles jerárquicos:
+
+| Rol | Alcance |
+|-----|---------|
+| **Administrador** | Todo el sistema: escuelas, directores, padres, libros, auditoría. Máx. 5 admins. |
+| **Director** | Solo su escuela: alumnos, maestros, canjear libros. |
+| **Maestro** | Alumnos asignados a su clase (por materia), misma escuela. |
+| **Alumno** | Libros asignados a su escuela (lectura y descarga). |
+| **Padre** | Vinculado a sus hijos (alumnos). |
 
 ---
 
@@ -15,16 +42,16 @@ Sistema educativo con roles jerárquicos donde:
 
 ### **FASE 1: INICIALIZACIÓN** (Sin autenticación)
 
-#### 1.1 Registro de Administradores Iniciales
+#### 1.1 Registro de Administradores
 ```
 POST /auth/registro-admin
 ```
-- **Permisos**: Público (sin autenticación)
-- **Límite**: Máximo 3 administradores
+- **Permisos**: Público (sin autenticación) o con JWT de admin (hasta completar 5)
+- **Límite**: Máximo 5 administradores en el sistema
 - **Validación**: 
   - Email único
   - Contraseña mínimo 6 caracteres
-  - Verifica que no se excedan 3 admins
+  - Verifica que no se excedan 5 admins
 - **Resultado**: Crea Persona + Administrador, genera password hasheado
 
 **Flujo:**
@@ -191,7 +218,7 @@ Body: { ...datos, idEscuela }
 - **Validaciones**:
   - Email único
   - Escuela existe
-  - Escuela no tiene director asignado (1 director por escuela)
+  - Escuela tiene menos de 3 directores (máx. 3 directores por escuela)
 - **Resultado**: Crea Persona + Director, asocia a Escuela
 
 **Flujo:**
@@ -206,7 +233,7 @@ Verifica email único
   ↓
 Verifica escuela existe
   ↓
-Verifica escuela NO tiene director
+Verifica escuela tiene menos de 3 directores
   ↓
 Crea Persona (tipoPersona: 'director')
   ↓
@@ -295,7 +322,9 @@ Body: { ...datos [, idEscuela] }
 
 ---
 
-### **FASE 7: REGISTRO DE PADRES** (Solo Administradores)
+### **FASE 7: REGISTRO DE PADRES Y ALUMNOS** (Padre–Alumno)
+
+**📋 Flujo completo:** Ver [FLUJO_PADRE_ALUMNO.md](./FLUJO_PADRE_ALUMNO.md).
 
 #### 7.1 Registrar Padre
 ```
@@ -305,7 +334,38 @@ Body: { ...datos }
 ```
 - **Permisos**: AdminGuard
 - **Validaciones**: Email único
-- **Nota**: Los padres no están asociados a escuela directamente
+
+#### 7.2 Registrar Padre e Hijo juntos
+```
+POST /personas/registro-padre-con-hijo
+Authorization: Bearer <token_admin>
+Body: { padre: {...}, hijo: {...} }
+```
+- Crea padre e hijo en una operación y los vincula.
+
+#### 7.3 Registrar Alumno (con opciones de padre)
+```
+POST /personas/registro-alumno
+Body: { ...datos, padreId?: number, crearPadreAutomatico?: boolean }
+```
+- **padreId**: vincula a un padre existente.
+- **crearPadreAutomatico**: crea padre con datos temporales (@temp.local); completar después con `PUT /personas/padres/:id`.
+
+#### 7.4 Actualizar datos del padre
+```
+PUT /personas/padres/:id
+Body: { nombre?, apellido?, email?, password?, telefono? }
+```
+- Para completar padres creados con `crearPadreAutomatico`.
+
+#### 7.5 Consultas (GET)
+- `GET /personas/alumnos` – Listar alumnos (Admin/Director). Incluye padre. Query: `escuelaId`, `page`, `limit`.
+- `GET /personas/alumnos/buscar` – Búsqueda global por un campo. Solo query: `campo` y `valor` (sin paginación ni filtro por escuela; director sigue restringido a su escuela).
+- `GET /personas/alumnos/:id` – Alumno por ID.
+- `GET /personas/alumnos/:id/padre` – Padre del alumno.
+- `GET /personas/padres` – Listar padres (Admin). Incluye `pendiente` para temporales.
+- `GET /personas/padres/:id` – Padre por ID.
+- `GET /personas/padres/:id/alumnos` – Hijos del padre.
 
 ---
 
@@ -331,15 +391,40 @@ Authorization: Bearer <token_alumno>
 
 ---
 
-### **FASE 9: CONSULTAS** (Solo Administradores)
+### **FASE 9: CONSULTAS** (Administradores y Director)
 
-#### 9.1 Listar Administradores
+#### 9.1 Dashboard Admin
+```
+GET /admin/dashboard
+Authorization: Bearer <token_admin>
+```
+- **Permisos**: AdminGuard
+- **Retorna**: Estadísticas globales (escuelas activas, estudiantes, profesores, libros disponibles)
+
+#### 9.2 Dashboard Director
+```
+GET /director/dashboard
+Authorization: Bearer <token_admin_director>
+```
+- **Permisos**: DirectorGuard
+- **Retorna**: Datos de su escuela, total estudiantes, profesores, libros disponibles
+
+#### 9.3 Listar Administradores
 ```
 GET /personas/admins
 Authorization: Bearer <token_admin>
 ```
 - **Permisos**: AdminGuard
 - **Retorna**: Lista de todos los administradores
+
+#### 9.4 Auditoría (solo Admin)
+```
+GET /audit
+Authorization: Bearer <token_admin>
+Query: ?page=1&limit=20
+```
+- **Permisos**: AdminGuard
+- **Retorna**: Logs de acciones (login, registros, escuelas, libros)
 
 ---
 
@@ -405,8 +490,11 @@ Authorization: Bearer <token_admin>
 | Endpoint | Público | Admin | Director | Maestro | Alumno | Padre |
 |----------|--------|-------|----------|---------|--------|-------|
 | `POST /auth/login` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `POST /auth/registro-admin` | ✅ (máx 3) | - | - | - | - | - |
+| `POST /auth/registro-admin` | ✅ | ✅* | - | - | - | - |
 | `GET /auth/profile` | - | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `GET /admin/dashboard` | - | ✅ | ❌ | ❌ | ❌ | ❌ |
+| `GET /director/dashboard` | - | ❌ | ✅ | ❌ | ❌ | ❌ |
+| `GET /audit` | - | ✅ | ❌ | ❌ | ❌ | ❌ |
 | `POST /escuelas` | - | ✅ | ❌ | ❌ | ❌ | ❌ |
 | `GET /escuelas` | - | ✅ | ❌ | ❌ | ❌ | ❌ |
 | `GET /escuelas/:id` | - | ✅ | ❌ | ❌ | ❌ | ❌ |
@@ -417,6 +505,9 @@ Authorization: Bearer <token_admin>
 | `POST /personas/registro-maestro` | - | ✅ | ✅* | ❌ | ❌ | ❌ |
 | `POST /personas/registro-padre` | - | ✅ | ❌ | ❌ | ❌ | ❌ |
 | `GET /personas/admins` | - | ✅ | ❌ | ❌ | ❌ | ❌ |
+| `GET /personas/alumnos` | - | ✅ | ✅* | ❌ | ❌ | ❌ |
+| `GET /personas/alumnos/buscar` | - | ✅ | ✅* | ❌ | ❌ | ❌ |
+| `GET /personas/alumnos/:id` | - | ✅ | ✅* | ❌ | ❌ | ❌ |
 | `GET /maestros/mis-alumnos` | - | ❌ | ❌ | ✅ | ❌ | ❌ |
 | `GET /maestros/mis-alumnos/:id` | - | ❌ | ❌ | ✅ | ❌ | ❌ |
 | `POST /maestros/asignar-alumno` | - | ❌ | ❌ | ✅ | ❌ | ❌ |
@@ -432,10 +523,7 @@ Authorization: Bearer <token_admin>
 | `GET /escuelas/:id/libros/pendientes` | - | ✅ | ✅* | ❌ | ❌ | ❌ |
 | `GET /escuelas/:id/libros` (libros activos) | - | ✅ | ✅* | ❌ | ❌ | ❌ |
 
-*Directores solo pueden registrar en su propia escuela (alumno/maestro sin enviar idEscuela)  
-*Directores solo pueden canjear y ver libros de **su** escuela  
-*Alumnos solo pueden ver y descargar libros asignados a **su** escuela  
-*Maestros solo gestionan alumnos asignados a su clase (Alumno_Maestro) y de su misma escuela
+**Notas:** (1) Registro admin: público hasta completar 5; luego solo con token de admin. (2) Directores: solo su escuela (alumnos, maestros, libros, listados/búsqueda alumnos). (3) Alumnos: solo libros de su escuela. (4) Maestros: solo alumnos de su clase (Alumno_Maestro) y misma escuela.
 
 ---
 
@@ -537,6 +625,7 @@ Escuela (1) ←→ (N) Alumno
 Director (N) ←→ (1) Escuela
 Maestro (N) ←→ (1) Escuela
 Alumno (N) ←→ (1) Escuela
+Alumno (N) ←→ (1) Padre (opcional; padre_id en Alumno)
 
 Alumno_Maestro (asignación alumno–maestro por materia):
   alumno_id, maestro_id, materia_id, fecha_inicio, fecha_fin
@@ -561,7 +650,7 @@ Escuela_Libro (asignación libro–escuela; “vender” libro a la escuela):
 
 1. **Email único**: No puede haber dos personas con el mismo email
 2. **Escuela existe**: Al registrar alumno/maestro, la escuela debe existir
-3. **Un director por escuela**: No se puede asignar dos directores a la misma escuela
+3. **Máximo 3 directores por escuela**: Una escuela puede tener hasta 3 directores.
 4. **Director solo en su escuela**: Los directores solo pueden registrar en su propia escuela, ver y asignar libros de su escuela. Al registrar un alumno, el director puede omitir `idEscuela` y se usará su escuela automáticamente.
 5. **No eliminar escuela con datos**: No se puede eliminar escuela si tiene alumnos/maestros
 6. **Máximo 3 admins iniciales**: Solo los primeros 3 admins se pueden crear sin autenticación
@@ -666,4 +755,21 @@ Escuela_Libro (asignación libro–escuela; “vender” libro a la escuela):
 
 ---
 
-**Última actualización**: Febrero 2025. Alumnos pueden acceder a libros de su escuela (`GET /escuelas/mis-libros`, `GET /libros/:id`, `GET /libros/:id/pdf`). Admin puede eliminar libros (`DELETE /libros/:id`). Frontend con biblioteca digital para alumnos. Ver [FLUJO_LIBROS_DOBLE_VERIFICACION.md](./FLUJO_LIBROS_DOBLE_VERIFICACION.md).
+---
+
+## 📚 Documentación relacionada
+
+| Documento | Uso |
+|-----------|-----|
+| [README.md](./README.md) | Índice central de toda la documentación e inicio rápido |
+| [RUTAS_ADMIN_FRONTEND.md](./RUTAS_ADMIN_FRONTEND.md) | Rutas detalladas para administrador (con ejemplos y tabla resumen) |
+| [RUTAS_DIRECTOR_FRONTEND.md](./RUTAS_DIRECTOR_FRONTEND.md) | Rutas para director |
+| [API_DOCUMENTACION_FRONTEND.md](./API_DOCUMENTACION_FRONTEND.md) | API completa para frontend (todos los roles) |
+| [FLUJO_PADRE_ALUMNO.md](./FLUJO_PADRE_ALUMNO.md) | Flujo padre–alumno (registro, vincular, completar datos) |
+| [FLUJO_LIBROS_DOBLE_VERIFICACION.md](./FLUJO_LIBROS_DOBLE_VERIFICACION.md) | Flujo de libros (otorgar → canjear) |
+| [SEGURIDAD.md](./SEGURIDAD.md) | Medidas de seguridad y checklist producción |
+| [AUDITORIA.md](./AUDITORIA.md) | Módulo de auditoría y acciones registradas |
+
+---
+
+**Última actualización:** Febrero 2025. Incluye búsqueda de alumnos (`GET /personas/alumnos/buscar`), dashboards admin/director y auditoría.

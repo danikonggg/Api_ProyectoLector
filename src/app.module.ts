@@ -11,8 +11,11 @@
  */
 
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ThrottlerGuard } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PersonasModule } from './personas/personas.module';
@@ -20,6 +23,10 @@ import { AuthModule } from './auth/auth.module';
 import { EscuelasModule } from './escuelas/escuelas.module';
 import { MaestrosModule } from './maestros/maestros.module';
 import { LibrosModule } from './libros/libros.module';
+import { AuditModule } from './audit/audit.module';
+import { AdminModule } from './admin/admin.module';
+import { DirectorModule } from './director/director.module';
+import { TypeOrmLoggerService } from './common/database/typeorm-logger.service';
 
 @Module({
   imports: [
@@ -32,6 +39,13 @@ import { LibrosModule } from './libros/libros.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
+
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60000, // 1 minuto
+        limit: 100, // 100 peticiones por minuto por IP
+      },
+    ]),
 
     /**
      * Configuración de TypeORM para PostgreSQL
@@ -59,8 +73,17 @@ import { LibrosModule } from './libros/libros.module';
         // Usa migraciones de TypeORM para cambios controlados
         synchronize: false,
         
-        // Mostrar queries SQL en consola (solo en desarrollo)
-        logging: configService.get('NODE_ENV') === 'development',
+        // Logging: solo en desarrollo y si DB_LOG_QUERIES=true
+        // - true: queries truncadas (120 chars) + errores
+        // - false: solo errores (menos ruido en consola)
+        logging:
+          configService.get('NODE_ENV') === 'development'
+            ? configService.get('DB_LOG_QUERIES', 'true') === 'true'
+              ? ['query', 'error']
+              : ['error']
+            : false,
+        logger: new TypeOrmLoggerService(),
+        maxQueryExecutionTime: 2000, // Log queries lentas (>2s)
       }),
       inject: [ConfigService],
     }),
@@ -71,12 +94,21 @@ import { LibrosModule } from './libros/libros.module';
     EscuelasModule, // Módulo de gestión de escuelas
     MaestrosModule, // Gestión de alumnos por maestros
     LibrosModule, // Carga de libros (PDF → segmentos)
+    AuditModule, // Auditoría de acciones sensibles (solo admin)
+    AdminModule, // Dashboard y endpoints exclusivos para administradores
+    DirectorModule, // Dashboard para directores de escuela
   ],
   
   // Controladores que manejan las rutas HTTP
   controllers: [AppController],
-  
+
   // Servicios que contienen la lógica de negocio
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+  ],
 })
 export class AppModule {}

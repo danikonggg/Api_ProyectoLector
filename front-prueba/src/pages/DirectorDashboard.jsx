@@ -23,15 +23,15 @@ function DirectorContent({ escuelaId }) {
   const [loading, setLoading] = useState(false);
   const [codigoCanjear, setCodigoCanjear] = useState('');
   const [formMaestro, setFormMaestro] = useState({ nombre: '', apellidoPaterno: '', apellidoMaterno: '', email: '', password: '', telefono: '', especialidad: '' });
-  const [formAlumno, setFormAlumno] = useState({ nombre: '', apellidoPaterno: '', apellidoMaterno: '', email: '', password: '', telefono: '', grado: '', grupo: '' });
+  const [formAlumno, setFormAlumno] = useState({ nombre: '', apellidoPaterno: '', apellidoMaterno: '', email: '', password: '', telefono: '', grado: '1', grupo: '' });
 
   const loadAll = async () => {
     if (!escuelaId) return;
     setLoading(true);
     try {
       const [lib, pend, mas, alum] = await Promise.all([
-        api('GET', `/escuelas/${escuelaId}/libros`),
-        api('GET', `/escuelas/${escuelaId}/libros/pendientes`),
+        api('GET', '/director/libros'),
+        api('GET', '/director/libros/pendientes'),
         api('GET', `/escuelas/${escuelaId}/maestros`),
         api('GET', `/escuelas/${escuelaId}/alumnos`),
       ]);
@@ -50,10 +50,10 @@ function DirectorContent({ escuelaId }) {
 
   const canjearLibro = async (e) => {
     e.preventDefault();
-    if (!codigoCanjear.trim() || !escuelaId) return;
+    if (!codigoCanjear.trim()) return;
     setMsg(null);
     try {
-      await api('POST', `/escuelas/${escuelaId}/libros/canjear`, { codigo: codigoCanjear.trim() });
+      await api('POST', '/director/canjear-libro', { codigo: codigoCanjear.trim() });
       setMsg({ type: 'success', text: 'Libro canjeado correctamente' });
       setCodigoCanjear('');
       loadAll();
@@ -79,11 +79,13 @@ function DirectorContent({ escuelaId }) {
     e.preventDefault();
     setMsg(null);
     try {
-      const payload = { ...formAlumno };
-      if (payload.grado) payload.grado = Number(payload.grado);
+      const payload = {
+        ...formAlumno,
+        grado: Number(formAlumno.grado) || 1,
+      };
       await api('POST', '/personas/registro-alumno', payload);
       setMsg({ type: 'success', text: 'Alumno registrado' });
-      setFormAlumno({ nombre: '', apellidoPaterno: '', apellidoMaterno: '', email: '', password: '', telefono: '', grado: '', grupo: '' });
+      setFormAlumno({ nombre: '', apellidoPaterno: '', apellidoMaterno: '', email: '', password: '', telefono: '', grado: '1', grupo: '' });
       loadAll();
     } catch (e) {
       setMsg({ type: 'error', text: e?.data?.message || e?.message });
@@ -152,13 +154,13 @@ function DirectorContent({ escuelaId }) {
 
       <div className="card">
         <h3>Registrar alumno</h3>
-        <p className="card-desc">No necesitas idEscuela.</p>
+        <p className="card-desc">Se usa tu escuela automáticamente. Sin padre (se vincula después).</p>
         <form onSubmit={registrarAlumno} className="form-grid">
           {['nombre', 'apellidoPaterno', 'apellidoMaterno', 'email', 'password', 'telefono', 'grado', 'grupo'].map((k) => (
             <label key={k}><span>{k}</span><input value={formAlumno[k]} onChange={(e) => setFormAlumno({ ...formAlumno, [k]: e.target.value })} required={['nombre','apellidoPaterno','apellidoMaterno','email','password'].includes(k)} /></label>
           ))}
+          <button type="submit" className="btn btn-primary">Registrar</button>
         </form>
-        <button type="submit" className="btn btn-primary">Registrar</button>
       </div>
 
       <div className="card">
@@ -172,12 +174,30 @@ function DirectorContent({ escuelaId }) {
 
       <div className="card">
         <h3>Alumnos</h3>
-        {alumnos.length === 0 ? <p style={{ color: 'var(--text-muted)' }}>Sin alumnos.</p> : alumnos.map((a) => (
-          <div key={a.id} className="list-item">
-            <h4>{a.persona?.nombre} {a.persona?.apellido}</h4>
-            <span className="meta">Grado {a.grado}</span>
-          </div>
-        ))}
+        <p className="card-desc">Lista de alumnos de tu escuela. Se muestra el padre/tutor cuando está asignado.</p>
+        {alumnos.length === 0 ? (
+          <p style={{ color: 'var(--text-muted)' }}>Sin alumnos.</p>
+        ) : (
+          alumnos.map((a) => (
+            <div key={a.id} className="list-item">
+              <div>
+                <h4>{a.persona?.nombre} {a.persona?.apellido}</h4>
+                <span className="meta">
+                  Grado {a.grado}{a.grupo ? ` · Grupo ${a.grupo}` : ''}
+                  {a.padre ? (
+                    <span style={{ marginLeft: '0.5rem', color: 'var(--accent)' }}>
+                      · Padre: {a.padre.persona?.nombre} {a.padre.persona?.apellido}
+                    </span>
+                  ) : (
+                    <span style={{ marginLeft: '0.5rem', color: 'var(--text-muted)', opacity: 0.8 }}>
+                      · Sin padre asignado
+                    </span>
+                  )}
+                </span>
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </>
   );

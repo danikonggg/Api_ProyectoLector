@@ -1,250 +1,155 @@
-# 🚀 API REST con NestJS y PostgreSQL - Sistema de Registro de Usuarios
+# Documentación – API Lector (Sistema Educativo)
 
-API REST para registro de usuarios con diferentes roles (Administrador, Padre, Alumno, Maestro) basada en el modelo de base de datos del sistema educativo.
+API REST para un sistema educativo con roles (Administrador, Director, Maestro, Alumno, Padre), autenticación JWT, gestión de escuelas, libros digitales y auditoría.
 
----
-
-## 📋 Características
-
-- ✅ **Registro de Administradores** - Hasta 3 administradores iniciales sin autenticación
-- ✅ **Registro por Roles** - Administrador, Padre, Alumno, Maestro
-- ✅ **Validación de Datos** - Validación automática con class-validator
-- ✅ **PostgreSQL** - Base de datos relacional
-- ✅ **TypeORM** - ORM para trabajar con la base de datos
+**Stack:** NestJS, TypeORM, PostgreSQL, JWT, Swagger (solo desarrollo).
 
 ---
 
-## 🚀 Inicio Rápido
+## Índice
+
+1. [Inicio rápido](#-inicio-rápido)
+2. [Arquitectura y roles](#-arquitectura-y-roles)
+3. [Documentación por tipo](#-documentación-por-tipo)
+4. [Flujos del sistema](#-flujos-del-sistema)
+5. [Seguridad y auditoría](#-seguridad-y-auditoría)
+6. [Scripts y referencias](#-scripts-y-referencias)
+
+---
+
+## Inicio rápido
+
+### Requisitos
+
+- Node.js 18+
+- PostgreSQL
+- npm o yarn
 
 ### 1. Instalar dependencias
+
 ```bash
 npm install
 ```
 
-### 2. Configurar `.env`
+### 2. Configurar entorno
+
+Copia `.env.example` a `.env` y ajusta los valores:
+
 ```env
+NODE_ENV=development
+PORT=3000
 DB_HOST=localhost
 DB_PORT=5432
 DB_USERNAME=postgres
 DB_PASSWORD=tu_contraseña
 DB_DATABASE=api_lector
-PORT=3000
-NODE_ENV=development
+JWT_SECRET=tu-secret-key-min-32-caracteres
+JWT_EXPIRES_IN=24h
+CORS_ORIGINS=
 ```
 
-### 3. Crear base de datos
+### 3. Base de datos
+
+Crear la base `api_lector` y ejecutar migraciones en orden:
+
 ```bash
-createdb api_lector
+psql -U postgres -d api_lector -f migrations/complete_database_setup.sql
+psql -U postgres -d api_lector -f migrations/add_audit_log.sql
+psql -U postgres -d api_lector -f migrations/add_escuela_libro_pendiente.sql
 ```
+
+(El resto de migraciones según necesidad: `add_director_table.sql`, `add_libros_unidades_segmentos.sql`, `add_ruta_pdf_libro.sql`, etc.)
 
 ### 4. Ejecutar
+
 ```bash
 npm run start:dev
 ```
 
----
-
-## 📚 Endpoints de Registro
-
-### 🔐 Registro de Administradores (Público - Solo 3 iniciales)
-
-**POST** `/personas/registro-admin`
-
-Registra un administrador inicial. Solo se permiten 3 administradores sin autenticación.
-
-```bash
-curl -X POST http://localhost:3000/personas/registro-admin \
-  -H "Content-Type: application/json" \
-  -d '{
-    "nombre": "Juan",
-    "apellidoPaterno": "Pérez",
-    "apellidoMaterno": "García",
-    "email": "admin@example.com",
-    "telefono": "1234567890",
-    "fechaNacimiento": "1990-01-01",
-    "nivel": "super"
-  }'
-```
-
-**Verificar cantidad de admins:**
-```bash
-GET /personas/admins/cantidad
-```
-
-### 👨‍👩‍👧 Registro de Padres (Requiere Admin)
-
-**POST** `/personas/registro-padre`
-
-```bash
-curl -X POST http://localhost:3000/personas/registro-padre \
-  -H "Content-Type: application/json" \
-  -d '{
-    "nombre": "María",
-    "apellidoPaterno": "López",
-    "apellidoMaterno": "Martínez",
-    "email": "padre@example.com",
-    "telefono": "0987654321",
-    "fechaNacimiento": "1985-05-15"
-  }'
-```
-
-### 🎓 Registro de Alumnos (Admin o Director)
-
-**POST** `/personas/registro-alumno`  
-Requiere **JWT** (Admin o Director).
-
-- **Admin**: debe enviar `idEscuela` (cualquier escuela).
-- **Director**: **no tiene que enviar** `idEscuela`; se usa automáticamente su escuela. Si lo envía, debe ser su propia escuela.
-
-**Ejemplo (admin o con escuela explícita):**
-```bash
-curl -X POST http://localhost:3000/personas/registro-alumno \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <tu_token>" \
-  -d '{
-    "nombre": "Carlos",
-    "apellidoPaterno": "González",
-    "apellidoMaterno": "Sánchez",
-    "email": "alumno@example.com",
-    "password": "password123",
-    "idEscuela": 1,
-    "telefono": "5555555555",
-    "fechaNacimiento": "2010-03-20",
-    "grado": 5,
-    "grupo": "A",
-    "cicloEscolar": "2024-2025"
-  }'
-```
-
-**Ejemplo (director, sin idEscuela):** el director puede omitir `idEscuela` y se usará su escuela.
-
-### 👨‍🏫 Registro de Maestros (Admin o Director)
-
-**POST** `/personas/registro-maestro`  
-Requiere **JWT** (Admin o Director). Director: **no tiene que enviar** `idEscuela`; se usa su escuela automáticamente.
-
-```bash
-curl -X POST http://localhost:3000/personas/registro-maestro \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <tu_token>" \
-  -d '{
-    "nombre": "Ana",
-    "apellidoPaterno": "Rodríguez",
-    "apellidoMaterno": "Fernández",
-    "email": "maestro@example.com",
-    "telefono": "1111111111",
-    "fechaNacimiento": "1988-07-10",
-    "idEscuela": 1,
-    "especialidad": "Matemáticas",
-    "fechaIngreso": "2020-08-01"
-  }'
-```
-
-### 📋 Consultar Administradores
-
-**GET** `/personas/admins` - Listar todos los administradores
-
-**GET** `/personas/admins/cantidad` - Ver cantidad de admins registrados
+| Recurso        | URL                        |
+|----------------|----------------------------|
+| API            | `http://localhost:3000`    |
+| Swagger        | `http://localhost:3000/api` (solo desarrollo) |
+| Health check   | `http://localhost:3000/health` |
 
 ---
 
-## 📁 Estructura del Proyecto
+## Arquitectura y roles
 
-```
-src/
-├── main.ts                    # Punto de entrada
-├── app.module.ts             # Módulo principal
-├── app.controller.ts          # Controlador principal
-│
-└── personas/                 # Módulo de registro de usuarios
-    ├── personas.module.ts
-    ├── personas.controller.ts
-    ├── personas.service.ts
-    ├── entities/            # Entidades de base de datos
-    │   ├── persona.entity.ts
-    │   ├── administrador.entity.ts
-    │   ├── padre.entity.ts
-    │   ├── alumno.entity.ts
-    │   ├── maestro.entity.ts
-    │   └── escuela.entity.ts
-    └── dto/                 # DTOs de validación
-        ├── registro-admin.dto.ts
-        ├── registro-padre.dto.ts
-        ├── registro-alumno.dto.ts
-        └── registro-maestro.dto.ts
-```
+| Rol           | Descripción breve |
+|---------------|-------------------|
+| **Administrador** | Gestión global: escuelas, directores, padres, libros, auditoría. Máx. 5 admins. |
+| **Director**      | Gestión de su escuela: alumnos, maestros, canjear libros. |
+| **Maestro**       | Gestión de sus alumnos (por materia): listar, ver, asignar/desasignar. |
+| **Alumno**        | Ver y descargar libros asignados a su escuela. |
+| **Padre**         | Vinculado a uno o más alumnos (hijos). |
+
+Todos los usuarios se autentican con **email + contraseña** y reciben un **JWT** (24h). Casi todos los endpoints requieren `Authorization: Bearer <token>`.
 
 ---
 
-## 🗄️ Modelo de Base de Datos
+## Documentación por tipo
 
-### Entidades Principales
+### Para el equipo frontend (rutas y ejemplos)
 
-- **Persona**: Entidad base para todos los usuarios
-- **Administrador**: Usuario administrador del sistema
-- **Padre**: Padre/tutor de alumnos
-- **Alumno**: Estudiante
-- **Maestro**: Profesor/maestro
-- **Escuela**: Escuela (creada por administradores)
+| Documento | Contenido |
+|-----------|-----------|
+| **[RUTAS_ADMIN_FRONTEND.md](./RUTAS_ADMIN_FRONTEND.md)** | Rutas exclusivas de **administrador**: dashboard, personas (admins, alumnos, padres, directores), escuelas, libros, auditoría. Incluye ejemplos de request/response y tabla resumen. |
+| **[RUTAS_DIRECTOR_FRONTEND.md](./RUTAS_DIRECTOR_FRONTEND.md)** | Rutas exclusivas de **director**: dashboard de su escuela. |
+| **[API_DOCUMENTACION_FRONTEND.md](./API_DOCUMENTACION_FRONTEND.md)** | API completa para frontend: autenticación, personas, escuelas, libros, director, maestros, auditoría, permisos por rol y códigos de error. |
+| **[RUTAS_DATOS.md](./RUTAS_DATOS.md)** | Referencia rápida: métodos, rutas y cuerpos mínimos (sin autenticación, auth, personas, escuelas, libros, maestros). |
+| **[LIBROS_API_FRONTEND.md](./LIBROS_API_FRONTEND.md)** | Detalle de la API de libros (carga, listado, PDF, asignación a escuelas). |
 
-### Relaciones
+### Por tema
 
-- Persona ↔ Administrador (1:1)
-- Persona ↔ Padre (1:1)
-- Persona ↔ Alumno (1:1)
-- Persona ↔ Maestro (1:1)
-- Administrador → Escuela (1:N)
-- Escuela → Alumno (1:N)
-- Escuela → Maestro (1:N)
-- Padre ↔ Alumno (N:M) - Tabla intermedia: `padre_alumno`
+| Documento | Contenido |
+|-----------|-----------|
+| **[SEGURIDAD.md](./SEGURIDAD.md)** | Medidas de seguridad (JWT, bcrypt, guards, CORS, rate limiting, validación), endpoints públicos y checklist para producción. |
+| **[AUDITORIA.md](./AUDITORIA.md)** | Módulo de auditoría: endpoint `GET /audit`, acciones registradas y migración. |
+| **[PRUEBAS_API.md](./PRUEBAS_API.md)** | Endpoints de pruebas (solo desarrollo; en producción devuelven 404). |
 
 ---
 
-## ⚠️ Notas Importantes
+## Flujos del sistema
 
-1. **Solo 3 Administradores Iniciales**: Los primeros 3 administradores se pueden registrar sin autenticación. Después de eso, los nuevos administradores deben ser creados por un admin existente.
-
-2. **Autenticación Pendiente**: Actualmente los endpoints de registro de Padre, Alumno y Maestro están públicos. Se debe agregar autenticación para verificar que el usuario es administrador.
-
-3. **Validación de Email**: El email debe ser único en el sistema.
-
-4. **Sincronización Automática**: En desarrollo, las tablas se crean/actualizan automáticamente. En producción, usar migraciones.
+| Documento | Contenido |
+|-----------|-----------|
+| **[FLUJO_SISTEMA.md](./FLUJO_SISTEMA.md)** | **Flujo completo del sistema**: fases (inicialización, auth, escuelas, directores, alumnos, maestros, padres, libros, consultas), guards, matriz de permisos, escenarios típicos y modelo de datos. Es el documento maestro de flujos. |
+| **[FLUJO_PADRE_ALUMNO.md](./FLUJO_PADRE_ALUMNO.md)** | Flujo **padre–alumno**: registrar padre e hijo juntos, solo alumno, alumno con padre automático, completar datos del padre, consultas. |
+| **[FLUJO_LIBROS_DOBLE_VERIFICACION.md](./FLUJO_LIBROS_DOBLE_VERIFICACION.md)** | Flujo de **libros**: doble verificación (admin otorga → escuela canjea), endpoints y migración. |
 
 ---
 
-## 🛠️ Scripts
+## Seguridad y auditoría
+
+- **Autenticación:** JWT (24h), contraseñas con bcrypt.
+- **Autorización:** Guards por rol (Admin, Director, AdminOrDirector, Maestro, Alumno, etc.).
+- **Endpoints públicos (sin token):** `GET /`, `GET /health`, `POST /auth/login`. Opcionalmente `GET /personas/admins/cantidad` para saber cupo de admins.
+- **Producción:** Swagger y endpoints de pruebas desactivados; `JWT_SECRET` mínimo 32 caracteres; CORS y rate limiting configurados.
+
+Ver [SEGURIDAD.md](./SEGURIDAD.md) para detalles y [AUDITORIA.md](./AUDITORIA.md) para logs de acciones.
+
+---
+
+## Scripts y referencias
 
 ```bash
 npm run start:dev    # Desarrollo con hot-reload
 npm run build        # Compilar
 npm run start:prod   # Producción
-npm run lint         # Verificar código
+npm run lint         # Linter
 ```
 
----
+### Resumen de rutas clave
 
-## 📖 Documentación disponible
+- **Login:** `POST /auth/login` → `access_token`
+- **Admin:** Dashboard `GET /admin/dashboard`, personas, escuelas, libros, `GET /audit`
+- **Director:** Dashboard `GET /director/dashboard`, registrar alumnos/maestros (su escuela), canjear libros
+- **Alumnos:** Listar `GET /personas/alumnos`, buscar `GET /personas/alumnos/buscar?campo=&valor=`, por ID `GET /personas/alumnos/:id`
+- **Libros alumno:** `GET /escuelas/mis-libros`, `GET /libros/:id`, `GET /libros/:id/pdf`
 
-| Documento | Descripción |
-|-----------|-------------|
-| [API_DOCUMENTACION_FRONTEND.md](./API_DOCUMENTACION_FRONTEND.md) | API completa para el frontend (todos los endpoints y roles) |
-| [FLUJO_SISTEMA.md](./FLUJO_SISTEMA.md) | Flujos del sistema, fases y validaciones |
-| [FLUJO_LIBROS_DOBLE_VERIFICACION.md](./FLUJO_LIBROS_DOBLE_VERIFICACION.md) | Doble verificación libros (admin otorga, escuela canjea) |
-| [LIBROS_API_FRONTEND.md](./LIBROS_API_FRONTEND.md) | API de libros (carga PDF, segmentos, alumnos, etc.) |
-
----
-
-## 📝 Estado actual
-
-- ✅ Autenticación JWT
-- ✅ Guards por rol (Admin, Director, Maestro, Alumno)
-- ✅ CRUD Escuelas
-- ✅ Libros con doble verificación (admin otorga, escuela canjea)
-- ✅ Director no envía idEscuela (se usa su escuela automáticamente)
-- ✅ **Alumnos**: `GET /escuelas/mis-libros` para biblioteca digital; `GET /libros/:id` y `GET /libros/:id/pdf` (solo libros de su escuela)
-- ✅ **Admin**: `DELETE /libros/:id` para eliminar libros
-- ✅ Frontend con biblioteca digital para alumnos (estantería, lector, descarga PDF)
+Para listados completos ver [RUTAS_ADMIN_FRONTEND.md](./RUTAS_ADMIN_FRONTEND.md) (tabla resumen al final) y [RUTAS_DATOS.md](./RUTAS_DATOS.md).
 
 ---
 
-**¡Listo para usar! 🚀**
+**Última actualización:** Febrero 2025

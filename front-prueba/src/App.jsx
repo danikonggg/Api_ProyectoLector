@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import Login from './pages/Login';
+import Pruebas from './pages/Pruebas';
 import AdminDashboard from './pages/AdminDashboard';
 import DirectorDashboard from './pages/DirectorDashboard';
 import MaestroDashboard from './pages/MaestroDashboard';
@@ -37,6 +38,7 @@ export default function App() {
 
   return (
     <Routes>
+      <Route path="/pruebas" element={<Pruebas />} />
       <Route path="/login" element={user ? <Navigate to={role === 'administrador' ? '/admin' : role === 'director' ? '/director' : role === 'maestro' ? '/maestro' : '/'} replace /> : <Login />} />
       <Route path="/admin" element={<ProtectedRoute roles={['administrador']}><AdminDashboard /></ProtectedRoute>} />
       <Route path="/director" element={<ProtectedRoute roles={['director']}><DirectorDashboard /></ProtectedRoute>} />

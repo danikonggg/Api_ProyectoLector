@@ -1,8 +1,12 @@
 -- ============================================
 -- SCRIPT COMPLETO DE CONFIGURACIÓN DE BASE DE DATOS
 -- ============================================
--- Este script crea todas las tablas, secuencias, campos adicionales y relaciones
--- Ejecuta este script completo en tu base de datos PostgreSQL
+-- Incluye TODAS las migraciones en un solo archivo.
+-- Ejecutar una sola vez en una base de datos vacía:
+--   psql -U postgres -d api_lector -f migrations/complete_database_setup.sql
+--
+-- Contenido: tablas base, auth, Director, Libro/Unidad/Segmento,
+-- Escuela_Libro_Pendiente, audit_log, seed Materia Lectura.
 -- ============================================
 
 -- ============================================
@@ -343,7 +347,122 @@ ALTER TABLE "Progreso_Libro" DROP CONSTRAINT IF EXISTS "Progreso_Libro_fk2";
 ALTER TABLE "Progreso_Libro" ADD CONSTRAINT "Progreso_Libro_fk2" FOREIGN KEY ("libro_id") REFERENCES "Libro"("id");
 
 -- ============================================
+-- PARTE 5: MIGRACIONES ADICIONALES (Libros, Unidades, Segmentos)
+-- ============================================
+
+ALTER TABLE "Libro" ADD COLUMN IF NOT EXISTS "estado" varchar(50) DEFAULT 'procesando';
+ALTER TABLE "Libro" ADD COLUMN IF NOT EXISTS "num_paginas" bigint;
+
+CREATE TABLE IF NOT EXISTS "Unidad" (
+	"id" bigint NOT NULL,
+	"libro_id" bigint NOT NULL,
+	"nombre" varchar(150) NOT NULL,
+	"orden" bigint NOT NULL DEFAULT 1,
+	PRIMARY KEY ("id")
+);
+
+CREATE TABLE IF NOT EXISTS "Segmento" (
+	"id" bigint NOT NULL,
+	"libro_id" bigint NOT NULL,
+	"unidad_id" bigint NOT NULL,
+	"contenido" text NOT NULL,
+	"numero_pagina" bigint,
+	"orden" bigint NOT NULL DEFAULT 1,
+	"id_externo" varchar(100) NOT NULL,
+	PRIMARY KEY ("id")
+);
+
+CREATE SEQUENCE IF NOT EXISTS "Unidad_id_seq";
+ALTER TABLE "Unidad" ALTER COLUMN "id" SET DEFAULT nextval('"Unidad_id_seq"');
+ALTER SEQUENCE "Unidad_id_seq" OWNED BY "Unidad"."id";
+
+CREATE SEQUENCE IF NOT EXISTS "Segmento_id_seq";
+ALTER TABLE "Segmento" ALTER COLUMN "id" SET DEFAULT nextval('"Segmento_id_seq"');
+ALTER SEQUENCE "Segmento_id_seq" OWNED BY "Segmento"."id";
+
+ALTER TABLE "Unidad" DROP CONSTRAINT IF EXISTS "Unidad_fk1";
+ALTER TABLE "Unidad" ADD CONSTRAINT "Unidad_fk1" FOREIGN KEY ("libro_id") REFERENCES "Libro"("id") ON DELETE CASCADE;
+
+ALTER TABLE "Segmento" DROP CONSTRAINT IF EXISTS "Segmento_fk1";
+ALTER TABLE "Segmento" ADD CONSTRAINT "Segmento_fk1" FOREIGN KEY ("libro_id") REFERENCES "Libro"("id") ON DELETE CASCADE;
+ALTER TABLE "Segmento" DROP CONSTRAINT IF EXISTS "Segmento_fk2";
+ALTER TABLE "Segmento" ADD CONSTRAINT "Segmento_fk2" FOREIGN KEY ("unidad_id") REFERENCES "Unidad"("id") ON DELETE CASCADE;
+
+CREATE INDEX IF NOT EXISTS "idx_unidad_libro_id" ON "Unidad"("libro_id");
+CREATE INDEX IF NOT EXISTS "idx_segmento_libro_id" ON "Segmento"("libro_id");
+CREATE INDEX IF NOT EXISTS "idx_segmento_unidad_id" ON "Segmento"("unidad_id");
+CREATE UNIQUE INDEX IF NOT EXISTS "idx_segmento_id_externo" ON "Segmento"("id_externo");
+
+-- ============================================
+-- PARTE 6: Libro - materia opcional, ruta PDF
+-- ============================================
+
+ALTER TABLE "Libro" ALTER COLUMN "materia_id" DROP NOT NULL;
+ALTER TABLE "Libro" ADD COLUMN IF NOT EXISTS "ruta_pdf" varchar(512);
+
+-- ============================================
+-- PARTE 7: Escuela_Libro_Pendiente (doble verificación)
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS "Escuela_Libro_Pendiente" (
+  "id" BIGSERIAL PRIMARY KEY,
+  "escuela_id" BIGINT NOT NULL REFERENCES "Escuela"("id") ON DELETE CASCADE,
+  "libro_id" BIGINT NOT NULL REFERENCES "Libro"("id") ON DELETE CASCADE,
+  "fecha_otorgado" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "idx_escuela_libro_pendiente_uniq"
+  ON "Escuela_Libro_Pendiente" ("escuela_id", "libro_id");
+
+-- ============================================
+-- PARTE 8: Unique escuela_id + libro_id en Escuela_Libro
+-- ============================================
+
+CREATE UNIQUE INDEX IF NOT EXISTS "idx_escuela_libro_uniq"
+  ON "Escuela_Libro" ("escuela_id", "libro_id");
+
+-- ============================================
+-- PARTE 9: Auditoría
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id BIGSERIAL PRIMARY KEY,
+  accion VARCHAR(80) NOT NULL,
+  usuario_id BIGINT,
+  ip VARCHAR(45),
+  detalles TEXT,
+  fecha TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_fecha ON audit_log (fecha DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_log_accion ON audit_log (accion);
+CREATE INDEX IF NOT EXISTS idx_audit_log_usuario ON audit_log (usuario_id);
+
+-- ============================================
+-- PARTE 10: Índices Director (si aplica)
+-- ============================================
+
+CREATE INDEX IF NOT EXISTS "idx_director_persona_id" ON "Director"("persona_id");
+CREATE INDEX IF NOT EXISTS "idx_director_escuela_id" ON "Director"("escuela_id");
+
+-- ============================================
+-- PARTE 11: Seed - Materia Lectura (opcional)
+-- ============================================
+
+INSERT INTO "Materia" ("id", "nombre", "descripcion", "nivel")
+VALUES (1, 'Lectura', 'Libros de lectura', 'General')
+ON CONFLICT ("id") DO NOTHING;
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_sequences WHERE sequencename = 'Materia_id_seq') THEN
+    PERFORM setval('"Materia_id_seq"', (SELECT COALESCE(MAX("id"), 1) FROM "Materia"));
+  END IF;
+END $$;
+
+-- ============================================
 -- FIN DEL SCRIPT
 -- ============================================
--- Todas las tablas, secuencias, campos adicionales y relaciones han sido configuradas
+-- Todas las tablas, secuencias, migraciones y seed han sido aplicadas.
+-- Script único para instalar la base de datos desde cero.
 -- ============================================

@@ -11,7 +11,6 @@ import { Controller, Get } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { AppService } from './app.service';
 
-@ApiTags('General')
 @Controller() // Sin prefijo, las rutas serán directamente / y /health
 export class AppController {
   constructor(private readonly appService: AppService) {}
@@ -21,6 +20,7 @@ export class AppController {
    * Descripción: Mensaje de bienvenida
    */
   @Get()
+  @ApiTags('Público')
   @ApiOperation({ summary: 'Mensaje de bienvenida' })
   getHello(): string {
     return this.appService.getHello();
@@ -28,15 +28,12 @@ export class AppController {
 
   /**
    * Ruta: GET /health
-   * Descripción: Verificar el estado de la API
+   * Descripción: Verificar el estado de la API y conexión a la base de datos
    */
   @Get('health')
-  @ApiOperation({ summary: 'Health check - Verificar estado de la API' })
-  healthCheck() {
-    return {
-      status: 'ok',
-      message: 'API funcionando correctamente',
-      timestamp: new Date().toISOString(),
-    };
+  @ApiTags('Público')
+  @ApiOperation({ summary: 'Health check - Verificar estado de la API y base de datos' })
+  async healthCheck() {
+    return await this.appService.getHealth();
   }
 }

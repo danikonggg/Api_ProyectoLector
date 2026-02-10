@@ -6,11 +6,12 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/auth': 'http://localhost:3000',
-      '/personas': 'http://localhost:3000',
-      '/escuelas': 'http://localhost:3000',
-      '/libros': 'http://localhost:3000',
-      '/maestros': 'http://localhost:3000',
+      '/auth': { target: 'http://localhost:3000', changeOrigin: true },
+      '/personas': { target: 'http://localhost:3000', changeOrigin: true },
+      '/escuelas': { target: 'http://localhost:3000', changeOrigin: true },
+      '/libros': { target: 'http://localhost:3000', changeOrigin: true },
+      '/maestros': { target: 'http://localhost:3000', changeOrigin: true },
+      '/audit': { target: 'http://localhost:3000', changeOrigin: true },
     },
   },
 });

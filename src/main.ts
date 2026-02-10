@@ -2,23 +2,29 @@
  * ============================================
  * PUNTO DE ENTRADA DE LA APLICACIÓN
  * ============================================
- * 
+ *
  * Este archivo es el primero que se ejecuta cuando inicias la aplicación.
  * Aquí se configura todo lo necesario para que NestJS funcione correctamente.
  */
 
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import type { Request, Response, NextFunction } from 'express';
+import { validateEnv } from './config/env.validation';
+import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 
 /**
  * Función principal que inicia la aplicación
  */
 async function bootstrap() {
-  // Crear la aplicación NestJS
+  validateEnv();
+
+  const logger = new Logger('Bootstrap');
   const app = await NestFactory.create(AppModule);
+
+  app.useGlobalFilters(new AllExceptionsFilter());
 
   /**
    * Log de todas las peticiones HTTP (ver si llegan GET/POST o solo OPTIONS).
@@ -28,7 +34,7 @@ async function bootstrap() {
     const start = Date.now();
     res.on('finish', () => {
       const ms = Date.now() - start;
-      console.log(`HTTP ${req.method} ${req.url} ${res.statusCode} ${ms}ms`);
+      logger.log(`HTTP ${req.method} ${req.url} ${res.statusCode} ${ms}ms`);
     });
     next();
   });
@@ -49,11 +55,17 @@ async function bootstrap() {
 
   /**
    * Habilitar CORS (Cross-Origin Resource Sharing)
-   * El GET /libros nunca llegaba tras OPTIONS: el navegador bloqueaba por headers no permitidos.
-   * Incluimos todos los headers habituales que el front puede enviar.
+   * En producción: usar CORS_ORIGINS (separados por coma).
+   * En desarrollo: permitir todo (origin: true) si CORS_ORIGINS está vacío.
    */
+  const corsOrigins = process.env.CORS_ORIGINS?.trim();
+  const origin =
+    corsOrigins && process.env.NODE_ENV === 'production'
+      ? corsOrigins.split(',').map((o) => o.trim()).filter(Boolean)
+      : true;
+
   app.enableCors({
-    origin: true,
+    origin,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
       'Content-Type',
@@ -70,45 +82,53 @@ async function bootstrap() {
 
   /**
    * Configurar Swagger (Documentación de API)
+   * Desactivado en producción por seguridad.
    */
-  const config = new DocumentBuilder()
-    .setTitle('API Lector - Sistema Educativo')
-    .setDescription('API REST para sistema educativo con registro de usuarios, roles y autenticación JWT')
-    .setVersion('1.0')
-    .addBearerAuth(
-      {
-        type: 'http',
-        scheme: 'bearer',
-        bearerFormat: 'JWT',
-        name: 'JWT',
-        description: 'Ingresa el token JWT',
-        in: 'header',
-      },
-      'JWT-auth', // Este nombre se usa en @ApiBearerAuth('JWT-auth')
-    )
-    .addTag('Autenticación', 'Endpoints de login y registro')
-    .addTag('Personas', 'Endpoints de registro de usuarios por roles')
-    .addTag('Escuelas', 'Gestión de escuelas (solo admin)')
-    .addTag('Maestros', 'Gestión de alumnos por maestros')
-    .addTag('Libros', 'Carga de libros (PDF → segmentos). Solo admin.')
-    .build();
+  if (process.env.NODE_ENV !== 'production') {
+    const config = new DocumentBuilder()
+      .setTitle('API Lector - Sistema Educativo')
+      .setDescription('API REST para sistema educativo con registro de usuarios, roles y autenticación JWT')
+      .setVersion('1.0')
+      .addBearerAuth(
+        {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+          name: 'JWT',
+          description: 'Ingresa el token JWT',
+          in: 'header',
+        },
+        'JWT-auth',
+      )
+      .addTag('Público', 'Sin token: login, health')
+      .addTag('Cualquier autenticado', 'Cualquier rol con JWT: perfil')
+      .addTag('Solo Administrador', 'Dashboard, escuelas, libros (cargar/eliminar/PDF), personas (padres, directores, admins), auditoría, otorgar/canjear por :id')
+      .addTag('Solo Director', 'Dashboard y libros de mi escuela (sin enviar id): GET/POST /director/libros, /director/canjear-libro')
+      .addTag('Solo Maestro', 'Mis alumnos: listar, ver, asignar, desasignar')
+      .addTag('Solo Alumno', 'Libros de mi escuela: GET /escuelas/mis-libros')
+      .addTag('Admin o Director', 'Registro alumno/maestro, listar alumnos/buscar, ver escuela, maestros y alumnos de una escuela')
+      .addTag('Admin, Director o Alumno', 'Ver detalle de un libro: GET /libros/:id')
+      .build();
 
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api', app, document, {
-    swaggerOptions: {
-      persistAuthorization: true, // Mantener el token al recargar
-    },
-  });
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api', app, document, {
+      swaggerOptions: {
+        persistAuthorization: true,
+      },
+    });
+  }
 
   // Obtener el puerto desde las variables de entorno o usar 3000 por defecto
   const port = process.env.PORT || 3000;
-  
+
   // Iniciar el servidor
   await app.listen(port);
-  
-  console.log(`🚀 Aplicación corriendo en: http://localhost:${port}`);
-  console.log(`📚 Swagger disponible en: http://localhost:${port}/api`);
-  console.log(`🏥 Health check: http://localhost:${port}/health`);
+
+  logger.log(`🚀 Aplicación corriendo en: http://localhost:${port}`);
+  if (process.env.NODE_ENV !== 'production') {
+    logger.log(`📚 Swagger disponible en: http://localhost:${port}/api`);
+  }
+  logger.log(`🏥 Health check: http://localhost:${port}/health`);
 }
 
 // Ejecutar la función bootstrap
