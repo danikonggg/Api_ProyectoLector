@@ -1,12 +1,3 @@
-/**
- * ============================================
- * GUARD: AdminGuard
- * ============================================
- * 
- * Guard que verifica que el usuario autenticado sea un administrador.
- * Se usa después de JwtAuthGuard para proteger rutas de admin.
- */
-
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
 
 @Injectable()

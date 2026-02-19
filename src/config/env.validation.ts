@@ -1,7 +1,3 @@
-/**
- * Validación de variables de entorno al arrancar la aplicación.
- * Falla el bootstrap si faltan variables críticas en producción.
- */
 export function validateEnv(): void {
   const isProd = process.env.NODE_ENV === 'production';
   const errors: string[] = [];

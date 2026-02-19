@@ -1,8 +1,3 @@
-/**
- * Logger personalizado para TypeORM.
- * Muestra las queries de forma compacta y legible, sin volcar SQL gigante en consola.
- */
-
 import { Logger } from '@nestjs/common';
 import type { QueryRunner } from 'typeorm';
 

@@ -99,65 +99,54 @@ function AdminAuditoria() {
 
   return (
     <>
-      <div className="section-title">
-        <span>Auditoría</span>
-        <button className="btn btn-primary btn-sm" onClick={loadLogs} disabled={loading}>
-          {loading ? 'Cargando...' : 'Actualizar'}
-        </button>
-      </div>
       {msg && <div className={`alert alert-${msg.type}`}>{msg.text}</div>}
 
-      <div className="card">
-        <h3>Logs de auditoría</h3>
-        <p className="card-desc" style={{ marginBottom: '1rem' }}>
-          Registro de acciones sensibles: logins, registros, creación/edición de escuelas y libros.
-        </p>
-        {logs.length === 0 ? (
-          <p style={{ color: 'var(--text-muted)' }}>Sin registros.</p>
-        ) : (
-          <>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+      <section className="page-section">
+        <h2 className="page-section__title">Logs de auditoría</h2>
+        <p className="card-desc">Registro de acciones sensibles: logins, registros, creación/edición de escuelas y libros.</p>
+        <div className="page-section__toolbar">
+          <button type="button" className="btn btn-primary btn-sm" onClick={loadLogs} disabled={loading}>
+            {loading ? 'Cargando...' : 'Actualizar'}
+          </button>
+        </div>
+        <div className="data-table-wrap">
+          {logs.length === 0 ? (
+            <div className="empty-state">Sin registros.</div>
+          ) : (
+            <>
+              <table className="data-table">
                 <thead>
-                  <tr style={{ borderBottom: '2px solid var(--border)', textAlign: 'left' }}>
-                    <th style={{ padding: '0.5rem 0.75rem' }}>Fecha</th>
-                    <th style={{ padding: '0.5rem 0.75rem' }}>Acción</th>
-                    <th style={{ padding: '0.5rem 0.75rem' }}>Usuario ID</th>
-                    <th style={{ padding: '0.5rem 0.75rem' }}>IP</th>
-                    <th style={{ padding: '0.5rem 0.75rem' }}>Detalles</th>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Acción</th>
+                    <th>Usuario ID</th>
+                    <th>IP</th>
+                    <th>Detalles</th>
                   </tr>
                 </thead>
                 <tbody>
                   {logs.map((l) => (
-                    <tr key={l.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ padding: '0.5rem 0.75rem', whiteSpace: 'nowrap' }}>{formatFecha(l.fecha)}</td>
-                      <td style={{ padding: '0.5rem 0.75rem' }}>
-                        <span className="badge badge-admin" style={{ fontSize: '0.75rem' }}>{accionLabel(l.accion)}</span>
-                      </td>
-                      <td style={{ padding: '0.5rem 0.75rem', color: 'var(--text-muted)' }}>{l.usuarioId ?? '-'}</td>
-                      <td style={{ padding: '0.5rem 0.75rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>{l.ip ?? '-'}</td>
-                      <td style={{ padding: '0.5rem 0.75rem', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis' }} title={l.detalles}>{l.detalles ?? '-'}</td>
+                    <tr key={l.id}>
+                      <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>{formatFecha(l.fecha)}</td>
+                      <td><span className="badge badge-admin">{accionLabel(l.accion)}</span></td>
+                      <td className="cell-muted">{l.usuarioId ?? '-'}</td>
+                      <td className="cell-muted" style={{ fontFamily: 'var(--font-mono)' }}>{l.ip ?? '-'}</td>
+                      <td className="cell-muted" style={{ maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis' }} title={l.detalles}>{l.detalles ?? '-'}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
-            {totalPages > 1 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '1rem', flexWrap: 'wrap' }}>
-                <button className="btn btn-ghost btn-sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
-                  Anterior
-                </button>
-                <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                  Página {page} de {totalPages} ({total} registros)
-                </span>
-                <button className="btn btn-ghost btn-sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
-                  Siguiente
-                </button>
-              </div>
-            )}
-          </>
-        )}
-      </div>
+              {totalPages > 1 && (
+                <div className="pagination">
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>Anterior</button>
+                  <span className="pagination-info">Página {page} de {totalPages} ({total} registros)</span>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>Siguiente</button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </section>
     </>
   );
 }
@@ -170,6 +159,9 @@ function AdminEscuelas() {
   const [otorgarForm, setOtorgarForm] = useState({ escuelaId: '', codigo: '' });
   const [librosEscuela, setLibrosEscuela] = useState(null);
   const [pendientes, setPendientes] = useState(null);
+  const [directoresEscuela, setDirectoresEscuela] = useState(null);
+  const [todosDirectores, setTodosDirectores] = useState([]);
+  const [loadingDirectores, setLoadingDirectores] = useState(false);
 
   const loadEscuelas = async () => {
     setLoading(true);
@@ -225,64 +217,183 @@ function AdminEscuelas() {
     }
   };
 
+  const verDirectoresEscuela = async (escuela) => {
+    setMsg(null);
+    try {
+      const data = await api('GET', `/escuelas/${escuela.id}/directores`);
+      setDirectoresEscuela({ id: escuela.id, nombre: escuela.nombre, list: data?.data || [] });
+    } catch (e) {
+      setMsg({ type: 'error', text: e?.data?.message || e?.message });
+    }
+  };
+
+  const loadTodosDirectores = async () => {
+    setLoadingDirectores(true);
+    setMsg(null);
+    try {
+      const data = await api('GET', '/escuelas/directores');
+      setTodosDirectores(data?.data || []);
+    } catch (e) {
+      setMsg({ type: 'error', text: e?.data?.message || e?.message });
+    } finally {
+      setLoadingDirectores(false);
+    }
+  };
+
   return (
     <>
-      <div className="section-title">
-        <span>Escuelas</span>
-        <button className="btn btn-primary btn-sm" onClick={loadEscuelas} disabled={loading}>
-          {loading ? 'Cargando...' : 'Actualizar'}
-        </button>
-      </div>
       {msg && <div className={`alert alert-${msg.type}`}>{msg.text}</div>}
 
-      <div className="card">
-        <h3>Crear escuela</h3>
-        <form onSubmit={crearEscuela} className="form-grid">
-          <label><span>Nombre</span><input value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} required /></label>
-          <label><span>Nivel</span><input value={form.nivel} onChange={(e) => setForm({ ...form, nivel: e.target.value })} placeholder="Primaria" required /></label>
-          <label><span>Clave</span><input value={form.clave} onChange={(e) => setForm({ ...form, clave: e.target.value })} /></label>
-          <label><span>Dirección</span><input value={form.direccion} onChange={(e) => setForm({ ...form, direccion: e.target.value })} /></label>
-          <label><span>Teléfono</span><input value={form.telefono} onChange={(e) => setForm({ ...form, telefono: e.target.value })} /></label>
-        </form>
-        <button type="submit" className="btn btn-primary" onClick={crearEscuela}>Crear</button>
-      </div>
+      <section className="page-section">
+        <h2 className="page-section__title">Crear escuela</h2>
+        <div className="card">
+          <form onSubmit={crearEscuela} className="form-grid">
+            <label><span>Nombre</span><input value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} required /></label>
+            <label><span>Nivel</span><input value={form.nivel} onChange={(e) => setForm({ ...form, nivel: e.target.value })} placeholder="Primaria" required /></label>
+            <label><span>Clave</span><input value={form.clave} onChange={(e) => setForm({ ...form, clave: e.target.value })} /></label>
+            <label><span>Dirección</span><input value={form.direccion} onChange={(e) => setForm({ ...form, direccion: e.target.value })} /></label>
+            <label><span>Teléfono</span><input value={form.telefono} onChange={(e) => setForm({ ...form, telefono: e.target.value })} /></label>
+          </form>
+          <button type="submit" className="btn btn-primary" onClick={crearEscuela}>Crear escuela</button>
+        </div>
+      </section>
 
-      <div className="card">
-        <h3>Otorgar libro a escuela (Paso 1)</h3>
-        <p className="card-desc">Admin otorga. La escuela debe canjear después.</p>
-        <form onSubmit={otorgarLibro} className="form-grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
-          <label><span>ID Escuela</span><input type="number" value={otorgarForm.escuelaId} onChange={(e) => setOtorgarForm({ ...otorgarForm, escuelaId: e.target.value })} required /></label>
-          <label><span>Código libro</span><input value={otorgarForm.codigo} onChange={(e) => setOtorgarForm({ ...otorgarForm, codigo: e.target.value })} required /></label>
-        </form>
-        <button type="submit" className="btn btn-primary">Otorgar</button>
-      </div>
+      <section className="page-section">
+        <h2 className="page-section__title">Otorgar libro a escuela (Paso 1)</h2>
+        <p className="card-desc">Admin otorga. La escuela debe canjear el código después.</p>
+        <div className="card">
+          <form onSubmit={otorgarLibro} className="form-grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)', maxWidth: 420 }}>
+            <label><span>Escuela</span><select value={otorgarForm.escuelaId} onChange={(e) => setOtorgarForm({ ...otorgarForm, escuelaId: e.target.value })} required>
+              <option value="">Seleccionar</option>
+              {escuelas.map((e) => <option key={e.id} value={e.id}>{e.nombre} (ID {e.id})</option>)}
+            </select></label>
+            <label><span>Código del libro</span><input value={otorgarForm.codigo} onChange={(e) => setOtorgarForm({ ...otorgarForm, codigo: e.target.value })} placeholder="LIB-..." required /></label>
+          </form>
+          <button type="submit" className="btn btn-primary">Otorgar libro</button>
+        </div>
+      </section>
 
-      <div className="card">
-        <h3>Lista de escuelas</h3>
-        {escuelas.length === 0 ? <p style={{ color: 'var(--text-muted)' }}>Sin escuelas. Carga la lista.</p> : (
-          <div>
-            {escuelas.map((e) => (
-              <div key={e.id} className="list-item">
-                <div>
-                  <h4>{e.nombre}</h4>
-                  <span className="meta">{e.nivel} · ID {e.id}</span>
-                </div>
-                <div className="actions">
-                  <button className="btn btn-sm btn-primary" onClick={() => verLibros(e.id)}>Libros</button>
-                </div>
-              </div>
-            ))}
+      <section className="page-section">
+        <h2 className="page-section__title">Lista de escuelas</h2>
+        <div className="page-section__toolbar">
+          <button className="btn btn-primary btn-sm" onClick={loadEscuelas} disabled={loading}>
+            {loading ? 'Cargando...' : 'Actualizar lista'}
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={loadTodosDirectores} disabled={loadingDirectores}>
+            {loadingDirectores ? 'Cargando...' : 'Ver todos los directores'}
+          </button>
+        </div>
+        <div className="data-table-wrap">
+          {escuelas.length === 0 ? (
+            <div className="empty-state">Sin escuelas. Carga la lista o crea una arriba.</div>
+          ) : (
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Nombre</th>
+                  <th>Nivel</th>
+                  <th>Clave</th>
+                  <th>Dirección</th>
+                  <th className="cell-actions">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {escuelas.map((e) => (
+                  <tr key={e.id}>
+                    <td className="cell-muted">{e.id}</td>
+                    <td><strong>{e.nombre}</strong></td>
+                    <td>{e.nivel}</td>
+                    <td className="cell-muted">{e.clave ?? '-'}</td>
+                    <td className="cell-muted" style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis' }} title={e.direccion}>{e.direccion ?? '-'}</td>
+                    <td className="cell-actions">
+                      <button type="button" className="btn btn-sm btn-primary" onClick={() => verLibros(e.id)}>Libros</button>
+                      <button type="button" className="btn btn-sm btn-ghost" onClick={() => verDirectoresEscuela(e)}>Directores</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </section>
+
+      {todosDirectores.length > 0 && (
+        <section className="page-section">
+          <h2 className="page-section__title">Todos los directores del sistema</h2>
+          <div className="page-section__toolbar">
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setTodosDirectores([])}>Cerrar</button>
           </div>
-        )}
-      </div>
+          <div className="data-table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Director</th>
+                  <th>Correo</th>
+                  <th>Teléfono</th>
+                  <th>Escuela</th>
+                  <th>Nivel</th>
+                </tr>
+              </thead>
+              <tbody>
+                {todosDirectores.map((d) => (
+                  <tr key={d.id}>
+                    <td><strong>{d.persona?.nombre} {d.persona?.apellido}</strong></td>
+                    <td className="cell-muted">{d.persona?.correo ?? '-'}</td>
+                    <td className="cell-muted">{d.persona?.telefono ?? '-'}</td>
+                    <td>{d.escuela?.nombre ?? '-'}</td>
+                    <td className="cell-muted">{d.escuela?.nivel ?? '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {directoresEscuela && (
+        <section className="page-section detail-panel">
+          <div className="detail-panel__header">
+            <span className="detail-panel__title">Directores de {directoresEscuela.nombre}</span>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDirectoresEscuela(null)}>Cerrar</button>
+          </div>
+          {directoresEscuela.list.length === 0 ? (
+            <div className="empty-state">Esta escuela no tiene directores registrados.</div>
+          ) : (
+            <div className="data-table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Nombre</th>
+                    <th>Correo</th>
+                    <th>Teléfono</th>
+                    <th>Nombramiento</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {directoresEscuela.list.map((d) => (
+                    <tr key={d.id}>
+                      <td><strong>{d.persona?.nombre} {d.persona?.apellido}</strong></td>
+                      <td className="cell-muted">{d.persona?.correo ?? '-'}</td>
+                      <td className="cell-muted">{d.persona?.telefono ?? '-'}</td>
+                      <td className="cell-muted">{d.fechaNombramiento ? new Date(d.fechaNombramiento).toLocaleDateString('es-MX') : '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
 
       {librosEscuela && (
-        <div className="card">
-          <h3>Libros escuela ID {librosEscuela.id}</h3>
-          <p><strong>Activos:</strong> {librosEscuela.activos.length}</p>
-          <p><strong>Pendientes de canjear:</strong> {librosEscuela.pendientes.length}</p>
-          <button className="btn btn-ghost btn-sm" onClick={() => setLibrosEscuela(null)}>Cerrar</button>
-        </div>
+        <section className="page-section detail-panel">
+          <div className="detail-panel__header">
+            <span className="detail-panel__title">Libros de la escuela ID {librosEscuela.id}</span>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setLibrosEscuela(null)}>Cerrar</button>
+          </div>
+          <p className="card-desc"><strong>Activos:</strong> {librosEscuela.activos.length} · <strong>Pendientes de canjear:</strong> {librosEscuela.pendientes.length}</p>
+        </section>
       )}
     </>
   );
@@ -374,44 +485,64 @@ function AdminLibros() {
 
   return (
     <>
-      <div className="section-title">
-        <span>Libros</span>
-        <button className="btn btn-primary btn-sm" onClick={loadLibros} disabled={loading}>
-          {loading ? 'Cargando...' : 'Actualizar'}
-        </button>
-      </div>
       {msg && <div className={`alert alert-${msg.type}`}>{msg.text}</div>}
 
-      <div className="card">
-        <h3>Cargar libro (PDF)</h3>
-        <form onSubmit={cargarLibro} className="form-grid">
-          <label><span>PDF</span><input ref={fileInputRef} type="file" accept=".pdf" onChange={(e) => setPdfFile(e.target.files?.[0])} required disabled={uploading} /></label>
-          <label><span>Título</span><input value={cargarForm.titulo} onChange={(e) => setCargarForm({ ...cargarForm, titulo: e.target.value })} required /></label>
-          <label><span>Grado</span><input type="number" value={cargarForm.grado} onChange={(e) => setCargarForm({ ...cargarForm, grado: e.target.value })} required /></label>
-          <label><span>Descripción</span><input value={cargarForm.descripcion} onChange={(e) => setCargarForm({ ...cargarForm, descripcion: e.target.value })} /></label>
-          <label><span>Código</span><input value={cargarForm.codigo} onChange={(e) => setCargarForm({ ...cargarForm, codigo: e.target.value })} placeholder="opcional" /></label>
-        </form>
-        <button type="submit" className="btn btn-primary" disabled={uploading}>
-          {uploading ? 'Cargando PDF... (puede tardar)' : 'Cargar'}
-        </button>
-      </div>
+      <section className="page-section">
+        <h2 className="page-section__title">Cargar libro (PDF)</h2>
+        <div className="card">
+          <form onSubmit={cargarLibro} className="form-grid">
+            <label><span>Archivo PDF</span><input ref={fileInputRef} type="file" accept=".pdf" onChange={(e) => setPdfFile(e.target.files?.[0])} required disabled={uploading} /></label>
+            <label><span>Título</span><input value={cargarForm.titulo} onChange={(e) => setCargarForm({ ...cargarForm, titulo: e.target.value })} required /></label>
+            <label><span>Grado</span><input type="number" value={cargarForm.grado} onChange={(e) => setCargarForm({ ...cargarForm, grado: e.target.value })} required /></label>
+            <label><span>Descripción</span><input value={cargarForm.descripcion} onChange={(e) => setCargarForm({ ...cargarForm, descripcion: e.target.value })} /></label>
+            <label><span>Código</span><input value={cargarForm.codigo} onChange={(e) => setCargarForm({ ...cargarForm, codigo: e.target.value })} placeholder="opcional" /></label>
+          </form>
+          <button type="submit" className="btn btn-primary" disabled={uploading}>
+            {uploading ? 'Cargando PDF... (puede tardar)' : 'Cargar libro'}
+          </button>
+        </div>
+      </section>
 
-      <div className="card">
-        <h3>Catálogo</h3>
-        {libros.length === 0 ? <p style={{ color: 'var(--text-muted)' }}>Sin libros.</p> : (
-          libros.map((l) => (
-            <div key={l.id} className="list-item">
-              <div>
-                <h4>{l.titulo}</h4>
-                <span className="meta">Grado {l.grado} · {l.codigo}</span>
-              </div>
-              <div className="actions">
-                <button className="btn btn-sm btn-primary" onClick={() => descargarPdf(l.id)}>PDF</button>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
+      <section className="page-section">
+        <h2 className="page-section__title">Catálogo de libros</h2>
+        <div className="page-section__toolbar">
+          <button type="button" className="btn btn-primary btn-sm" onClick={loadLibros} disabled={loading}>
+            {loading ? 'Cargando...' : 'Actualizar'}
+          </button>
+        </div>
+        <div className="data-table-wrap">
+          {libros.length === 0 ? (
+            <div className="empty-state">Sin libros. Carga uno arriba.</div>
+          ) : (
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Título</th>
+                  <th>Grado</th>
+                  <th>Código</th>
+                  <th>Estado</th>
+                  <th className="cell-actions">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {libros.map((l) => (
+                  <tr key={l.id}>
+                    <td className="cell-muted">{l.id}</td>
+                    <td><strong>{l.titulo}</strong></td>
+                    <td>{l.grado}</td>
+                    <td className="cell-muted">{l.codigo ?? '-'}</td>
+                    <td className="cell-muted">{l.estado ?? '-'}</td>
+                    <td className="cell-actions">
+                      <button type="button" className="btn btn-sm btn-primary" onClick={() => descargarPdf(l.id)}>Descargar PDF</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </section>
     </>
   );
 }
@@ -490,195 +621,158 @@ function AdminAlumnosPadres() {
 
   return (
     <>
-      <div className="section-title">
-        <span>Alumnos y Padres</span>
-      </div>
       {msg && <div className={`alert alert-${msg.type}`}>{msg.text}</div>}
 
-      <div className="card" style={{ marginBottom: '1rem' }}>
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
-          <button
-            className={`btn ${tab === 'alumnos' ? 'btn-primary' : 'btn-ghost'}`}
-            onClick={() => setTab('alumnos')}
-          >
-            Alumnos
-          </button>
-          <button
-            className={`btn ${tab === 'padres' ? 'btn-primary' : 'btn-ghost'}`}
-            onClick={() => setTab('padres')}
-          >
-            Padres / Tutores
-          </button>
+      <section className="page-section">
+        <h2 className="page-section__title">Alumnos y Padres</h2>
+        <div className="page-section__toolbar">
+          <button type="button" className={`btn btn-sm ${tab === 'alumnos' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setTab('alumnos')}>Alumnos</button>
+          <button type="button" className={`btn btn-sm ${tab === 'padres' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setTab('padres')}>Padres / Tutores</button>
         </div>
 
         {tab === 'alumnos' && (
           <>
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap' }}>
+            <div className="page-section__toolbar">
               <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Filtrar por escuela:</span>
-                <select
-                  value={filtroEscuela}
-                  onChange={(e) => setFiltroEscuela(e.target.value)}
-                  style={{ padding: '0.4rem 0.6rem', minWidth: 200 }}
-                >
+                <span className="cell-muted" style={{ fontSize: '0.875rem' }}>Filtrar por escuela:</span>
+                <select value={filtroEscuela} onChange={(e) => setFiltroEscuela(e.target.value)} style={{ padding: '0.4rem 0.6rem', minWidth: 220 }}>
                   <option value="">Todas</option>
-                  {escuelas.map((e) => (
-                    <option key={e.id} value={e.id}>{e.nombre}</option>
-                  ))}
+                  {escuelas.map((e) => <option key={e.id} value={e.id}>{e.nombre}</option>)}
                 </select>
               </label>
-              <button className="btn btn-primary btn-sm" onClick={loadAlumnos} disabled={loading}>
+              <button type="button" className="btn btn-primary btn-sm" onClick={loadAlumnos} disabled={loading}>
                 {loading ? 'Cargando...' : 'Actualizar'}
               </button>
             </div>
-            <p className="card-desc" style={{ marginBottom: '1rem' }}>
-              Lista de alumnos. Si tiene padre asignado se muestra junto al nombre. Haz clic en Ver para más detalles.
-            </p>
-            {alumnos.length === 0 ? (
-              <p style={{ color: 'var(--text-muted)' }}>Sin alumnos.</p>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                {alumnos.map((a) => (
-                  <div key={a.id} className="list-item">
-                    <div>
-                      <h4>{a.persona?.nombre} {a.persona?.apellido}</h4>
-                      <span className="meta">
-                        Grado {a.grado} · {a.escuela?.nombre || `Escuela ID ${a.escuelaId}`}
-                        {a.padre && (
-                          <span style={{ marginLeft: '0.5rem', color: 'var(--accent)' }}>
-                            · Padre: {a.padre.persona?.nombre} {a.padre.persona?.apellido}
-                          </span>
-                        )}
-                        {!a.padre && a.padreId === null && (
-                          <span style={{ marginLeft: '0.5rem', color: 'var(--text-muted)', opacity: 0.8 }}>
-                            · Sin padre asignado
-                          </span>
-                        )}
-                      </span>
-                    </div>
-                    <div className="actions">
-                      <button className="btn btn-sm btn-primary" onClick={() => verAlumno(a.id)}>
-                        Ver detalle
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <div className="data-table-wrap">
+              {alumnos.length === 0 ? (
+                <div className="empty-state">Sin alumnos.</div>
+              ) : (
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Nombre</th>
+                      <th>Grado · Escuela</th>
+                      <th>Padre / Tutor</th>
+                      <th className="cell-actions">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {alumnos.map((a) => (
+                      <tr key={a.id}>
+                        <td><strong>{a.persona?.nombre} {a.persona?.apellido}</strong></td>
+                        <td className="cell-muted">Grado {a.grado} · {a.escuela?.nombre || `ID ${a.escuelaId}`}</td>
+                        <td className="cell-muted">
+                          {a.padre ? `${a.padre.persona?.nombre} ${a.padre.persona?.apellido}` : 'Sin padre asignado'}
+                        </td>
+                        <td className="cell-actions">
+                          <button type="button" className="btn btn-sm btn-primary" onClick={() => verAlumno(a.id)}>Ver detalle</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
           </>
         )}
 
         {tab === 'padres' && (
           <>
-            <button className="btn btn-primary btn-sm" onClick={loadPadres} disabled={loading} style={{ marginBottom: '1rem' }}>
-              {loading ? 'Cargando...' : 'Actualizar'}
-            </button>
-            <p className="card-desc" style={{ marginBottom: '1rem' }}>
-              Lista de padres/tutores con sus hijos.
-            </p>
-            {padres.length === 0 ? (
-              <p style={{ color: 'var(--text-muted)' }}>Sin padres registrados.</p>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                {padres.map((p) => (
-                  <div key={p.id} className="list-item">
-                    <div>
-                      <h4>{p.persona?.nombre} {p.persona?.apellido}</h4>
-                      <span className="meta">
-                        {p.persona?.correo}
-                        {p.cantidadHijos !== undefined && (
-                          <span style={{ marginLeft: '0.5rem', color: 'var(--accent)' }}>
-                            · {p.cantidadHijos} hijo(s)
-                          </span>
-                        )}
-                      </span>
-                    </div>
-                    <div className="actions">
-                      <button className="btn btn-sm btn-ghost" onClick={() => verPadre(p.id)}>
-                        Ver hijos
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-      </div>
-
-      {detalleAlumno && (
-        <div className="card" style={{ borderColor: 'var(--accent)', borderWidth: '1px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
-            <h3>Detalle del alumno</h3>
-            <button className="btn btn-ghost btn-sm" onClick={() => setDetalleAlumno(null)}>Cerrar</button>
-          </div>
-          <div style={{ display: 'grid', gap: '1rem' }}>
-            <div>
-              <strong style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Nombre</strong>
-              <p>{detalleAlumno.persona?.nombre} {detalleAlumno.persona?.apellido}</p>
+            <div className="page-section__toolbar">
+              <button type="button" className="btn btn-primary btn-sm" onClick={loadPadres} disabled={loading}>
+                {loading ? 'Cargando...' : 'Actualizar'}
+              </button>
             </div>
-            <div>
-              <strong style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Email</strong>
-              <p>{detalleAlumno.persona?.correo}</p>
-            </div>
-            <div>
-              <strong style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Grado · Grupo</strong>
-              <p>{detalleAlumno.grado} · {detalleAlumno.grupo || '-'}</p>
-            </div>
-            <div>
-              <strong style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Escuela</strong>
-              <p>{detalleAlumno.escuela?.nombre || `ID ${detalleAlumno.escuelaId}`}</p>
-            </div>
-            <div>
-              <strong style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Padre / Tutor</strong>
-              {detalleAlumno.padre ? (
-                <div style={{ padding: '0.75rem', background: 'var(--bg)', borderRadius: 'var(--radius-sm)', marginTop: '0.25rem' }}>
-                  <p style={{ marginBottom: '0.25rem' }}>{detalleAlumno.padre.persona?.nombre} {detalleAlumno.padre.persona?.apellido}</p>
-                  <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{detalleAlumno.padre.persona?.correo}</p>
-                  {detalleAlumno.padre.parentesco && (
-                    <span className="badge badge-admin" style={{ marginTop: '0.25rem', display: 'inline-block' }}>{detalleAlumno.padre.parentesco}</span>
-                  )}
-                </div>
+            <div className="data-table-wrap">
+              {padres.length === 0 ? (
+                <div className="empty-state">Sin padres registrados.</div>
               ) : (
-                <p style={{ color: 'var(--text-muted)' }}>Sin padre asignado</p>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Nombre</th>
+                      <th>Correo</th>
+                      <th>Hijos</th>
+                      <th className="cell-actions">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {padres.map((p) => (
+                      <tr key={p.id}>
+                        <td><strong>{p.persona?.nombre} {p.persona?.apellido}</strong></td>
+                        <td className="cell-muted">{p.persona?.correo ?? '-'}</td>
+                        <td className="cell-muted">{p.cantidadHijos !== undefined ? `${p.cantidadHijos} hijo(s)` : '-'}</td>
+                        <td className="cell-actions">
+                          <button type="button" className="btn btn-sm btn-ghost" onClick={() => verPadre(p.id)}>Ver hijos</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               )}
             </div>
+          </>
+        )}
+      </section>
+
+      {detalleAlumno && (
+        <section className="page-section detail-panel">
+          <div className="detail-panel__header">
+            <span className="detail-panel__title">Detalle del alumno</span>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDetalleAlumno(null)}>Cerrar</button>
           </div>
-        </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
+            <div><span className="cell-muted" style={{ fontSize: '0.75rem' }}>Nombre</span><p>{detalleAlumno.persona?.nombre} {detalleAlumno.persona?.apellido}</p></div>
+            <div><span className="cell-muted" style={{ fontSize: '0.75rem' }}>Email</span><p>{detalleAlumno.persona?.correo ?? '-'}</p></div>
+            <div><span className="cell-muted" style={{ fontSize: '0.75rem' }}>Grado · Grupo</span><p>{detalleAlumno.grado} · {detalleAlumno.grupo || '-'}</p></div>
+            <div><span className="cell-muted" style={{ fontSize: '0.75rem' }}>Escuela</span><p>{detalleAlumno.escuela?.nombre || `ID ${detalleAlumno.escuelaId}`}</p></div>
+          </div>
+          <div style={{ marginTop: '1rem' }}>
+            <span className="cell-muted" style={{ fontSize: '0.75rem' }}>Padre / Tutor</span>
+            {detalleAlumno.padre ? (
+              <div className="card" style={{ marginTop: '0.35rem', padding: '0.75rem' }}>
+                <p><strong>{detalleAlumno.padre.persona?.nombre} {detalleAlumno.padre.persona?.apellido}</strong></p>
+                <p className="cell-muted" style={{ fontSize: '0.875rem' }}>{detalleAlumno.padre.persona?.correo}</p>
+                {detalleAlumno.padre.parentesco && <span className="badge badge-admin">{detalleAlumno.padre.parentesco}</span>}
+              </div>
+            ) : (
+              <p className="cell-muted" style={{ marginTop: '0.35rem' }}>Sin padre asignado</p>
+            )}
+          </div>
+        </section>
       )}
 
       {detallePadre && (
-        <div className="card" style={{ borderColor: 'var(--accent)', borderWidth: '1px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
-            <h3>Padre / Tutor y sus hijos</h3>
-            <button className="btn btn-ghost btn-sm" onClick={() => setDetallePadre(null)}>Cerrar</button>
+        <section className="page-section detail-panel">
+          <div className="detail-panel__header">
+            <span className="detail-panel__title">Padre / Tutor y sus hijos</span>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDetallePadre(null)}>Cerrar</button>
           </div>
-          <div style={{ marginBottom: '1.5rem' }}>
-            <strong style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Padre</strong>
-            <p>{detallePadre.persona?.nombre} {detallePadre.persona?.apellido}</p>
-            <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>{detallePadre.persona?.correo}</p>
-          </div>
-          <div>
-            <strong style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Hijos ({detallePadre.alumnos?.length || 0})</strong>
-            {(!detallePadre.alumnos || detallePadre.alumnos.length === 0) ? (
-              <p style={{ color: 'var(--text-muted)', marginTop: '0.5rem' }}>Sin hijos registrados.</p>
-            ) : (
-              <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                {detallePadre.alumnos.map((a) => (
-                  <div key={a.id} className="list-item" style={{ padding: '0.75rem' }}>
-                    <div>
-                      <h4 style={{ fontSize: '0.95rem' }}>{a.persona?.nombre} {a.persona?.apellido}</h4>
-                      <span className="meta">Grado {a.grado} · {a.escuela?.nombre || `Escuela ID ${a.escuelaId}`}</span>
-                    </div>
-                    <button className="btn btn-sm btn-primary" onClick={() => { setDetallePadre(null); verAlumno(a.id); }}>
-                      Ver alumno
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+          <p><strong>{detallePadre.persona?.nombre} {detallePadre.persona?.apellido}</strong></p>
+          <p className="cell-muted" style={{ marginBottom: '1rem' }}>{detallePadre.persona?.correo}</p>
+          <span className="cell-muted" style={{ fontSize: '0.75rem' }}>Hijos ({detallePadre.alumnos?.length || 0})</span>
+          {(!detallePadre.alumnos || detallePadre.alumnos.length === 0) ? (
+            <p className="cell-muted" style={{ marginTop: '0.5rem' }}>Sin hijos registrados.</p>
+          ) : (
+            <div className="data-table-wrap" style={{ marginTop: '0.5rem' }}>
+              <table className="data-table">
+                <thead><tr><th>Nombre</th><th>Grado · Escuela</th><th className="cell-actions">Acciones</th></tr></thead>
+                <tbody>
+                  {detallePadre.alumnos.map((a) => (
+                    <tr key={a.id}>
+                      <td><strong>{a.persona?.nombre} {a.persona?.apellido}</strong></td>
+                      <td className="cell-muted">Grado {a.grado} · {a.escuela?.nombre || `ID ${a.escuelaId}`}</td>
+                      <td className="cell-actions">
+                        <button type="button" className="btn btn-sm btn-primary" onClick={() => { setDetallePadre(null); verAlumno(a.id); }}>Ver alumno</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       )}
     </>
   );
@@ -805,24 +899,25 @@ function AdminUsuarios() {
 
   return (
     <>
-      <div className="section-title">
-        <span>Registro de usuarios</span>
-        <button className="btn btn-sm btn-ghost" onClick={() => { loadEscuelas(); loadAlumnos(); }}>Actualizar</button>
-      </div>
       {msg && <div className={`alert alert-${msg.type}`}>{msg.text}</div>}
 
-      <div className="card" style={{ marginBottom: '1rem' }}>
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
-          {['alumno', 'padre', 'maestro', 'director', 'admin'].map((m) => (
-            <button key={m} className={`btn ${modoRegistro === m ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setModoRegistro(m)}>
-              {m === 'padre' && 'Padre'}
-              {m === 'alumno' && 'Alumno'}
-              {m === 'maestro' && 'Maestro'}
-              {m === 'director' && 'Director'}
-              {m === 'admin' && 'Administrador'}
-            </button>
-          ))}
+      <section className="page-section">
+        <h2 className="page-section__title">Registro de usuarios</h2>
+        <div className="page-section__toolbar">
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => { loadEscuelas(); loadAlumnos(); }}>Actualizar listas</button>
         </div>
+        <div className="card">
+          <div className="page-section__toolbar" style={{ marginBottom: '1rem' }}>
+            {['alumno', 'padre', 'maestro', 'director', 'admin'].map((m) => (
+              <button key={m} type="button" className={`btn btn-sm ${modoRegistro === m ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setModoRegistro(m)}>
+                {m === 'padre' && 'Padre'}
+                {m === 'alumno' && 'Alumno'}
+                {m === 'maestro' && 'Maestro'}
+                {m === 'director' && 'Director'}
+                {m === 'admin' && 'Administrador'}
+              </button>
+            ))}
+          </div>
 
         {modoRegistro === 'alumno' && (
           <div>
@@ -937,7 +1032,8 @@ function AdminUsuarios() {
             <button type="submit" className="btn btn-primary">Registrar maestro</button>
           </div>
         )}
-      </div>
+        </div>
+      </section>
     </>
   );
 }

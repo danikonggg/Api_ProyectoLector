@@ -39,6 +39,10 @@ export class Libro {
   @Column({ name: 'estado', type: 'varchar', length: 50, default: 'procesando' })
   estado: string;
 
+  /** Si está activo globalmente. Inactivo = no se ve en ninguna escuela ni se puede otorgar. */
+  @Column({ name: 'activo', type: 'boolean', default: true })
+  activo: boolean;
+
   @Column({ name: 'num_paginas', type: 'bigint', nullable: true })
   numPaginas: number | null;
 

@@ -1,11 +1,3 @@
-/**
- * ============================================
- * MÓDULO: AuditModule
- * ============================================
- * Módulo de auditoría. Registra acciones sensibles.
- * Los logs solo son visibles por administradores.
- */
-
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuditLog } from './entities/audit-log.entity';

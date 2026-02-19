@@ -1,35 +1,34 @@
-/**
- * ============================================
- * PUNTO DE ENTRADA DE LA APLICACIÓN
- * ============================================
- *
- * Este archivo es el primero que se ejecuta cuando inicias la aplicación.
- * Aquí se configura todo lo necesario para que NestJS funcione correctamente.
- */
-
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import helmet from 'helmet';
+import express from 'express';
 import { AppModule } from './app.module';
 import type { Request, Response, NextFunction } from 'express';
 import { validateEnv } from './config/env.validation';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 
-/**
- * Función principal que inicia la aplicación
- */
+/** Límite de tamaño del body para evitar payloads enormes (DoS) */
+const BODY_LIMIT = '1mb';
+
 async function bootstrap() {
   validateEnv();
 
   const logger = new Logger('Bootstrap');
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, {
+    bodyParser: false,
+  });
+
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+    }),
+  );
+  app.use(express.json({ limit: BODY_LIMIT }));
+  app.use(express.urlencoded({ extended: true, limit: BODY_LIMIT }));
 
   app.useGlobalFilters(new AllExceptionsFilter());
 
-  /**
-   * Log de todas las peticiones HTTP (ver si llegan GET/POST o solo OPTIONS).
-   * Busca en consola: "HTTP GET /libros" vs solo "HTTP OPTIONS /libros".
-   */
   app.use((req: Request, res: Response, next: NextFunction) => {
     const start = Date.now();
     res.on('finish', () => {
@@ -39,12 +38,6 @@ async function bootstrap() {
     next();
   });
 
-  /**
-   * Configurar validación global de datos
-   * - whitelist: Elimina propiedades que no están en el DTO
-   * - forbidNonWhitelisted: Rechaza la petición si hay propiedades extra
-   * - transform: Convierte automáticamente los tipos de datos
-   */
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -53,11 +46,6 @@ async function bootstrap() {
     }),
   );
 
-  /**
-   * Habilitar CORS (Cross-Origin Resource Sharing)
-   * En producción: usar CORS_ORIGINS (separados por coma).
-   * En desarrollo: permitir todo (origin: true) si CORS_ORIGINS está vacío.
-   */
   const corsOrigins = process.env.CORS_ORIGINS?.trim();
   const origin =
     corsOrigins && process.env.NODE_ENV === 'production'
@@ -80,10 +68,6 @@ async function bootstrap() {
     preflightContinue: false,
   });
 
-  /**
-   * Configurar Swagger (Documentación de API)
-   * Desactivado en producción por seguridad.
-   */
   if (process.env.NODE_ENV !== 'production') {
     const config = new DocumentBuilder()
       .setTitle('API Lector - Sistema Educativo')
@@ -118,10 +102,7 @@ async function bootstrap() {
     });
   }
 
-  // Obtener el puerto desde las variables de entorno o usar 3000 por defecto
   const port = process.env.PORT || 3000;
-
-  // Iniciar el servidor
   await app.listen(port);
 
   logger.log(`🚀 Aplicación corriendo en: http://localhost:${port}`);
@@ -131,5 +112,7 @@ async function bootstrap() {
   logger.log(`🏥 Health check: http://localhost:${port}/health`);
 }
 
-// Ejecutar la función bootstrap
-bootstrap();
+bootstrap().catch((err) => {
+  console.error('Error al iniciar la aplicación:', err);
+  process.exit(1);
+});

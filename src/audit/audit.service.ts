@@ -1,11 +1,3 @@
-/**
- * ============================================
- * SERVICIO: AuditService
- * ============================================
- * Registra acciones sensibles para auditoría.
- * Los logs solo son visibles por administradores.
- */
-
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';

@@ -12,13 +12,16 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { EscuelasService } from './escuelas.service';
 import { EscuelasController } from './escuelas.controller';
 import { Escuela } from '../personas/entities/escuela.entity';
+import { Alumno } from '../personas/entities/alumno.entity';
+import { Maestro } from '../personas/entities/maestro.entity';
+import { Director } from '../personas/entities/director.entity';
 import { EscuelaLibro } from './entities/escuela-libro.entity';
 import { EscuelaLibroPendiente } from './entities/escuela-libro-pendiente.entity';
 import { Libro } from '../libros/entities/libro.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Escuela, EscuelaLibro, EscuelaLibroPendiente, Libro]),
+    TypeOrmModule.forFeature([Escuela, Alumno, Maestro, Director, EscuelaLibro, EscuelaLibroPendiente, Libro]),
   ],
   controllers: [EscuelasController],
   providers: [EscuelasService],

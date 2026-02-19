@@ -99,10 +99,10 @@ export default function Home() {
 
   if (loading) {
     return (
-      <div className="home-alumno">
-        <div className="home-loading">
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-3 text-zinc-400">
           <div className="book-loader" />
-          <p>Cargando tu biblioteca...</p>
+          <p className="text-sm">Cargando tu biblioteca...</p>
         </div>
       </div>
     );
@@ -128,16 +128,12 @@ export default function Home() {
         </button>
       </header>
 
-      {error && (
-        <div className="alert alert-error" style={{ marginBottom: '1.5rem' }}>
-          {error}
-        </div>
-      )}
+      {error && <div className="alert alert-error mb-6">{error}</div>}
 
       {!esAlumno ? (
         <div className="card home-welcome-card">
-          <h2>Bienvenido</h2>
-          <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
+          <h2 className="text-xl font-semibold mb-2">Bienvenido</h2>
+          <p className="text-sm text-zinc-400 mb-6">
             {user?.nombre} {user?.apellido} · {user?.tipoPersona || '—'}
           </p>
           <button
@@ -265,7 +261,7 @@ export default function Home() {
             )}
 
             {!contenidoLibro && (
-              <div className="book-reader" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div className="book-reader flex items-center justify-center">
                 <div className="book-loader" />
               </div>
             )}

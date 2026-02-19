@@ -1,10 +1,3 @@
-/**
- * ============================================
- * SERVICIO: DirectorService
- * ============================================
- * Dashboard y datos de la escuela del director.
- */
-
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';

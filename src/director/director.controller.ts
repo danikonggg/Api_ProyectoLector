@@ -1,17 +1,10 @@
-/**
- * ============================================
- * CONTROLADOR: DirectorController
- * ============================================
- * Endpoints exclusivos para directores de escuela.
- * El director nunca envía el ID de escuela: se usa el del token.
- */
-
-import { Controller, Get, Post, Body, UseGuards, Request, ForbiddenException, BadRequestException, HttpCode, HttpStatus } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
+import { Controller, Get, Post, Body, UseGuards, Request, ForbiddenException, HttpCode, HttpStatus } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { DirectorGuard } from '../auth/guards/director.guard';
 import { DirectorService } from './director.service';
 import { EscuelasService } from '../escuelas/escuelas.service';
+import { AsignarLibroEscuelaDto } from '../escuelas/dto/asignar-libro-escuela.dto';
 import type { Request as ExpressRequest } from 'express';
 
 function getEscuelaId(req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } }): number {
@@ -52,6 +45,66 @@ export class DirectorController {
   async getDashboard(@Request() req: ExpressRequest & { user?: { director?: { escuelaId: number; escuela?: { id: number } } } }) {
     const escuelaId = getEscuelaId(req);
     return await this.directorService.getDashboard(escuelaId);
+  }
+
+  /**
+   * GET /director/escuela
+   * Datos de mi escuela. El ID se obtiene del token; no se envía en la URL.
+   */
+  @Get('escuela')
+  @ApiTags('Solo Director')
+  @ApiOperation({ summary: 'Ver datos de mi escuela', description: 'Sin parámetros. La escuela se toma del token.' })
+  @ApiResponse({ status: 200, description: 'Datos de la escuela del director' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'Solo directores' })
+  async getMiEscuela(@Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } }) {
+    const escuelaId = getEscuelaId(req);
+    return await this.escuelasService.obtenerPorId(escuelaId);
+  }
+
+  /**
+   * GET /director/maestros
+   * Maestros de mi escuela. El ID de escuela se obtiene del token.
+   */
+  @Get('maestros')
+  @ApiTags('Solo Director')
+  @ApiOperation({ summary: 'Maestros de mi escuela', description: 'Sin parámetros. La escuela se toma del token.' })
+  @ApiResponse({ status: 200, description: 'Lista de maestros' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'Solo directores' })
+  async getMaestros(@Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } }) {
+    const escuelaId = getEscuelaId(req);
+    return await this.escuelasService.listarMaestrosDeEscuela(escuelaId);
+  }
+
+  /**
+   * GET /director/alumnos
+   * Alumnos de mi escuela. El ID de escuela se obtiene del token.
+   */
+  @Get('alumnos')
+  @ApiTags('Solo Director')
+  @ApiOperation({ summary: 'Alumnos de mi escuela', description: 'Sin parámetros. La escuela se toma del token.' })
+  @ApiResponse({ status: 200, description: 'Lista de alumnos' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'Solo directores' })
+  async getAlumnos(@Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } }) {
+    const escuelaId = getEscuelaId(req);
+    return await this.escuelasService.listarAlumnosDeEscuela(escuelaId);
+  }
+
+  /**
+   * GET /director/directores
+   * Directores de mi escuela. El ID de escuela se obtiene del token.
+   */
+  @Get('directores')
+  @ApiTags('Solo Director')
+  @ApiOperation({ summary: 'Directores de mi escuela', description: 'Sin parámetros. La escuela se toma del token.' })
+  @ApiResponse({ status: 200, description: 'Lista de directores de la escuela' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'Solo directores' })
+  async getDirectores(@Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } }) {
+    const escuelaId = getEscuelaId(req);
+    return await this.escuelasService.listarDirectoresDeEscuela(escuelaId);
   }
 
   /**
@@ -99,27 +152,17 @@ export class DirectorController {
   @ApiTags('Solo Director')
   @ApiOperation({
     summary: 'Canjear libro en mi escuela (solo código)',
-    description: 'Solo se envía el código en el body. No se envía ni se pide ID de escuela; se usa la del director (token).',
-  })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['codigo'],
-      properties: { codigo: { type: 'string', example: 'LIB-1735123456-abc12345', description: 'Código que entregó el administrador' } },
-    },
+    description: 'Body: { "codigo": "..." }. No se envía ID de escuela; se usa la del director (token).',
   })
   @ApiResponse({ status: 201, description: 'Libro canjeado' })
-  @ApiResponse({ status: 400, description: 'Código no otorgado a tu escuela' })
+  @ApiResponse({ status: 400, description: 'Código inválido o no otorgado a tu escuela' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'Solo directores' })
   async canjearLibro(
-    @Body('codigo') codigo: string,
+    @Body() body: AsignarLibroEscuelaDto,
     @Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } },
   ) {
     const escuelaId = getEscuelaId(req);
-    if (!codigo || typeof codigo !== 'string' || !codigo.trim()) {
-      throw new BadRequestException('El código es obligatorio');
-    }
-    return await this.escuelasService.canjearLibroPorCodigo(escuelaId, codigo.trim(), getAuditContext(req));
+    return await this.escuelasService.canjearLibroPorCodigo(escuelaId, body.codigo, getAuditContext(req));
   }
 }

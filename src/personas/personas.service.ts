@@ -16,7 +16,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, Not } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { Persona } from './entities/persona.entity';
 import { Administrador } from './entities/administrador.entity';
@@ -29,7 +29,9 @@ import { RegistroPadreDto } from './dto/registro-padre.dto';
 import { RegistroAlumnoDto } from './dto/registro-alumno.dto';
 import { RegistroMaestroDto } from './dto/registro-maestro.dto';
 import { RegistroDirectorDto } from './dto/registro-director.dto';
+import { ActualizarUsuarioDto } from './dto/actualizar-usuario.dto';
 import { AuditService } from '../audit/audit.service';
+import { MAX_PAGE_SIZE, MAX_PAGE_NUMBER } from '../common/constants/validation.constants';
 
 export interface AuditContext {
   usuarioId?: number | null;
@@ -441,6 +443,260 @@ export class PersonasService {
   }
 
   /**
+   * Obtener todos los usuarios del sistema con totales por rol.
+   * Solo administradores. Incluye resumen de cantidad por cada rol al inicio.
+   */
+  async obtenerTodosUsuariosConTotales(): Promise<{
+    message: string;
+    totalesPorRol: {
+      administrador: number;
+      director: number;
+      maestro: number;
+      alumno: number;
+      padre: number;
+      total: number;
+    };
+    total: number;
+    data: Array<{
+      id: number;
+      nombre: string;
+      apellido: string;
+      correo: string | null;
+      telefono: string | null;
+      fechaNacimiento: string | null;
+      tipoPersona: string;
+      activo: boolean;
+      rolId?: number;
+      escuela?: { id: number; nombre: string; nivel: string };
+    }>;
+  }> {
+    const [totalAdministrador, totalDirector, totalMaestro, totalAlumno, totalPadre] =
+      await Promise.all([
+        this.administradorRepository.count(),
+        this.directorRepository.count(),
+        this.maestroRepository.count(),
+        this.alumnoRepository.count(),
+        this.padreRepository.count(),
+      ]);
+
+    const total = totalAdministrador + totalDirector + totalMaestro + totalAlumno + totalPadre;
+
+    const personas = await this.personaRepository.find({
+      where: [
+        { tipoPersona: 'administrador' },
+        { tipoPersona: 'director' },
+        { tipoPersona: 'maestro' },
+        { tipoPersona: 'alumno' },
+        { tipoPersona: 'padre' },
+      ],
+      relations: ['administrador', 'director', 'director.escuela', 'maestro', 'maestro.escuela', 'alumno', 'alumno.escuela', 'padre'],
+      select: ['id', 'nombre', 'apellido', 'correo', 'telefono', 'fechaNacimiento', 'tipoPersona', 'activo'],
+      order: { tipoPersona: 'ASC', apellido: 'ASC', nombre: 'ASC' },
+    });
+
+    const data = personas.map((p) => {
+      const base = {
+        id: p.id,
+        nombre: p.nombre,
+        apellido: p.apellido,
+        correo: p.correo ?? null,
+        telefono: p.telefono ?? null,
+        fechaNacimiento: p.fechaNacimiento ? (p.fechaNacimiento instanceof Date ? p.fechaNacimiento.toISOString().split('T')[0] : String(p.fechaNacimiento).split('T')[0]) : null,
+        tipoPersona: p.tipoPersona ?? 'desconocido',
+        activo: p.activo ?? true,
+      };
+      let rolId: number | undefined;
+      let escuela: { id: number; nombre: string; nivel: string } | undefined;
+      if (p.administrador) {
+        rolId = p.administrador.id;
+      } else if (p.director) {
+        rolId = p.director.id;
+        if (p.director.escuela) {
+          escuela = {
+            id: p.director.escuela.id,
+            nombre: p.director.escuela.nombre,
+            nivel: p.director.escuela.nivel ?? '',
+          };
+        }
+      } else if (p.maestro) {
+        rolId = p.maestro.id;
+        if (p.maestro.escuela) {
+          escuela = {
+            id: p.maestro.escuela.id,
+            nombre: p.maestro.escuela.nombre,
+            nivel: p.maestro.escuela.nivel ?? '',
+          };
+        }
+      } else if (p.alumno) {
+        rolId = p.alumno.id;
+        if (p.alumno.escuela) {
+          escuela = {
+            id: p.alumno.escuela.id,
+            nombre: p.alumno.escuela.nombre,
+            nivel: p.alumno.escuela.nivel ?? '',
+          };
+        }
+      } else if (p.padre) {
+        rolId = p.padre.id;
+      }
+      return { ...base, ...(rolId !== undefined && { rolId }), ...(escuela && { escuela }) };
+    });
+
+    this.logger.log(`Listado de todos los usuarios: ${data.length} total. Admin=${totalAdministrador}, Director=${totalDirector}, Maestro=${totalMaestro}, Alumno=${totalAlumno}, Padre=${totalPadre}`);
+
+    return {
+      message: 'Usuarios obtenidos correctamente',
+      totalesPorRol: {
+        administrador: totalAdministrador,
+        director: totalDirector,
+        maestro: totalMaestro,
+        alumno: totalAlumno,
+        padre: totalPadre,
+        total,
+      },
+      total: data.length,
+      data,
+    };
+  }
+
+  /** Tipos de persona considerados "usuarios" del sistema (con login) */
+  private static readonly TIPOS_USUARIO = [
+    'administrador',
+    'director',
+    'maestro',
+    'alumno',
+    'padre',
+  ] as const;
+
+  /**
+   * Actualizar un usuario por ID (persona). Solo admin.
+   * No se puede cambiar el rol (tipoPersona). Solo datos de persona: nombre, apellido, correo, telefono, fechaNacimiento, genero, password, activo.
+   */
+  async actualizarUsuarioPorId(
+    id: number,
+    dto: ActualizarUsuarioDto,
+    auditContext?: AuditContext,
+  ) {
+    const persona = await this.personaRepository.findOne({
+      where: { id },
+      select: ['id', 'nombre', 'apellido', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'tipoPersona', 'activo', 'password'],
+    });
+    if (!persona) {
+      throw new NotFoundException(`No se encontró el usuario con ID ${id}`);
+    }
+    const tipo = persona.tipoPersona?.toLowerCase();
+    if (!tipo || !PersonasService.TIPOS_USUARIO.includes(tipo as any)) {
+      throw new NotFoundException(`No se encontró el usuario con ID ${id}`);
+    }
+
+    // Solo comprobar duplicado si el correo es distinto al actual (si no, es el mismo usuario manteniendo su correo)
+    if (dto.correo != null && dto.correo.trim() !== '') {
+      const correoTrim = dto.correo.trim();
+      const mismoCorreoQueElMio = persona.correo?.toLowerCase() === correoTrim.toLowerCase();
+      if (!mismoCorreoQueElMio) {
+        const otroConMismoCorreo = await this.personaRepository.findOne({
+          where: { correo: correoTrim, id: Not(id) },
+          select: ['id'],
+        });
+        if (otroConMismoCorreo) {
+          throw new ConflictException('El correo ya está en uso por otro usuario');
+        }
+      }
+    }
+
+    if (dto.nombre != null) persona.nombre = dto.nombre.trim();
+    if (dto.apellido != null) persona.apellido = dto.apellido.trim();
+    if (dto.correo != null) persona.correo = dto.correo.trim() || null;
+    if (dto.telefono != null) persona.telefono = dto.telefono.trim() || null;
+    if (dto.fechaNacimiento != null) {
+      persona.fechaNacimiento = new Date(dto.fechaNacimiento);
+    }
+    if (dto.genero != null) persona.genero = dto.genero.trim() || null;
+    if (dto.activo != null) persona.activo = dto.activo;
+    if (dto.password != null && dto.password.trim() !== '') {
+      const saltRounds = 10;
+      persona.password = await bcrypt.hash(dto.password, saltRounds);
+    }
+
+    await this.personaRepository.save(persona);
+
+    this.logger.log(`Usuario actualizado: persona ID ${id} (${persona.tipoPersona})`);
+
+    await this.auditService.log('actualizar_usuario', {
+      usuarioId: auditContext?.usuarioId ?? null,
+      ip: auditContext?.ip ?? null,
+      detalles: `personaId: ${id} | ${persona.correo ?? ''}`,
+    });
+
+    const resultado = await this.personaRepository.findOne({
+      where: { id },
+      relations: ['administrador', 'director', 'director.escuela', 'maestro', 'maestro.escuela', 'alumno', 'alumno.escuela', 'padre'],
+      select: ['id', 'nombre', 'apellido', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'tipoPersona', 'activo'],
+    });
+    return {
+      message: 'Usuario actualizado correctamente',
+      data: resultado,
+    };
+  }
+
+  /**
+   * Eliminar un usuario por ID (persona). Solo admin.
+   * Borra el registro del rol (administrador/director/maestro/alumno/padre) y luego la persona.
+   * Si es padre, antes desvincula a los alumnos (padreId = null).
+   */
+  async eliminarUsuarioPorId(id: number, auditContext?: AuditContext) {
+    const persona = await this.personaRepository.findOne({
+      where: { id },
+      relations: ['administrador', 'director', 'maestro', 'alumno', 'padre'],
+      select: ['id', 'nombre', 'apellido', 'correo', 'tipoPersona'],
+    });
+    if (!persona) {
+      throw new NotFoundException(`No se encontró el usuario con ID ${id}`);
+    }
+    const tipo = persona.tipoPersona?.toLowerCase();
+    if (!tipo || !PersonasService.TIPOS_USUARIO.includes(tipo as any)) {
+      throw new NotFoundException(`No se encontró el usuario con ID ${id}`);
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      const personaRepo = manager.getRepository(Persona);
+      const adminRepo = manager.getRepository(Administrador);
+      const directorRepo = manager.getRepository(Director);
+      const maestroRepo = manager.getRepository(Maestro);
+      const alumnoRepo = manager.getRepository(Alumno);
+      const padreRepo = manager.getRepository(Padre);
+
+      if (tipo === 'padre' && persona.padre) {
+        await alumnoRepo.update({ padreId: persona.padre.id }, { padreId: null });
+        await padreRepo.delete({ id: persona.padre.id });
+      } else if (tipo === 'alumno' && persona.alumno) {
+        await alumnoRepo.delete({ id: persona.alumno.id });
+      } else if (tipo === 'maestro' && persona.maestro) {
+        await maestroRepo.delete({ id: persona.maestro.id });
+      } else if (tipo === 'director' && persona.director) {
+        await directorRepo.delete({ id: persona.director.id });
+      } else if (tipo === 'administrador' && persona.administrador) {
+        await adminRepo.delete({ id: persona.administrador.id });
+      }
+
+      await personaRepo.delete({ id });
+    });
+
+    this.logger.log(`Usuario eliminado: persona ID ${id} (${tipo}) - ${persona.correo ?? ''}`);
+
+    await this.auditService.log('eliminar_usuario', {
+      usuarioId: auditContext?.usuarioId ?? null,
+      ip: auditContext?.ip ?? null,
+      detalles: `personaId: ${id} | ${persona.correo ?? ''} | tipo: ${tipo}`,
+    });
+
+    return {
+      message: 'Usuario eliminado correctamente',
+      description: `Se eliminó el usuario con ID ${id} (${tipo}).`,
+    };
+  }
+
+  /**
    * Obtener todos los alumnos (Admin: todos; Director: solo de su escuela)
    * @param escuelaIdFiltro - Filtrar por escuela
    * @param page - Página (1-based). Si no se pasa, devuelve todos.
@@ -463,16 +719,19 @@ export class PersonasService {
 
     const total = await qb.getCount();
 
-    if (page != null && limit != null && page >= 1 && limit >= 1) {
-      qb.skip((page - 1) * limit).take(limit);
+    const pageSafe = page != null && Number.isInteger(Number(page)) ? Math.max(1, Math.min(Number(page), MAX_PAGE_NUMBER)) : undefined;
+    const limitSafe = limit != null && Number.isInteger(Number(limit)) ? Math.max(1, Math.min(Number(limit), MAX_PAGE_SIZE)) : undefined;
+
+    if (pageSafe != null && limitSafe != null) {
+      qb.skip((pageSafe - 1) * limitSafe).take(limitSafe);
     }
 
     const alumnos = await qb.getMany();
     const data = alumnos.map((a) => this.formatearAlumnoConPadre(a));
 
     const meta =
-      page != null && limit != null
-        ? { page, limit, total, totalPages: Math.ceil(total / limit) }
+      pageSafe != null && limitSafe != null
+        ? { page: pageSafe, limit: limitSafe, total, totalPages: Math.ceil(total / limitSafe) }
         : undefined;
 
     return {
@@ -503,7 +762,11 @@ export class PersonasService {
    * @param valor - valor a buscar (texto con LIKE %valor% o número exacto según el campo)
    */
   async buscarAlumnos(campo: string, valor: string, escuelaIdFiltro?: number) {
-    const campoNormalizado = campo.trim().toLowerCase();
+    const campoTrim = String(campo ?? '').trim();
+    if (campoTrim.length > 50) {
+      throw new BadRequestException('El nombre del campo de búsqueda no es válido.');
+    }
+    const campoNormalizado = campoTrim.toLowerCase();
     if (!PersonasService.CAMPOS_BUSCAR_ALUMNO.includes(campoNormalizado as any)) {
       throw new BadRequestException(
         `Campo de búsqueda no permitido. Use uno de: ${PersonasService.CAMPOS_BUSCAR_ALUMNO.join(', ')}`,
@@ -511,6 +774,10 @@ export class PersonasService {
     }
     if (valor == null || String(valor).trim() === '') {
       throw new BadRequestException('El valor de búsqueda no puede estar vacío.');
+    }
+    const valorTrim = String(valor).trim();
+    if (valorTrim.length > 200) {
+      throw new BadRequestException('El valor de búsqueda no puede superar 200 caracteres.');
     }
 
     const qb = this.alumnoRepository
@@ -525,7 +792,6 @@ export class PersonasService {
       qb.andWhere('alumno.escuelaId = :escuelaId', { escuelaId: escuelaIdFiltro });
     }
 
-    const valorTrim = String(valor).trim();
     const camposTextoPersona = ['nombre', 'apellido', 'correo', 'telefono'];
     const camposTextoAlumno = ['grupo', 'cicloEscolar'];
     const camposNumero = ['grado', 'escuelaId'];
@@ -636,16 +902,19 @@ export class PersonasService {
 
     const total = await qb.getCount();
 
-    if (page != null && limit != null && page >= 1 && limit >= 1) {
-      qb.skip((page - 1) * limit).take(limit);
+    const pageSafe = page != null && Number.isInteger(Number(page)) ? Math.max(1, Math.min(Number(page), MAX_PAGE_NUMBER)) : undefined;
+    const limitSafe = limit != null && Number.isInteger(Number(limit)) ? Math.max(1, Math.min(Number(limit), MAX_PAGE_SIZE)) : undefined;
+
+    if (pageSafe != null && limitSafe != null) {
+      qb.skip((pageSafe - 1) * limitSafe).take(limitSafe);
     }
 
     const padres = await qb.getMany();
     const data = padres.map((p) => this.formatearPadreConAlumnos(p));
 
     const meta =
-      page != null && limit != null
-        ? { page, limit, total, totalPages: Math.ceil(total / limit) }
+      pageSafe != null && limitSafe != null
+        ? { page: pageSafe, limit: limitSafe, total, totalPages: Math.ceil(total / limitSafe) }
         : undefined;
 
     return {

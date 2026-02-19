@@ -1,11 +1,3 @@
-/**
- * ============================================
- * SERVICIO: AuthService
- * ============================================
- * 
- * Servicio que maneja la autenticación y generación de tokens JWT.
- */
-
 import { Injectable, UnauthorizedException, ConflictException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -39,7 +31,7 @@ export class AuthService {
     
     const persona = await this.personaRepository.findOne({
       where: { correo: loginDto.email },
-      relations: ['administrador', 'padre', 'alumno', 'maestro'],
+      relations: ['administrador', 'padre', 'alumno', 'alumno.escuela', 'maestro', 'maestro.escuela', 'director', 'director.escuela'],
       select: ['id', 'nombre', 'apellido', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'password', 'tipoPersona', 'activo'],
     });
 
@@ -76,6 +68,33 @@ export class AuthService {
       throw new UnauthorizedException('Usuario inactivo');
     }
 
+    // Si es director, maestro o alumno: verificar que esté activo y que la escuela esté activa
+    const escuelaInactivaMsg = 'Tu escuela no está activa. Contacta al administrador.';
+    if (persona.director) {
+      const d = persona.director;
+      if (!d.activo || d.escuela?.estado === 'inactiva' || d.escuela?.estado === 'suspendida') {
+        this.logger.warn(`Login fallido: Director de escuela inactiva - ${loginDto.email}`);
+        await this.auditService.log('login_fallido', { usuarioId: persona.id, ip: ip ?? null, detalles: `escuela_inactiva | ${persona.correo}` });
+        throw new UnauthorizedException(escuelaInactivaMsg);
+      }
+    }
+    if (persona.maestro) {
+      const m = persona.maestro;
+      if (!m.activo || m.escuela?.estado === 'inactiva' || m.escuela?.estado === 'suspendida') {
+        this.logger.warn(`Login fallido: Maestro de escuela inactiva - ${loginDto.email}`);
+        await this.auditService.log('login_fallido', { usuarioId: persona.id, ip: ip ?? null, detalles: `escuela_inactiva | ${persona.correo}` });
+        throw new UnauthorizedException(escuelaInactivaMsg);
+      }
+    }
+    if (persona.alumno) {
+      const a = persona.alumno;
+      if (!a.activo || a.escuela?.estado === 'inactiva' || a.escuela?.estado === 'suspendida') {
+        this.logger.warn(`Login fallido: Alumno de escuela inactiva - ${loginDto.email}`);
+        await this.auditService.log('login_fallido', { usuarioId: persona.id, ip: ip ?? null, detalles: `escuela_inactiva | ${persona.correo}` });
+        throw new UnauthorizedException(escuelaInactivaMsg);
+      }
+    }
+
     // Generar token JWT
     const payload = {
       sub: persona.id,
@@ -110,7 +129,7 @@ export class AuthService {
   }
 
   /**
-   * Registrar un administrador inicial (máximo 3)
+   * Registrar un administrador (máximo 5). Requiere ser admin autenticado.
    */
   async registrarAdmin(registroDto: RegistroAdminDto, ip?: string) {
     this.logger.log(`Intento de registro de administrador: ${registroDto.email}`);

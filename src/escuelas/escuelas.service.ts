@@ -17,6 +17,9 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Escuela } from '../personas/entities/escuela.entity';
+import { Alumno } from '../personas/entities/alumno.entity';
+import { Maestro } from '../personas/entities/maestro.entity';
+import { Director } from '../personas/entities/director.entity';
 import { EscuelaLibro } from './entities/escuela-libro.entity';
 import { EscuelaLibroPendiente } from './entities/escuela-libro-pendiente.entity';
 import { Libro } from '../libros/entities/libro.entity';
@@ -36,6 +39,12 @@ export class EscuelasService {
   constructor(
     @InjectRepository(Escuela)
     private readonly escuelaRepository: Repository<Escuela>,
+    @InjectRepository(Alumno)
+    private readonly alumnoRepository: Repository<Alumno>,
+    @InjectRepository(Maestro)
+    private readonly maestroRepository: Repository<Maestro>,
+    @InjectRepository(Director)
+    private readonly directorRepository: Repository<Director>,
     @InjectRepository(EscuelaLibro)
     private readonly escuelaLibroRepository: Repository<EscuelaLibro>,
     @InjectRepository(EscuelaLibroPendiente)
@@ -80,6 +89,9 @@ export class EscuelasService {
       clave: crearEscuelaDto.clave || null,
       direccion: crearEscuelaDto.direccion || null,
       telefono: crearEscuelaDto.telefono || null,
+      estado: crearEscuelaDto.estado || 'activa',
+      ciudad: crearEscuelaDto.ciudad || null,
+      estadoRegion: crearEscuelaDto.estadoRegion || null,
     });
 
     const escuelaGuardada = await this.escuelaRepository.save(escuela);
@@ -100,9 +112,7 @@ export class EscuelasService {
   }
 
   /**
-   * Obtener todas las escuelas
-   * @param page - Página (1-based). Si no se pasa, devuelve todas.
-   * @param limit - Límite por página (default 50). Si no se pasa con page, devuelve todas.
+   * Obtener todas las escuelas. Listado simple, sin joins ni filtros.
    */
   async obtenerTodas(page?: number, limit?: number) {
     const qb = this.escuelaRepository
@@ -134,22 +144,84 @@ export class EscuelasService {
   }
 
   /**
-   * Obtener una escuela por ID
+   * Estadísticas del panel de gestión de escuelas (tarjetas del dashboard).
+   * Total escuelas, activas, alumnos, profesores y licencias.
+   */
+  async obtenerEstadisticasPanel() {
+    const [totalEscuelas, escuelasActivas, totalAlumnos, totalProfesores, librosListos] =
+      await Promise.all([
+        this.escuelaRepository.count(),
+        this.escuelaRepository.count({ where: { estado: 'activa' } }),
+        this.alumnoRepository.count(),
+        this.maestroRepository.count(),
+        this.libroRepository.count({ where: { estado: 'listo' } }),
+      ]);
+
+    return {
+      message: 'Estadísticas del panel de escuelas obtenidas correctamente',
+      data: {
+        totalEscuelas,
+        escuelasActivas,
+        totalAlumnos,
+        totalProfesores,
+        licencias: librosListos, // licencias disponibles (libros listos); puede reemplazarse por un valor de configuración
+      },
+    };
+  }
+
+  /**
+   * Obtener una escuela por ID (para ver detalle o cargar formulario de edición).
+   * Incluye directores con persona y estadísticas (alumnos, profesores, grupos).
    */
   async obtenerPorId(id: number) {
     const escuela = await this.escuelaRepository.findOne({
       where: { id },
-      relations: ['alumnos', 'maestros'],
+      relations: ['directores', 'directores.persona'],
     });
 
     if (!escuela) {
       throw new NotFoundException(`No se encontró la escuela con ID ${id}`);
     }
 
+    const [totalAlumnos, totalMaestros, totalGrupos] = await Promise.all([
+      this.alumnoRepository.count({ where: { escuelaId: id } }),
+      this.maestroRepository.count({ where: { escuelaId: id } }),
+      this.alumnoRepository
+        .createQueryBuilder('a')
+        .select('COUNT(DISTINCT CONCAT(COALESCE(a.grado::text, \'\'), \'-\', COALESCE(a.grupo, \'\')))', 'count')
+        .where('a.escuelaId = :id', { id })
+        .getRawOne()
+        .then((r) => (r?.count ? Number(r.count) : 0)),
+    ]);
+
+    const directores = (escuela.directores || []).map((d) => ({
+      id: d.id,
+      personaId: d.personaId,
+      persona: d.persona
+        ? {
+            id: d.persona.id,
+            nombre: d.persona.nombre,
+            apellido: d.persona.apellido,
+            correo: d.persona.correo,
+            telefono: d.persona.telefono,
+          }
+        : null,
+    }));
+
+    const data = {
+      ...escuela,
+      directores,
+      estadisticas: {
+        alumnos: totalAlumnos,
+        profesores: totalMaestros,
+        grupos: totalGrupos,
+      },
+    };
+
     return {
       message: 'Escuela obtenida exitosamente',
       description: 'La escuela fue encontrada en el sistema',
-      data: escuela,
+      data,
     };
   }
 
@@ -190,16 +262,32 @@ export class EscuelasService {
     }
 
     // Actualizar los campos
+    const estadoAnterior = escuela.estado ?? 'activa';
     Object.assign(escuela, actualizarEscuelaDto);
 
     const escuelaActualizada = await this.escuelaRepository.save(escuela);
+    const estadoNuevo = escuelaActualizada.estado ?? 'activa';
+
+    // Cascada: al pasar escuela a inactiva/suspendida se desactivan alumnos, maestros, directores y libros.
+    // Al pasar a activa se reactivan todos.
+    const esInactiva = estadoNuevo === 'inactiva' || estadoNuevo === 'suspendida';
+    const activoValor = esInactiva ? false : true;
+    if (estadoAnterior !== estadoNuevo) {
+      await this.alumnoRepository.update({ escuelaId: id }, { activo: activoValor });
+      await this.maestroRepository.update({ escuelaId: id }, { activo: activoValor });
+      await this.directorRepository.update({ escuelaId: id }, { activo: activoValor });
+      await this.escuelaLibroRepository.update({ escuelaId: id }, { activo: activoValor });
+      this.logger.log(
+        `Escuela ID ${id}: cascada ${esInactiva ? 'desactivación' : 'reactivación'} aplicada (alumnos, maestros, directores, libros).`,
+      );
+    }
 
     this.logger.log(`Escuela actualizada exitosamente: ${escuelaActualizada.nombre} - ID: ${escuelaActualizada.id}`);
 
     await this.auditService.log('escuela_actualizar', {
       usuarioId: auditContext?.usuarioId ?? null,
       ip: auditContext?.ip ?? null,
-      detalles: `id: ${id} | ${escuelaActualizada.nombre}`,
+      detalles: `id: ${id} | ${escuelaActualizada.nombre} | estado: ${estadoNuevo}`,
     });
 
     return {
@@ -290,6 +378,11 @@ export class EscuelasService {
     if (!libro) {
       throw new NotFoundException(
         `No se encontró ningún libro con código "${codigo}". Verifica el código en la lista de libros.`,
+      );
+    }
+    if (libro.activo === false) {
+      throw new BadRequestException(
+        `El libro "${libro.titulo}" está desactivado globalmente. Actívalo primero en la lista de libros.`,
       );
     }
 
@@ -464,17 +557,127 @@ export class EscuelasService {
   }
 
   /**
-   * Listar maestros de una escuela.
+   * Listar directores activos de una escuela.
    */
-  async listarMaestrosDeEscuela(escuelaId: number) {
+  async listarDirectoresDeEscuela(escuelaId: number) {
     const escuela = await this.escuelaRepository.findOne({
       where: { id: escuelaId },
-      relations: ['maestros', 'maestros.persona'],
     });
     if (!escuela) {
       throw new NotFoundException(`No se encontró la escuela con ID ${escuelaId}`);
     }
-    const maestros = (escuela.maestros || []).map((m) => ({
+    const directoresEntidad = await this.directorRepository.find({
+      where: { escuelaId, activo: true },
+      relations: ['persona'],
+    });
+    const directores = directoresEntidad.map((d) => ({
+      id: d.id,
+      personaId: d.personaId,
+      escuelaId: d.escuelaId,
+      fechaNombramiento: d.fechaNombramiento,
+      persona: d.persona
+        ? {
+            id: d.persona.id,
+            nombre: d.persona.nombre,
+            apellido: d.persona.apellido,
+            correo: d.persona.correo,
+            telefono: d.persona.telefono,
+          }
+        : null,
+    }));
+    return {
+      message: 'Directores de la escuela obtenidos correctamente.',
+      description: `La escuela tiene ${directores.length} director(es).`,
+      total: directores.length,
+      data: directores,
+    };
+  }
+
+  /**
+   * Listar todos los directores activos del sistema con datos de su escuela (solo admin).
+   */
+  async listarTodosLosDirectores(page?: number, limit?: number) {
+    const qb = this.escuelaRepository
+      .createQueryBuilder('escuela')
+      .leftJoinAndSelect('escuela.directores', 'director', 'director.activo = :activo', { activo: true })
+      .leftJoinAndSelect('director.persona', 'persona')
+      .orderBy('escuela.nombre', 'ASC')
+      .addOrderBy('director.id', 'ASC');
+
+    const escuelas = await qb.getMany();
+    const directores: Array<{
+      id: number;
+      personaId: number;
+      escuelaId: number;
+      fechaNombramiento: Date | null;
+      persona: { id: number; nombre: string; apellido: string; correo: string; telefono: string | null } | null;
+      escuela: { id: number; nombre: string; nivel: string; clave: string | null };
+    }> = [];
+
+    for (const e of escuelas) {
+      for (const d of e.directores || []) {
+        directores.push({
+          id: d.id,
+          personaId: d.personaId,
+          escuelaId: d.escuelaId,
+          fechaNombramiento: d.fechaNombramiento ?? null,
+          persona: d.persona
+            ? {
+                id: d.persona.id,
+                nombre: d.persona.nombre,
+                apellido: d.persona.apellido,
+                correo: d.persona.correo,
+                telefono: d.persona.telefono ?? null,
+              }
+            : null,
+          escuela: {
+            id: e.id,
+            nombre: e.nombre,
+            nivel: e.nivel,
+            clave: e.clave ?? null,
+          },
+        });
+      }
+    }
+
+    const total = directores.length;
+    let data = directores;
+    if (page != null && limit != null && page >= 1 && limit >= 1) {
+      const start = (page - 1) * limit;
+      data = directores.slice(start, start + limit);
+    }
+
+    this.logger.log(`Consulta de directores: ${total} encontrados`);
+
+    const meta =
+      page != null && limit != null && total > 0
+        ? { page, limit, total, totalPages: Math.ceil(total / limit) }
+        : undefined;
+
+    return {
+      message: 'Directores obtenidos exitosamente.',
+      description: `Se encontraron ${total} director(es) en el sistema.`,
+      total,
+      ...(meta && { meta }),
+      data,
+    };
+  }
+
+  /**
+   * Listar maestros activos de una escuela.
+   */
+  async listarMaestrosDeEscuela(escuelaId: number) {
+    const escuela = await this.escuelaRepository.findOne({
+      where: { id: escuelaId },
+    });
+    if (!escuela) {
+      throw new NotFoundException(`No se encontró la escuela con ID ${escuelaId}`);
+    }
+    const maestrosEntidad = await this.maestroRepository.find({
+      where: { escuelaId, activo: true },
+      relations: ['persona'],
+    });
+    const maestros = maestrosEntidad.map((m) => ({
       id: m.id,
       personaId: m.personaId,
       escuelaId: m.escuelaId,
@@ -499,18 +702,21 @@ export class EscuelasService {
   }
 
   /**
-   * Listar alumnos de una escuela.
+   * Listar alumnos activos de una escuela.
    * Incluye persona y padre (si tiene) para ver de quién es hijo cada alumno.
    */
   async listarAlumnosDeEscuela(escuelaId: number) {
     const escuela = await this.escuelaRepository.findOne({
       where: { id: escuelaId },
-      relations: ['alumnos', 'alumnos.persona', 'alumnos.padre', 'alumnos.padre.persona'],
     });
     if (!escuela) {
       throw new NotFoundException(`No se encontró la escuela con ID ${escuelaId}`);
     }
-    const alumnos = (escuela.alumnos || []).map((a) => ({
+    const alumnosEntidad = await this.alumnoRepository.find({
+      where: { escuelaId, activo: true },
+      relations: ['persona', 'padre', 'padre.persona'],
+    });
+    const alumnos = alumnosEntidad.map((a) => ({
       id: a.id,
       personaId: a.personaId,
       escuelaId: a.escuelaId,
@@ -552,7 +758,138 @@ export class EscuelasService {
   }
 
   /**
+   * Activar o desactivar un libro solo para una escuela (Escuela_Libro.activo).
+   */
+  async setLibroActivoEnEscuela(escuelaId: number, libroId: number, activo: boolean) {
+    const escuela = await this.escuelaRepository.findOne({ where: { id: escuelaId } });
+    if (!escuela) {
+      throw new NotFoundException(`No se encontró la escuela con ID ${escuelaId}`);
+    }
+    const el = await this.escuelaLibroRepository.findOne({
+      where: { escuelaId, libroId },
+      relations: ['libro'],
+    });
+    if (!el) {
+      throw new NotFoundException(
+        `El libro con ID ${libroId} no está asignado a la escuela con ID ${escuelaId}.`,
+      );
+    }
+    el.activo = activo;
+    await this.escuelaLibroRepository.save(el);
+    this.logger.log(`Escuela ${escuelaId} / libro ${libroId}: activo=${activo}.`);
+    return {
+      message: activo ? 'Libro activado para esta escuela.' : 'Libro desactivado para esta escuela.',
+      data: { escuelaId, libroId, activo, titulo: el.libro?.titulo },
+    };
+  }
+
+  /**
+   * Listar todas las escuelas con los libros que tiene cada una (admin).
+   * Un mismo libro puede estar asignado a varias escuelas (cada asignación es independiente).
+   */
+  async listarEscuelasConLibros() {
+    const asignaciones = await this.escuelaLibroRepository.find({
+      relations: ['escuela', 'libro', 'libro.materia'],
+      order: { escuelaId: 'ASC' },
+    });
+    const byEscuela = new Map<
+      number,
+      {
+        escuelaId: number;
+        nombreEscuela: string;
+        ciudad: string | null;
+        estadoRegion: string | null;
+        estado: string;
+        libros: Array<{
+          escuelaLibroId: number;
+          libroId: number;
+          titulo: string;
+          codigo: string;
+          grado: number;
+          materia: string | null;
+          activoEnEscuela: boolean;
+          activoGlobal: boolean;
+          fechaInicio: Date;
+          fechaFin: Date | null;
+        }>;
+      }
+    >();
+    for (const a of asignaciones) {
+      if (!a.escuela) continue;
+      if (!byEscuela.has(a.escuelaId)) {
+        byEscuela.set(a.escuelaId, {
+          escuelaId: a.escuela.id,
+          nombreEscuela: a.escuela.nombre,
+          ciudad: a.escuela.ciudad ?? null,
+          estadoRegion: a.escuela.estadoRegion ?? null,
+          estado: a.escuela.estado ?? 'activa',
+          libros: [],
+        });
+      }
+      const entry = byEscuela.get(a.escuelaId)!;
+      entry.libros.push({
+        escuelaLibroId: a.id,
+        libroId: a.libroId,
+        titulo: a.libro?.titulo ?? '',
+        codigo: a.libro?.codigo ?? '',
+        grado: a.libro?.grado ?? 0,
+        materia: a.libro?.materia?.nombre ?? null,
+        activoEnEscuela: a.activo,
+        activoGlobal: a.libro?.activo !== false,
+        fechaInicio: a.fechaInicio,
+        fechaFin: a.fechaFin ?? null,
+      });
+    }
+    const data = Array.from(byEscuela.values()).sort((a, b) =>
+      a.nombreEscuela.localeCompare(b.nombreEscuela),
+    );
+    return {
+      message: 'Escuelas con sus libros obtenidas correctamente.',
+      description: 'Cada escuela puede tener el mismo libro asignado; las asignaciones son independientes por escuela.',
+      total: data.length,
+      data,
+    };
+  }
+
+  /**
+   * Listar todas las asignaciones libro-escuela (activas e inactivas) para que el admin vea y pueda asignar/desasignar (toggle).
+   * Incluye activo en esta escuela y activo global del libro.
+   */
+  async listarAsignacionesLibrosDeEscuela(escuelaId: number) {
+    const escuela = await this.escuelaRepository.findOne({
+      where: { id: escuelaId },
+    });
+    if (!escuela) {
+      throw new NotFoundException(`No se encontró la escuela con ID ${escuelaId}`);
+    }
+    const asignaciones = await this.escuelaLibroRepository.find({
+      where: { escuelaId },
+      relations: ['libro', 'libro.materia'],
+      order: { fechaInicio: 'DESC' },
+    });
+    const data = asignaciones.map((a) => ({
+      escuelaLibroId: a.id,
+      libroId: a.libroId,
+      titulo: a.libro?.titulo,
+      codigo: a.libro?.codigo,
+      grado: a.libro?.grado,
+      materia: a.libro?.materia?.nombre ?? null,
+      activoEnEscuela: a.activo,
+      activoGlobal: a.libro?.activo !== false,
+      fechaInicio: a.fechaInicio,
+      fechaFin: a.fechaFin,
+    }));
+    return {
+      message: 'Asignaciones de libros obtenidas correctamente.',
+      description: `La escuela tiene ${data.length} libro(s) asignado(s). Usa PATCH .../libros/:libroId/activo para activar o desactivar.`,
+      total: data.length,
+      data,
+    };
+  }
+
+  /**
    * Listar los libros asignados a una escuela (los que la escuela puede ver).
+   * Solo libros con activo global (libro.activo) y asignación activa (Escuela_Libro.activo).
    */
   async listarLibrosDeEscuela(escuelaId: number) {
     const escuela = await this.escuelaRepository.findOne({
@@ -568,7 +905,9 @@ export class EscuelasService {
       order: { fechaInicio: 'DESC' },
     });
 
-    const libros = asignaciones.map((a) => ({
+    const asignacionesActivas = asignaciones.filter((a) => a.libro?.activo !== false);
+
+    const libros = asignacionesActivas.map((a) => ({
       ...a.libro,
       fechaInicio: a.fechaInicio,
       fechaFin: a.fechaFin,

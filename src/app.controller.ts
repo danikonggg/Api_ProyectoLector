@@ -1,24 +1,12 @@
-/**
- * ============================================
- * CONTROLADOR PRINCIPAL
- * ============================================
- * 
- * Este controlador maneja las rutas principales de la API.
- * Las rutas aquí son públicas y no requieren autenticación.
- */
-
-import { Controller, Get } from '@nestjs/common';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { Body, Controller, Get, Post } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBody } from '@nestjs/swagger';
 import { AppService } from './app.service';
+import { GroqPromptDto } from './dto/groq-prompt.dto';
 
-@Controller() // Sin prefijo, las rutas serán directamente / y /health
+@Controller()
 export class AppController {
   constructor(private readonly appService: AppService) {}
 
-  /**
-   * Ruta: GET /
-   * Descripción: Mensaje de bienvenida
-   */
   @Get()
   @ApiTags('Público')
   @ApiOperation({ summary: 'Mensaje de bienvenida' })
@@ -26,14 +14,25 @@ export class AppController {
     return this.appService.getHello();
   }
 
-  /**
-   * Ruta: GET /health
-   * Descripción: Verificar el estado de la API y conexión a la base de datos
-   */
   @Get('health')
   @ApiTags('Público')
-  @ApiOperation({ summary: 'Health check - Verificar estado de la API y base de datos' })
+  @ApiOperation({ summary: 'Health check - API y base de datos' })
   async healthCheck() {
     return await this.appService.getHealth();
+  }
+
+  @Get('groq-test')
+  @ApiTags('Público')
+  @ApiOperation({ summary: 'Prueba Groq AI - prompt fijo' })
+  async groqTest() {
+    return await this.appService.testGroq();
+  }
+
+  @Post('groq-test')
+  @ApiTags('Público')
+  @ApiOperation({ summary: 'Groq AI - envía tu texto en el body (campo prompt)' })
+  @ApiBody({ type: GroqPromptDto, description: 'Campo "prompt": el texto que quieras enviar a Groq' })
+  async groqTestCustom(@Body() body: GroqPromptDto) {
+    return await this.appService.testGroq(body.prompt);
   }
 }

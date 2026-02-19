@@ -1,11 +1,3 @@
-/**
- * ============================================
- * CONTROLADOR: AuditController
- * ============================================
- * Endpoints para consultar logs de auditoría.
- * Solo administradores pueden acceder.
- */
-
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import {
   ApiTags,

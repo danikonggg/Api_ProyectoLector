@@ -32,6 +32,10 @@ export class Director {
   @Column({ name: 'fecha_nombramiento', type: 'date', nullable: true })
   fechaNombramiento: Date;
 
+  /** Si está activo en la escuela. Se pone en false cuando la escuela pasa a inactiva/suspendida. */
+  @Column({ name: 'activo', type: 'boolean', default: true })
+  activo: boolean;
+
   // Relación uno-a-uno con Persona
   @OneToOne(() => Persona, (persona) => persona.director)
   @JoinColumn({ name: 'persona_id' })

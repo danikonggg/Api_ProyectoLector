@@ -1,12 +1,3 @@
-/**
- * ============================================
- * MÓDULO: AuthModule
- * ============================================
- * 
- * Módulo de autenticación con JWT.
- * Configura Passport y JWT strategy.
- */
-
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';

@@ -35,6 +35,10 @@ export class Maestro {
   @Column({ name: 'fecha_contratacion', type: 'date', nullable: true })
   fechaContratacion: Date;
 
+  /** Si está activo en la escuela. Se pone en false cuando la escuela pasa a inactiva/suspendida. */
+  @Column({ name: 'activo', type: 'boolean', default: true })
+  activo: boolean;
+
   // Relación uno-a-uno con Persona
   @OneToOne(() => Persona, (persona) => persona.maestro)
   @JoinColumn({ name: 'persona_id' })

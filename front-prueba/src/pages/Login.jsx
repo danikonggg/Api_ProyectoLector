@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { api, setBaseUrl } from '../api/api';
-import { setToken, setUser } from '../api/api';
+import { api, setBaseUrl, setToken, setUser } from '../api/api';
 
 export default function Login() {
   const defaultUrl = typeof window !== 'undefined' && window.location.port === '5173'
@@ -50,62 +49,84 @@ export default function Login() {
   };
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: '2rem',
-      background: 'linear-gradient(135deg, var(--bg) 0%, #1a1a20 100%)',
-    }}>
-      <div className="card" style={{ maxWidth: 400, width: '100%' }}>
-        <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-          <h1 style={{ fontSize: '1.75rem', marginBottom: '0.5rem' }}>API Lector</h1>
-          <p style={{ color: 'var(--text-muted)' }}>Inicia sesión con tu cuenta</p>
-          <Link to="/pruebas" style={{ fontSize: '0.9rem', color: 'var(--accent)' }}>🧪 Ir a pruebas de registro</Link>
+    <div className="min-h-screen bg-gradient-to-br from-background via-[#15151b] to-black flex items-center justify-center px-4">
+      <div className="w-full max-w-md">
+        <div className="mb-6 text-center">
+          <p className="inline-flex items-center gap-2 rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-300 mb-3">
+            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+            Plataforma de lectura API Lector
+          </p>
+          <h1 className="text-3xl font-semibold tracking-tight text-white">
+            Inicia sesión
+          </h1>
+          <p className="mt-1 text-sm text-zinc-400">
+            Usa tu cuenta de administrador, director, maestro o alumno.
+          </p>
+          <Link
+            to="/pruebas"
+            className="mt-3 inline-flex text-xs text-emerald-400 hover:text-emerald-300"
+          >
+            🧪 Ir a pruebas de registro
+          </Link>
         </div>
-        <form onSubmit={handleSubmit}>
-          <div className="form-grid" style={{ gridTemplateColumns: '1fr' }}>
-            <label>
-              <span>URL de la API</span>
-              <input
-                type="text"
-                value={baseUrl}
-                onChange={(e) => setBaseUrlState(e.target.value)}
-                placeholder={defaultUrl}
-              />
-              {defaultUrl.includes('5173') && (
-                <small style={{ color: 'var(--text-muted)', display: 'block', marginTop: 4 }}>
-                  Usa esta URL para que el proxy evite CORS (API debe estar en :3000)
-                </small>
-              )}
-            </label>
-            <label>
-              <span>Correo</span>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="tu@correo.com"
-                required
-              />
-            </label>
-            <label>
-              <span>Contraseña</span>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                required
-              />
-            </label>
-          </div>
-          {error && <div className="alert alert-error">{error}</div>}
-          <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={loading}>
-            {loading ? 'Entrando...' : 'Entrar'}
-          </button>
-        </form>
+
+        <div className="card">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="form-grid" style={{ gridTemplateColumns: '1fr' }}>
+              <label>
+                <span>URL de la API</span>
+                <input
+                  type="text"
+                  value={baseUrl}
+                  onChange={(e) => setBaseUrlState(e.target.value)}
+                  placeholder={defaultUrl}
+                />
+                {defaultUrl.includes('5173') && (
+                  <p className="mt-1 text-[0.7rem] text-zinc-500">
+                    Usa esta URL para que el proxy evite CORS (la API Nest debe estar en
+                    <span className="font-mono px-1">:3000</span>
+                  </p>
+                )}
+              </label>
+
+              <label>
+                <span>Correo</span>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="tu@correo.com"
+                  required
+                />
+              </label>
+
+              <label>
+                <span>Contraseña</span>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  required
+                />
+              </label>
+            </div>
+
+            {error && <div className="alert alert-error">{error}</div>}
+
+            <button
+              type="submit"
+              className="btn btn-primary w-full"
+              disabled={loading}
+            >
+              {loading ? 'Entrando...' : 'Entrar'}
+            </button>
+          </form>
+        </div>
+
+        <p className="mt-4 text-center text-[0.7rem] text-zinc-500">
+          Recuerda mantener segura tu URL de API y tu token JWT.
+        </p>
       </div>
     </div>
   );

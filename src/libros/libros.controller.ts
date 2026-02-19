@@ -10,6 +10,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Delete,
   Body,
   Param,
@@ -154,6 +155,55 @@ export class LibrosController {
   }
 
   /**
+   * GET /libros/:id/escuelas
+   * Ver escuelas que tienen este libro (para asignar/desasignar desde la pantalla del libro).
+   */
+  @Get(':id/escuelas')
+  @UseGuards(AdminGuard)
+  @ApiTags('Solo Administrador')
+  @ApiOperation({
+    summary: 'Ver escuelas de este libro (admin)',
+    description: 'Lista de escuelas que tienen el libro asignado, con activoEnEscuela. Usar con PATCH .../escuelas/:escuelaId/activo para activar o quitar.',
+  })
+  @ApiParam({ name: 'id', type: 'number', description: 'ID del libro' })
+  @ApiResponse({ status: 200, description: 'Lista de escuelas con activoEnEscuela.' })
+  @ApiResponse({ status: 401, description: 'No autenticado.' })
+  @ApiResponse({ status: 403, description: 'Solo administradores.' })
+  @ApiResponse({ status: 404, description: 'Libro no encontrado.' })
+  async listarEscuelasDeLibro(@Param('id', ParseIntPipe) id: number) {
+    return this.librosService.listarEscuelasDeLibro(id);
+  }
+
+  /**
+   * PATCH /libros/:id/escuelas/:escuelaId/activo
+   * Activar o desactivar este libro en una escuela (desde la pantalla del libro).
+   */
+  @Patch(':id/escuelas/:escuelaId/activo')
+  @UseGuards(AdminGuard)
+  @ApiTags('Solo Administrador')
+  @ApiOperation({ summary: 'Activar/desactivar libro en una escuela. Requiere admin.' })
+  @ApiParam({ name: 'id', type: 'number', description: 'ID del libro' })
+  @ApiParam({ name: 'escuelaId', type: 'number', description: 'ID de la escuela' })
+  @ApiBody({
+    schema: { type: 'object', required: ['activo'], properties: { activo: { type: 'boolean', example: false } } },
+  })
+  @ApiResponse({ status: 200, description: 'Libro activado o desactivado para la escuela.' })
+  @ApiResponse({ status: 401, description: 'No autenticado.' })
+  @ApiResponse({ status: 403, description: 'Solo administradores.' })
+  @ApiResponse({ status: 404, description: 'Libro o asignación no encontrada.' })
+  async setLibroActivoEnEscuela(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('escuelaId', ParseIntPipe) escuelaId: number,
+    @Body() body: { activo: boolean },
+    @Request() req: ExpressRequest,
+  ) {
+    if (typeof body.activo !== 'boolean') {
+      throw new BadRequestException('El body debe incluir "activo" (boolean).');
+    }
+    return this.librosService.setLibroActivoEnEscuela(id, escuelaId, body.activo);
+  }
+
+  /**
    * GET /libros/:id
    * Obtener libro con unidades y segmentos. Admin, director o alumno (solo libros de su escuela).
    */
@@ -182,6 +232,33 @@ export class LibrosController {
       }
     }
     return this.librosService.obtenerPorId(id);
+  }
+
+  /**
+   * PATCH /libros/:id/activo
+   * Activar o desactivar un libro globalmente. Si se desactiva, se desactiva en todas las escuelas.
+   */
+  @Patch(':id/activo')
+  @UseGuards(AdminGuard)
+  @ApiTags('Solo Administrador')
+  @ApiOperation({ summary: 'Activar/desactivar libro globalmente. Requiere admin.' })
+  @ApiParam({ name: 'id', type: 'number' })
+  @ApiBody({
+    schema: { type: 'object', required: ['activo'], properties: { activo: { type: 'boolean', example: false } } },
+  })
+  @ApiResponse({ status: 200, description: 'Libro activado o desactivado.' })
+  @ApiResponse({ status: 401, description: 'No autenticado.' })
+  @ApiResponse({ status: 403, description: 'No es administrador.' })
+  @ApiResponse({ status: 404, description: 'Libro no encontrado.' })
+  async setActivo(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { activo: boolean },
+    @Request() req: ExpressRequest,
+  ) {
+    if (typeof body.activo !== 'boolean') {
+      throw new BadRequestException('El body debe incluir "activo" (boolean).');
+    }
+    return this.librosService.setActivoGlobal(id, body.activo, getAuditContext(req));
   }
 
   /**

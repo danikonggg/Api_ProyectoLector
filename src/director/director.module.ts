@@ -1,10 +1,3 @@
-/**
- * ============================================
- * MÓDULO: DirectorModule
- * ============================================
- * Dashboard y endpoints exclusivos para directores de escuela.
- */
-
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DirectorController } from './director.controller';

@@ -18,6 +18,7 @@ import {
   Get,
   Post,
   Put,
+  Patch,
   Delete,
   Body,
   Param,
@@ -26,6 +27,7 @@ import {
   HttpStatus,
   UseGuards,
   ForbiddenException,
+  BadRequestException,
   Request,
   Query,
 } from '@nestjs/common';
@@ -36,6 +38,7 @@ import {
   ApiBearerAuth,
   ApiParam,
   ApiBody,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { EscuelasService } from './escuelas.service';
 import { CrearEscuelaDto } from './dto/crear-escuela.dto';
@@ -113,7 +116,7 @@ export class EscuelasController {
 
   /**
    * GET /escuelas
-   * Obtener todas las escuelas (solo administradores)
+   * Obtener todas las escuelas (solo administradores). Listado simple.
    */
   @Get()
   @UseGuards(AdminGuard)
@@ -125,21 +128,15 @@ export class EscuelasController {
     schema: {
       example: {
         message: 'Escuelas obtenidas exitosamente',
-        description: 'Se encontraron 5 escuela(s) en el sistema',
         total: 5,
         data: [
-          {
-            id: 1,
-            nombre: 'Escuela Primaria Benito Juárez',
-            nivel: 'Primaria',
-            clave: '29DPR0123X',
-            direccion: 'Calle Principal #123',
-            telefono: '5551234567',
-          },
+          { id: 1, nombre: 'Escuela Primaria Benito Juárez', nivel: 'Primaria', clave: '29DPR0123X', direccion: 'Calle Principal #123', telefono: '5551234567' },
         ],
       },
     },
   })
+  @ApiQuery({ name: 'page', required: false, type: Number, description: 'Página (1-based)' })
+  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Registros por página' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'No es administrador' })
   async obtenerTodas(
@@ -149,6 +146,74 @@ export class EscuelasController {
     const pageNum = page ? parseInt(page, 10) : undefined;
     const limitNum = limit ? parseInt(limit, 10) : undefined;
     return await this.escuelasService.obtenerTodas(pageNum, limitNum);
+  }
+
+  /**
+   * GET /escuelas/stats
+   * Estadísticas del panel de gestión de escuelas (tarjetas: total escuelas, activas, alumnos, profesores, licencias).
+   */
+  @Get('stats')
+  @UseGuards(AdminGuard)
+  @ApiTags('Solo Administrador')
+  @ApiOperation({ summary: 'Estadísticas del panel de escuelas (requiere admin)' })
+  @ApiResponse({
+    status: 200,
+    description: 'Totales para las tarjetas del dashboard de escuelas',
+    schema: {
+      example: {
+        message: 'Estadísticas del panel de escuelas obtenidas correctamente',
+        data: {
+          totalEscuelas: 5,
+          escuelasActivas: 4,
+          totalAlumnos: 1840,
+          totalProfesores: 134,
+          licencias: 2000,
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'No es administrador' })
+  async obtenerEstadisticasPanel() {
+    return await this.escuelasService.obtenerEstadisticasPanel();
+  }
+
+  /**
+   * GET /escuelas/directores
+   * Listar todos los directores del sistema con su escuela (solo administradores).
+   */
+  @Get('directores')
+  @UseGuards(AdminGuard)
+  @ApiTags('Solo Administrador')
+  @ApiOperation({ summary: 'Listar todos los directores de las escuelas (requiere admin)' })
+  @ApiResponse({ status: 200, description: 'Lista de directores con datos de persona y escuela.' })
+  @ApiResponse({ status: 401, description: 'No autenticado.' })
+  @ApiResponse({ status: 403, description: 'No es administrador.' })
+  async listarTodosDirectores(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const pageNum = page ? parseInt(page, 10) : undefined;
+    const limitNum = limit ? parseInt(limit, 10) : undefined;
+    return await this.escuelasService.listarTodosLosDirectores(pageNum, limitNum);
+  }
+
+  /**
+   * GET /escuelas/con-libros
+   * Listar todas las escuelas con los libros que tiene cada una (admin). Un mismo libro puede estar en varias escuelas.
+   */
+  @Get('con-libros')
+  @UseGuards(AdminGuard)
+  @ApiTags('Solo Administrador')
+  @ApiOperation({
+    summary: 'Ver libros que tiene cada escuela (admin)',
+    description: 'Devuelve todas las escuelas y, por cada una, la lista de libros asignados. El mismo libro puede aparecer en varias escuelas.',
+  })
+  @ApiResponse({ status: 200, description: 'Lista de escuelas con su array de libros.' })
+  @ApiResponse({ status: 401, description: 'No autenticado.' })
+  @ApiResponse({ status: 403, description: 'Solo administradores.' })
+  async listarEscuelasConLibros() {
+    return await this.escuelasService.listarEscuelasConLibros();
   }
 
   /**
@@ -222,8 +287,28 @@ export class EscuelasController {
   }
 
   /**
+   * GET /escuelas/:id/libros/asignaciones
+   * Listar todas las asignaciones libro-escuela (activas e inactivas) para asignar/desasignar desde el front.
+   */
+  @Get(':id/libros/asignaciones')
+  @UseGuards(AdminGuard)
+  @ApiTags('Solo Administrador')
+  @ApiOperation({
+    summary: 'Ver libros de la escuela para asignar/desasignar (admin)',
+    description: 'Devuelve todos los libros asignados a la escuela con activoEnEscuela y activoGlobal. Usar con PATCH .../libros/:libroId/activo para activar o quitar.',
+  })
+  @ApiParam({ name: 'id', type: 'number', description: 'ID de la escuela' })
+  @ApiResponse({ status: 200, description: 'Lista de asignaciones con activoEnEscuela y datos del libro.' })
+  @ApiResponse({ status: 401, description: 'No autenticado.' })
+  @ApiResponse({ status: 403, description: 'Solo administradores.' })
+  @ApiResponse({ status: 404, description: 'Escuela no encontrada.' })
+  async listarAsignacionesLibros(@Param('id', ParseIntPipe) id: number) {
+    return await this.escuelasService.listarAsignacionesLibrosDeEscuela(id);
+  }
+
+  /**
    * GET /escuelas/:id/libros
-   * Listar libros activos de la escuela (solo los ya canjeados).
+   * Listar libros activos de la escuela (solo los ya canjeados y activos).
    */
   @Get(':id/libros')
   @UseGuards(AdminGuard)
@@ -239,6 +324,34 @@ export class EscuelasController {
   @ApiResponse({ status: 404, description: 'Escuela no encontrada.' })
   async listarLibros(@Param('id', ParseIntPipe) id: number) {
     return await this.escuelasService.listarLibrosDeEscuela(id);
+  }
+
+  /**
+   * PATCH /escuelas/:id/libros/:libroId/activo
+   * Activar o desactivar un libro solo para esta escuela.
+   */
+  @Patch(':id/libros/:libroId/activo')
+  @UseGuards(AdminGuard)
+  @ApiTags('Solo Administrador')
+  @ApiOperation({ summary: 'Activar/desactivar libro en esta escuela. Requiere admin.' })
+  @ApiParam({ name: 'id', type: 'number', description: 'ID de la escuela' })
+  @ApiParam({ name: 'libroId', type: 'number', description: 'ID del libro' })
+  @ApiBody({
+    schema: { type: 'object', required: ['activo'], properties: { activo: { type: 'boolean', example: false } } },
+  })
+  @ApiResponse({ status: 200, description: 'Libro activado o desactivado para la escuela.' })
+  @ApiResponse({ status: 401, description: 'No autenticado.' })
+  @ApiResponse({ status: 403, description: 'Solo administradores.' })
+  @ApiResponse({ status: 404, description: 'Escuela o asignación no encontrada.' })
+  async setLibroActivoEnEscuela(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('libroId', ParseIntPipe) libroId: number,
+    @Body() body: { activo: boolean },
+  ) {
+    if (typeof body.activo !== 'boolean') {
+      throw new BadRequestException('El body debe incluir "activo" (boolean).');
+    }
+    return await this.escuelasService.setLibroActivoEnEscuela(id, libroId, body.activo);
   }
 
   /**
@@ -281,6 +394,27 @@ export class EscuelasController {
   ) {
     directorSoloSuEscuela(req.user, id);
     return await this.escuelasService.listarAlumnosDeEscuela(id);
+  }
+
+  /**
+   * GET /escuelas/:id/directores
+   * Listar directores de la escuela. Admin: cualquier escuela. Director: solo su escuela.
+   */
+  @Get(':id/directores')
+  @UseGuards(AdminOrDirectorGuard)
+  @ApiTags('Admin o Director')
+  @ApiOperation({ summary: 'Listar directores de la escuela (admin o director de esa escuela)' })
+  @ApiParam({ name: 'id', type: 'number', description: 'ID de la escuela' })
+  @ApiResponse({ status: 200, description: 'Directores de la escuela.' })
+  @ApiResponse({ status: 401, description: 'No autenticado.' })
+  @ApiResponse({ status: 403, description: 'No autorizado (director solo puede ver su escuela).' })
+  @ApiResponse({ status: 404, description: 'Escuela no encontrada.' })
+  async listarDirectores(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req: { user?: ReqUser },
+  ) {
+    directorSoloSuEscuela(req.user, id);
+    return await this.escuelasService.listarDirectoresDeEscuela(id);
   }
 
   /**

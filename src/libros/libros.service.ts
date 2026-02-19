@@ -22,6 +22,7 @@ import { EscuelaLibro } from '../escuelas/entities/escuela-libro.entity';
 import { EscuelaLibroPendiente } from '../escuelas/entities/escuela-libro-pendiente.entity';
 import { LibrosPdfService } from './libros-pdf.service';
 import { PdfStorageService } from './pdf-storage.service';
+import { PreguntasSegmentoService } from './preguntas-segmento.service';
 import type { SegmentoDto } from './libros-pdf.service';
 import { CargarLibroDto } from './dto/cargar-libro.dto';
 import { PDF } from './constants/pdf.constants';
@@ -53,6 +54,7 @@ export class LibrosService {
     private readonly librosPdfService: LibrosPdfService,
     private readonly pdfStorageService: PdfStorageService,
     private readonly auditService: AuditService,
+    private readonly preguntasSegmentoService: PreguntasSegmentoService,
   ) {}
 
   /**
@@ -143,6 +145,14 @@ export class LibrosService {
 
       this.logger.log(`Libro cargado y listo: id=${saved.id}, titulo="${saved.titulo}", segmentos=${segmentos.length}, paginas=${numPaginas}, pdf=${rutaPdf}`);
 
+      try {
+        await this.preguntasSegmentoService.generarPreguntasParaLibro(saved.id);
+      } catch (err) {
+        this.logger.error(
+          `Error generando preguntas para libro ${saved.id}: ${err?.message ?? err}`,
+        );
+      }
+
       await this.auditService.log('libro_cargar', {
         usuarioId: auditContext?.usuarioId ?? null,
         ip: auditContext?.ip ?? null,
@@ -204,6 +214,13 @@ export class LibrosService {
       }
     }
 
+    const preguntasPorSegmento = await this.preguntasSegmentoService.getPreguntasPorLibro(id);
+    for (const u of libro.unidades ?? []) {
+      for (const seg of u.segmentos ?? []) {
+        (seg as any).preguntas = preguntasPorSegmento[seg.id] ?? { basico: [], intermedio: [], avanzado: [] };
+      }
+    }
+
     return {
       message: 'Libro obtenido correctamente.',
       data: libro,
@@ -247,13 +264,103 @@ export class LibrosService {
   }
 
   /**
+   * Activar o desactivar un libro globalmente.
+   * Si se desactiva, se desactiva también en todas las escuelas (Escuela_Libro.activo = false).
+   */
+  async setActivoGlobal(id: number, activo: boolean, auditContext?: AuditContext) {
+    const libro = await this.libroRepository.findOne({ where: { id } });
+    if (!libro) {
+      throw new NotFoundException(`No se encontró el libro con ID ${id}`);
+    }
+    libro.activo = activo;
+    await this.libroRepository.save(libro);
+    if (!activo) {
+      await this.escuelaLibroRepository.update({ libroId: id }, { activo: false });
+      this.logger.log(`Libro id=${id} desactivado globalmente; asignaciones en escuelas desactivadas.`);
+    }
+    await this.auditService.log('libro_activo_global', {
+      usuarioId: auditContext?.usuarioId ?? null,
+      ip: auditContext?.ip ?? null,
+      detalles: `libro id=${id}, activo=${activo}`,
+    });
+    return {
+      message: activo ? 'Libro activado globalmente.' : 'Libro desactivado globalmente y en todas las escuelas.',
+      data: { id: libro.id, titulo: libro.titulo, activo: libro.activo },
+    };
+  }
+
+  /**
+   * Listar escuelas que tienen este libro (para gestionar desde la pantalla del libro).
+   * Devuelve todas las asignaciones con activoEnEscuela para poder asignar/desasignar desde el front de libros.
+   */
+  async listarEscuelasDeLibro(libroId: number) {
+    const libro = await this.libroRepository.findOne({
+      where: { id: libroId },
+      select: ['id', 'titulo', 'codigo'],
+    });
+    if (!libro) {
+      throw new NotFoundException(`No se encontró el libro con ID ${libroId}`);
+    }
+    const asignaciones = await this.escuelaLibroRepository.find({
+      where: { libroId },
+      relations: ['escuela'],
+      order: { fechaInicio: 'DESC' },
+    });
+    const data = asignaciones.map((a) => ({
+      escuelaLibroId: a.id,
+      escuelaId: a.escuelaId,
+      nombreEscuela: a.escuela?.nombre ?? null,
+      ciudad: a.escuela?.ciudad ?? null,
+      estadoRegion: a.escuela?.estadoRegion ?? null,
+      activoEnEscuela: a.activo,
+      fechaInicio: a.fechaInicio,
+      fechaFin: a.fechaFin,
+    }));
+    return {
+      message: 'Escuelas del libro obtenidas correctamente.',
+      description: `Este libro está asignado a ${data.length} escuela(s). Activa o desactiva el acceso por escuela.`,
+      libro: { id: libro.id, titulo: libro.titulo, codigo: libro.codigo },
+      total: data.length,
+      data,
+    };
+  }
+
+  /**
+   * Activar o desactivar este libro en una escuela concreta (desde la pantalla del libro).
+   */
+  async setLibroActivoEnEscuela(libroId: number, escuelaId: number, activo: boolean) {
+    const libro = await this.libroRepository.findOne({ where: { id: libroId }, select: ['id', 'titulo'] });
+    if (!libro) {
+      throw new NotFoundException(`No se encontró el libro con ID ${libroId}`);
+    }
+    const el = await this.escuelaLibroRepository.findOne({
+      where: { libroId, escuelaId },
+      relations: ['escuela'],
+    });
+    if (!el) {
+      throw new NotFoundException(
+        `El libro con ID ${libroId} no está asignado a la escuela con ID ${escuelaId}.`,
+      );
+    }
+    el.activo = activo;
+    await this.escuelaLibroRepository.save(el);
+    this.logger.log(`Libro ${libroId} / escuela ${escuelaId}: activo=${activo}.`);
+    return {
+      message: activo ? 'Libro activado para esta escuela.' : 'Libro desactivado para esta escuela.',
+      data: { libroId, escuelaId, activo, tituloLibro: libro.titulo, nombreEscuela: el.escuela?.nombre },
+    };
+  }
+
+  /**
    * Verifica si un libro está asignado a una escuela (para alumnos).
+   * Considera libro.activo global y EscuelaLibro.activo.
    */
   async libroPerteneceAEscuela(libroId: number, escuelaId: number): Promise<boolean> {
     const el = await this.escuelaLibroRepository.findOne({
       where: { libroId, escuelaId, activo: true },
+      relations: ['libro'],
     });
-    return !!el;
+    return !!(el && el.libro?.activo !== false);
   }
 
   /**

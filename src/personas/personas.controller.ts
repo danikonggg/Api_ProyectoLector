@@ -19,6 +19,8 @@ import {
   Controller,
   Post,
   Get,
+  Patch,
+  Delete,
   Body,
   Param,
   ParseIntPipe,
@@ -40,6 +42,7 @@ import { RegistroPadreDto } from './dto/registro-padre.dto';
 import { RegistroAlumnoDto } from './dto/registro-alumno.dto';
 import { RegistroMaestroDto } from './dto/registro-maestro.dto';
 import { RegistroDirectorDto } from './dto/registro-director.dto';
+import { ActualizarUsuarioDto } from './dto/actualizar-usuario.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Public } from '../auth/decorators/public.decorator';
 import { AdminGuard } from '../auth/guards/admin.guard';
@@ -407,6 +410,59 @@ export class PersonasController {
       ? Number(user.director.escuelaId ?? user.director.escuela?.id)
       : undefined;
     return await this.personasService.obtenerAlumnoPorId(id, escuelaId);
+  }
+
+  /**
+   * PATCH /personas/alumnos/:id
+   * Actualizar un alumno (admin: cualquier escuela; director: solo de su escuela).
+   * El :id es el ID del registro alumno (no el de persona).
+   */
+  @Patch('alumnos/:id')
+  @UseGuards(JwtAuthGuard, AdminOrDirectorGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiTags('Admin o Director')
+  @ApiOperation({ summary: 'Actualizar alumno (admin o director; director solo de su escuela)' })
+  @ApiResponse({ status: 200, description: 'Alumno actualizado' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'No autorizado' })
+  @ApiResponse({ status: 404, description: 'Alumno no encontrado' })
+  async actualizarAlumno(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ActualizarUsuarioDto,
+    @Req() req: Request,
+  ) {
+    const user = req.user as any;
+    const escuelaId = user.tipoPersona === 'director' && user.director
+      ? Number(user.director.escuelaId ?? user.director.escuela?.id)
+      : undefined;
+    const { data } = await this.personasService.obtenerAlumnoPorId(id, escuelaId);
+    return await this.personasService.actualizarUsuarioPorId(data.personaId, dto, getAuditContext(req));
+  }
+
+  /**
+   * DELETE /personas/alumnos/:id
+   * Eliminar un alumno (admin: cualquier escuela; director: solo de su escuela).
+   * El :id es el ID del registro alumno (no el de persona).
+   */
+  @Delete('alumnos/:id')
+  @UseGuards(JwtAuthGuard, AdminOrDirectorGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiTags('Admin o Director')
+  @ApiOperation({ summary: 'Eliminar alumno (admin o director; director solo de su escuela)' })
+  @ApiResponse({ status: 200, description: 'Alumno eliminado' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'No autorizado' })
+  @ApiResponse({ status: 404, description: 'Alumno no encontrado' })
+  async eliminarAlumno(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request,
+  ) {
+    const user = req.user as any;
+    const escuelaId = user.tipoPersona === 'director' && user.director
+      ? Number(user.director.escuelaId ?? user.director.escuela?.id)
+      : undefined;
+    const { data } = await this.personasService.obtenerAlumnoPorId(id, escuelaId);
+    return await this.personasService.eliminarUsuarioPorId(data.personaId, getAuditContext(req));
   }
 
   /**

@@ -1,6 +1,3 @@
-/**
- * Filtro global de excepciones para respuestas de error consistentes.
- */
 import {
   ExceptionFilter,
   Catch,

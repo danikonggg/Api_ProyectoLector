@@ -42,6 +42,10 @@ export class Alumno {
   @Column({ name: 'ciclo_escolar', type: 'varchar', length: 20, nullable: true })
   cicloEscolar: string;
 
+  /** Si está activo en la escuela. Se pone en false cuando la escuela pasa a inactiva/suspendida. */
+  @Column({ name: 'activo', type: 'boolean', default: true })
+  activo: boolean;
+
   // Relación uno-a-uno con Persona
   @OneToOne(() => Persona, (persona) => persona.alumno)
   @JoinColumn({ name: 'persona_id' })

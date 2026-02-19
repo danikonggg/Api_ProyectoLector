@@ -1,14 +1,3 @@
-/**
- * ============================================
- * CONTROLADOR: AuthController
- * ============================================
- * 
- * Controlador que maneja la autenticación:
- * - Login (genera JWT token)
- * - Registro de administrador inicial
- * - Obtener perfil del usuario autenticado
- */
-
 import {
   Controller,
   Post,
@@ -25,6 +14,7 @@ import {
   ApiResponse,
   ApiBearerAuth,
 } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegistroAdminDto } from './dto/registro-admin.dto';
@@ -37,10 +27,12 @@ export class AuthController {
 
   /**
    * POST /auth/login
-   * Iniciar sesión y obtener token JWT
+   * Iniciar sesión y obtener token JWT.
+   * Límite estricto por IP para evitar fuerza bruta (5 intentos por minuto).
    */
   @Post('login')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @ApiTags('Público')
   @ApiOperation({ summary: 'Iniciar sesión' })
   @ApiResponse({

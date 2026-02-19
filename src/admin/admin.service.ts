@@ -1,10 +1,3 @@
-/**
- * ============================================
- * SERVICIO: AdminService
- * ============================================
- * Servicio para el dashboard de administrador.
- */
-
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';

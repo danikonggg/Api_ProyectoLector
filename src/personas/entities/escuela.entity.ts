@@ -36,6 +36,16 @@ export class Escuela {
   @Column({ name: 'telefono', type: 'varchar', length: 20, nullable: true })
   telefono: string;
 
+  /** Estado: activa | suspendida | inactiva */
+  @Column({ name: 'estado', type: 'varchar', length: 20, default: 'activa' })
+  estado: string;
+
+  @Column({ name: 'ciudad', type: 'varchar', length: 100, nullable: true })
+  ciudad: string;
+
+  @Column({ name: 'estado_region', type: 'varchar', length: 100, nullable: true })
+  estadoRegion: string;
+
   // Relación uno-a-muchos con Alumno
   @OneToMany(() => Alumno, (alumno) => alumno.escuela)
   alumnos: Alumno[];

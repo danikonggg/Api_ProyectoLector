@@ -1,13 +1,3 @@
-/**
- * ============================================
- * GUARD: JwtAuthGuard
- * ============================================
- * 
- * Guard que protege rutas requiriendo un token JWT válido.
- * Se usa con el decorador @UseGuards(JwtAuthGuard).
- * Las rutas marcadas con @Public() no requieren token.
- */
-
 import { Injectable, ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
