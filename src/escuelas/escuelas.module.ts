@@ -18,10 +18,13 @@ import { Director } from '../personas/entities/director.entity';
 import { EscuelaLibro } from './entities/escuela-libro.entity';
 import { EscuelaLibroPendiente } from './entities/escuela-libro-pendiente.entity';
 import { Libro } from '../libros/entities/libro.entity';
+import { AlumnoLibro } from './entities/alumno-libro.entity';
+import { PersonasModule } from '../personas/personas.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Escuela, Alumno, Maestro, Director, EscuelaLibro, EscuelaLibroPendiente, Libro]),
+    PersonasModule,
+    TypeOrmModule.forFeature([Escuela, Alumno, Maestro, Director, EscuelaLibro, EscuelaLibroPendiente, Libro, AlumnoLibro]),
   ],
   controllers: [EscuelasController],
   providers: [EscuelasService],

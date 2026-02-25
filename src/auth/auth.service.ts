@@ -32,7 +32,7 @@ export class AuthService {
     const persona = await this.personaRepository.findOne({
       where: { correo: loginDto.email },
       relations: ['administrador', 'padre', 'alumno', 'alumno.escuela', 'maestro', 'maestro.escuela', 'director', 'director.escuela'],
-      select: ['id', 'nombre', 'apellido', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'password', 'tipoPersona', 'activo'],
+      select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'password', 'tipoPersona', 'activo'],
     });
 
     if (!persona) {
@@ -104,13 +104,18 @@ export class AuthService {
 
     const accessToken = this.jwtService.sign(payload);
 
-    this.logger.log(`Login exitoso: ${persona.nombre} ${persona.apellido} (${persona.tipoPersona}) - ID: ${persona.id}`);
+    this.logger.log(`Login exitoso: ${persona.nombre} ${persona.apellidoPaterno} (${persona.tipoPersona}) - ID: ${persona.id}`);
 
     await this.auditService.log('login', {
       usuarioId: persona.id,
       ip: ip ?? null,
       detalles: persona.correo,
     });
+
+    await this.personaRepository.update(
+      { id: persona.id },
+      { ultimaConexion: new Date() },
+    );
 
     return {
       message: 'Login exitoso',
@@ -121,7 +126,10 @@ export class AuthService {
       user: {
         id: persona.id,
         nombre: persona.nombre,
-        apellido: persona.apellido,
+        segundoNombre: persona.segundoNombre ?? null,
+        apellidoPaterno: persona.apellidoPaterno,
+        apellidoMaterno: persona.apellidoMaterno ?? null,
+        apellido: [persona.apellidoPaterno, persona.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
         email: persona.correo,
         tipoPersona: persona.tipoPersona,
       },
@@ -148,7 +156,7 @@ export class AuthService {
     // Solo seleccionar campos que existen en la BD
     const personaExistente = await this.personaRepository.findOne({
       where: { correo: registroDto.email },
-      select: ['id', 'nombre', 'apellido', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
+      select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
     });
 
     if (personaExistente) {
@@ -163,7 +171,9 @@ export class AuthService {
     // Crear la persona
     const persona = this.personaRepository.create({
       nombre: registroDto.nombre,
-      apellido: registroDto.apellidoPaterno,
+      segundoNombre: registroDto.segundoNombre?.trim() || null,
+      apellidoPaterno: registroDto.apellidoPaterno,
+      apellidoMaterno: registroDto.apellidoMaterno?.trim() || null,
       correo: registroDto.email,
       password: hashedPassword,
       telefono: registroDto.telefono,
@@ -184,7 +194,7 @@ export class AuthService {
 
     await this.administradorRepository.save(administrador);
 
-    this.logger.log(`Administrador creado exitosamente: ${personaGuardada.nombre} ${personaGuardada.apellido} - ID: ${personaGuardada.id}`);
+    this.logger.log(`Administrador creado exitosamente: ${personaGuardada.nombre} ${personaGuardada.apellidoPaterno} - ID: ${personaGuardada.id}`);
     this.logger.log(`Total de administradores registrados: ${cantidadAdmins + 1}/${this.MAX_ADMINS}`);
 
     await this.auditService.log('registro_admin', {
@@ -213,7 +223,7 @@ export class AuthService {
     const persona = await this.personaRepository.findOne({
       where: { id: userId },
       relations: ['administrador', 'padre', 'alumno', 'maestro', 'director', 'director.escuela'],
-      select: ['id', 'nombre', 'apellido', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'tipoPersona'],
+      select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'tipoPersona', 'ultimaConexion'],
     });
 
     if (!persona) {

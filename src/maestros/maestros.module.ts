@@ -13,10 +13,12 @@ import { Alumno } from '../personas/entities/alumno.entity';
 import { Maestro } from '../personas/entities/maestro.entity';
 import { Materia } from '../personas/entities/materia.entity';
 import { AlumnoMaestro } from '../personas/entities/alumno-maestro.entity';
+import { EscuelasModule } from '../escuelas/escuelas.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Alumno, Maestro, Materia, AlumnoMaestro]),
+    EscuelasModule,
   ],
   controllers: [MaestrosController],
   providers: [MaestrosService],

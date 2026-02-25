@@ -14,7 +14,7 @@ export class AppService {
 
   getHello(): string {
     return '¡Bienvenido a la API, TEAM VL!';
-  }
+  }enton
 
   async getHealth(): Promise<{
     status: 'ok' | 'degraded';

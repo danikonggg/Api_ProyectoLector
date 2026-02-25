@@ -19,9 +19,11 @@ import { PreguntaSegmento } from './entities/pregunta-segmento.entity';
 import { Materia } from '../personas/entities/materia.entity';
 import { EscuelaLibro } from '../escuelas/entities/escuela-libro.entity';
 import { EscuelaLibroPendiente } from '../escuelas/entities/escuela-libro-pendiente.entity';
+import { EscuelasModule } from '../escuelas/escuelas.module';
 
 @Module({
   imports: [
+    EscuelasModule,
     TypeOrmModule.forFeature([
       Libro,
       Unidad,

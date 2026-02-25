@@ -26,6 +26,13 @@ export class RegistroPadreDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   nombre: string;
 
+  @ApiProperty({ example: 'Elena', description: 'Segundo nombre (opcional)', required: false, maxLength: NAME_MAX_LENGTH })
+  @IsString()
+  @IsOptional()
+  @MaxLength(NAME_MAX_LENGTH, { message: `El segundo nombre no puede superar ${NAME_MAX_LENGTH} caracteres` })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  segundoNombre?: string;
+
   @ApiProperty({ example: 'López', description: 'Apellido paterno', required: true, maxLength: NAME_MAX_LENGTH })
   @IsString()
   @IsNotEmpty({ message: 'El apellido paterno es obligatorio' })

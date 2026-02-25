@@ -25,6 +25,7 @@ import { Alumno } from './entities/alumno.entity';
 import { Maestro } from './entities/maestro.entity';
 import { Director } from './entities/director.entity';
 import { Escuela } from './entities/escuela.entity';
+import { AlumnoMaestro } from './entities/alumno-maestro.entity';
 import { RegistroPadreDto } from './dto/registro-padre.dto';
 import { RegistroAlumnoDto } from './dto/registro-alumno.dto';
 import { RegistroMaestroDto } from './dto/registro-maestro.dto';
@@ -79,7 +80,7 @@ export class PersonasService {
 
       const personaExistente = await personaRepo.findOne({
         where: { correo: registroDto.email },
-        select: ['id', 'nombre', 'apellido', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
+        select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
       });
 
       if (personaExistente) {
@@ -92,7 +93,9 @@ export class PersonasService {
 
       const persona = personaRepo.create({
         nombre: registroDto.nombre,
-        apellido: registroDto.apellidoPaterno,
+        segundoNombre: registroDto.segundoNombre?.trim() || null,
+        apellidoPaterno: registroDto.apellidoPaterno,
+        apellidoMaterno: registroDto.apellidoMaterno?.trim() || null,
         correo: registroDto.email,
         password: hashedPassword,
         telefono: registroDto.telefono,
@@ -120,7 +123,7 @@ export class PersonasService {
         }
       }
 
-      this.logger.log(`Padre creado exitosamente: ${personaGuardada.nombre} ${personaGuardada.apellido} - ID: ${personaGuardada.id}`);
+      this.logger.log(`Padre creado exitosamente: ${personaGuardada.nombre} ${personaGuardada.apellidoPaterno} - ID: ${personaGuardada.id}`);
 
       await this.auditService.log('registro_padre', {
         usuarioId: auditContext?.usuarioId ?? null,
@@ -131,7 +134,7 @@ export class PersonasService {
       const resultado = await personaRepo.findOne({
         where: { id: personaGuardada.id },
         relations: ['padre'],
-        select: ['id', 'nombre', 'apellido', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
+        select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
       });
 
       const { password, ...resultadoSinPassword } = resultado;
@@ -153,7 +156,7 @@ export class PersonasService {
     // Verificar que el email no esté en uso
     const personaExistente = await this.personaRepository.findOne({
       where: { correo: registroDto.email },
-      select: ['id', 'nombre', 'apellido', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
+      select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
     });
 
     if (personaExistente) {
@@ -168,7 +171,9 @@ export class PersonasService {
     // Crear la persona
     const persona = this.personaRepository.create({
       nombre: registroDto.nombre,
-      apellido: registroDto.apellidoPaterno,
+      segundoNombre: registroDto.segundoNombre?.trim() || null,
+      apellidoPaterno: registroDto.apellidoPaterno,
+      apellidoMaterno: registroDto.apellidoMaterno?.trim() || null,
       correo: registroDto.email,
       password: hashedPassword,
       telefono: registroDto.telefono,
@@ -203,7 +208,7 @@ export class PersonasService {
 
     await this.alumnoRepository.save(alumno);
 
-    this.logger.log(`Alumno creado exitosamente: ${personaGuardada.nombre} ${personaGuardada.apellido} - ID: ${personaGuardada.id} - Grado: ${alumno.grado}`);
+    this.logger.log(`Alumno creado exitosamente: ${personaGuardada.nombre} ${personaGuardada.apellidoPaterno} - ID: ${personaGuardada.id} - Grado: ${alumno.grado}`);
 
     await this.auditService.log('registro_alumno', {
       usuarioId: auditContext?.usuarioId ?? null,
@@ -214,7 +219,7 @@ export class PersonasService {
     const resultado = await this.personaRepository.findOne({
       where: { id: personaGuardada.id },
       relations: ['alumno', 'alumno.escuela'],
-      select: ['id', 'nombre', 'apellido', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
+      select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
     });
 
     const { password, ...resultadoSinPassword } = resultado;
@@ -235,7 +240,7 @@ export class PersonasService {
     // Verificar que el email no esté en uso
     const personaExistente = await this.personaRepository.findOne({
       where: { correo: registroDto.email },
-      select: ['id', 'nombre', 'apellido', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
+      select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
     });
 
     if (personaExistente) {
@@ -250,7 +255,9 @@ export class PersonasService {
     // Crear la persona
     const persona = this.personaRepository.create({
       nombre: registroDto.nombre,
-      apellido: registroDto.apellidoPaterno,
+      segundoNombre: registroDto.segundoNombre?.trim() || null,
+      apellidoPaterno: registroDto.apellidoPaterno,
+      apellidoMaterno: registroDto.apellidoMaterno?.trim() || null,
       correo: registroDto.email,
       password: hashedPassword,
       telefono: registroDto.telefono,
@@ -285,7 +292,7 @@ export class PersonasService {
 
     await this.maestroRepository.save(maestro);
 
-    this.logger.log(`Maestro creado exitosamente: ${personaGuardada.nombre} ${personaGuardada.apellido} - ID: ${personaGuardada.id} - Especialidad: ${maestro.especialidad || 'N/A'}`);
+    this.logger.log(`Maestro creado exitosamente: ${personaGuardada.nombre} ${personaGuardada.apellidoPaterno} - ID: ${personaGuardada.id} - Especialidad: ${maestro.especialidad || 'N/A'}`);
 
     await this.auditService.log('registro_maestro', {
       usuarioId: auditContext?.usuarioId ?? null,
@@ -297,7 +304,7 @@ export class PersonasService {
     const resultado = await this.personaRepository.findOne({
       where: { id: personaGuardada.id },
       relations: ['maestro', 'maestro.escuela'],
-      select: ['id', 'nombre', 'apellido', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
+      select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
     });
 
     const { password, ...resultadoSinPassword } = resultado;
@@ -321,7 +328,9 @@ export class PersonasService {
       .select([
         'persona.id',
         'persona.nombre',
-        'persona.apellido',
+        'persona.segundoNombre',
+        'persona.apellidoPaterno',
+        'persona.apellidoMaterno',
         'persona.correo',
         'persona.telefono',
         'persona.fechaNacimiento',
@@ -351,7 +360,7 @@ export class PersonasService {
     // Verificar que el email no esté en uso
     const personaExistente = await this.personaRepository.findOne({
       where: { correo: registroDto.email },
-      select: ['id', 'nombre', 'apellido', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
+      select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
     });
 
     if (personaExistente) {
@@ -387,7 +396,9 @@ export class PersonasService {
     // Crear la persona
     const persona = this.personaRepository.create({
       nombre: registroDto.nombre,
-      apellido: registroDto.apellidoPaterno,
+      segundoNombre: registroDto.segundoNombre?.trim() || null,
+      apellidoPaterno: registroDto.apellidoPaterno,
+      apellidoMaterno: registroDto.apellidoMaterno?.trim() || null,
       correo: registroDto.email,
       password: hashedPassword,
       telefono: registroDto.telefono,
@@ -411,7 +422,7 @@ export class PersonasService {
 
     await this.directorRepository.save(director);
 
-    this.logger.log(`Director creado exitosamente: ${personaGuardada.nombre} ${personaGuardada.apellido} - ID: ${personaGuardada.id} - Escuela ID: ${registroDto.idEscuela}`);
+    this.logger.log(`Director creado exitosamente: ${personaGuardada.nombre} ${personaGuardada.apellidoPaterno} - ID: ${personaGuardada.id} - Escuela ID: ${registroDto.idEscuela}`);
 
     await this.auditService.log('registro_director', {
       usuarioId: auditContext?.usuarioId ?? null,
@@ -423,7 +434,7 @@ export class PersonasService {
     const resultado = await this.personaRepository.findOne({
       where: { id: personaGuardada.id },
       relations: ['director', 'director.escuela'],
-      select: ['id', 'nombre', 'apellido', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
+      select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
     });
 
     const { password, ...resultadoSinPassword } = resultado;
@@ -491,14 +502,17 @@ export class PersonasService {
       ],
       relations: ['administrador', 'director', 'director.escuela', 'maestro', 'maestro.escuela', 'alumno', 'alumno.escuela', 'padre'],
       select: ['id', 'nombre', 'apellido', 'correo', 'telefono', 'fechaNacimiento', 'tipoPersona', 'activo'],
-      order: { tipoPersona: 'ASC', apellido: 'ASC', nombre: 'ASC' },
+      order: { tipoPersona: 'ASC', apellidoPaterno: 'ASC', nombre: 'ASC' },
     });
 
     const data = personas.map((p) => {
       const base = {
         id: p.id,
         nombre: p.nombre,
-        apellido: p.apellido,
+        segundoNombre: p.segundoNombre ?? null,
+        apellidoPaterno: p.apellidoPaterno,
+        apellidoMaterno: p.apellidoMaterno ?? null,
+        apellido: [p.apellidoPaterno, p.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
         correo: p.correo ?? null,
         telefono: p.telefono ?? null,
         fechaNacimiento: p.fechaNacimiento ? (p.fechaNacimiento instanceof Date ? p.fechaNacimiento.toISOString().split('T')[0] : String(p.fechaNacimiento).split('T')[0]) : null,
@@ -579,7 +593,7 @@ export class PersonasService {
   ) {
     const persona = await this.personaRepository.findOne({
       where: { id },
-      select: ['id', 'nombre', 'apellido', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'tipoPersona', 'activo', 'password'],
+      select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'apellido', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'tipoPersona', 'activo', 'password'],
     });
     if (!persona) {
       throw new NotFoundException(`No se encontró el usuario con ID ${id}`);
@@ -605,7 +619,10 @@ export class PersonasService {
     }
 
     if (dto.nombre != null) persona.nombre = dto.nombre.trim();
-    if (dto.apellido != null) persona.apellido = dto.apellido.trim();
+    if (dto.segundoNombre != null) persona.segundoNombre = dto.segundoNombre.trim() || null;
+    if (dto.apellidoPaterno != null) persona.apellidoPaterno = dto.apellidoPaterno.trim();
+    if (dto.apellidoMaterno != null) persona.apellidoMaterno = dto.apellidoMaterno.trim() || null;
+    if (dto.apellido != null) persona.apellidoPaterno = dto.apellido.trim(); // compatibilidad
     if (dto.correo != null) persona.correo = dto.correo.trim() || null;
     if (dto.telefono != null) persona.telefono = dto.telefono.trim() || null;
     if (dto.fechaNacimiento != null) {
@@ -631,7 +648,7 @@ export class PersonasService {
     const resultado = await this.personaRepository.findOne({
       where: { id },
       relations: ['administrador', 'director', 'director.escuela', 'maestro', 'maestro.escuela', 'alumno', 'alumno.escuela', 'padre'],
-      select: ['id', 'nombre', 'apellido', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'tipoPersona', 'activo'],
+      select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'tipoPersona', 'activo'],
     });
     return {
       message: 'Usuario actualizado correctamente',
@@ -665,11 +682,13 @@ export class PersonasService {
       const maestroRepo = manager.getRepository(Maestro);
       const alumnoRepo = manager.getRepository(Alumno);
       const padreRepo = manager.getRepository(Padre);
+      const alumnoMaestroRepo = manager.getRepository(AlumnoMaestro);
 
       if (tipo === 'padre' && persona.padre) {
         await alumnoRepo.update({ padreId: persona.padre.id }, { padreId: null });
         await padreRepo.delete({ id: persona.padre.id });
       } else if (tipo === 'alumno' && persona.alumno) {
+        await alumnoMaestroRepo.delete({ alumnoId: persona.alumno.id });
         await alumnoRepo.delete({ id: persona.alumno.id });
       } else if (tipo === 'maestro' && persona.maestro) {
         await maestroRepo.delete({ id: persona.maestro.id });
@@ -824,24 +843,64 @@ export class PersonasService {
   }
 
   /**
-   * Obtener un alumno por ID con su padre
+   * Obtener un alumno por ID (alumno) o por personaId.
+   * Acepta ambos para evitar confusión: el frontend puede enviar id de alumno o id de persona.
    * @param escuelaIdRestriccion - Si se pasa, solo se devuelve si el alumno pertenece a esa escuela (para directores)
    */
   async obtenerAlumnoPorId(id: number, escuelaIdRestriccion?: number) {
-    const alumno = await this.alumnoRepository.findOne({
+    let alumno = await this.alumnoRepository.findOne({
       where: { id },
       relations: ['persona', 'escuela', 'padre', 'padre.persona'],
     });
     if (!alumno) {
-      throw new NotFoundException(`No se encontró el alumno con ID ${id}`);
+      alumno = await this.alumnoRepository.findOne({
+        where: { personaId: id },
+        relations: ['persona', 'escuela', 'padre', 'padre.persona'],
+      });
     }
-    if (escuelaIdRestriccion != null && alumno.escuelaId !== escuelaIdRestriccion) {
-      throw new NotFoundException(`No se encontró el alumno con ID ${id}`);
+    if (!alumno) {
+      throw new NotFoundException(`No se encontró el alumno (ID alumno o persona: ${id})`);
+    }
+    if (escuelaIdRestriccion != null && Number(alumno.escuelaId) !== Number(escuelaIdRestriccion)) {
+      throw new NotFoundException(
+        `El alumno (ID ${alumno.id}) no pertenece a tu escuela (solo puedes ver alumnos de tu centro)`,
+      );
     }
     return {
       message: 'Alumno obtenido exitosamente',
       description: 'Alumno encontrado en el sistema',
       data: this.formatearAlumnoConPadre(alumno),
+    };
+  }
+
+  /**
+   * Obtener un maestro por ID (maestro) o por personaId.
+   * Acepta ambos para evitar confusión: el frontend puede enviar id de maestro o id de persona.
+   * @param escuelaIdRestriccion - Si se pasa, solo se devuelve si el maestro pertenece a esa escuela (para directores)
+   */
+  async obtenerMaestroPorId(id: number, escuelaIdRestriccion?: number) {
+    let maestro = await this.maestroRepository.findOne({
+      where: { id },
+      relations: ['persona', 'escuela'],
+    });
+    if (!maestro) {
+      maestro = await this.maestroRepository.findOne({
+        where: { personaId: id },
+        relations: ['persona', 'escuela'],
+      });
+    }
+    if (!maestro) {
+      throw new NotFoundException(`No se encontró el maestro (ID maestro o persona: ${id})`);
+    }
+    if (escuelaIdRestriccion != null && Number(maestro.escuelaId) !== Number(escuelaIdRestriccion)) {
+      throw new NotFoundException(
+        `El maestro (ID ${maestro.id}) no pertenece a tu escuela (solo puedes ver maestros de tu centro)`,
+      );
+    }
+    return {
+      message: 'Maestro obtenido exitosamente',
+      description: 'Maestro encontrado en el sistema',
+      data: this.formatearMaestro(maestro),
     };
   }
 
@@ -857,8 +916,10 @@ export class PersonasService {
     if (!alumno) {
       throw new NotFoundException(`No se encontró el alumno con ID ${alumnoId}`);
     }
-    if (escuelaIdRestriccion != null && alumno.escuelaId !== escuelaIdRestriccion) {
-      throw new NotFoundException(`No se encontró el alumno con ID ${alumnoId}`);
+    if (escuelaIdRestriccion != null && Number(alumno.escuelaId) !== Number(escuelaIdRestriccion)) {
+      throw new NotFoundException(
+        `El alumno con ID ${alumnoId} no pertenece a tu escuela (solo puedes ver alumnos de tu centro)`,
+      );
     }
     if (!alumno.padre) {
       return {
@@ -977,7 +1038,10 @@ export class PersonasService {
         ? {
             id: alumno.persona.id,
             nombre: alumno.persona.nombre,
-            apellido: alumno.persona.apellido,
+            segundoNombre: alumno.persona.segundoNombre ?? null,
+            apellidoPaterno: alumno.persona.apellidoPaterno,
+            apellidoMaterno: alumno.persona.apellidoMaterno ?? null,
+            apellido: [alumno.persona.apellidoPaterno, alumno.persona.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
             correo: alumno.persona.correo,
             telefono: alumno.persona.telefono,
           }
@@ -993,7 +1057,10 @@ export class PersonasService {
               ? {
                   id: alumno.padre.persona.id,
                   nombre: alumno.padre.persona.nombre,
-                  apellido: alumno.padre.persona.apellido,
+                  segundoNombre: alumno.padre.persona.segundoNombre ?? null,
+                  apellidoPaterno: alumno.padre.persona.apellidoPaterno,
+                  apellidoMaterno: alumno.padre.persona.apellidoMaterno ?? null,
+                  apellido: [alumno.padre.persona.apellidoPaterno, alumno.padre.persona.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
                   correo: alumno.padre.persona.correo,
                   telefono: alumno.padre.persona.telefono,
                 }
@@ -1015,7 +1082,10 @@ export class PersonasService {
         ? {
             id: alumno.persona.id,
             nombre: alumno.persona.nombre,
-            apellido: alumno.persona.apellido,
+            segundoNombre: alumno.persona.segundoNombre ?? null,
+            apellidoPaterno: alumno.persona.apellidoPaterno,
+            apellidoMaterno: alumno.persona.apellidoMaterno ?? null,
+            apellido: [alumno.persona.apellidoPaterno, alumno.persona.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
             correo: alumno.persona.correo,
             telefono: alumno.persona.telefono,
           }
@@ -1038,13 +1108,46 @@ export class PersonasService {
         ? {
             id: padre.persona.id,
             nombre: padre.persona.nombre,
-            apellido: padre.persona.apellido,
+            segundoNombre: padre.persona.segundoNombre ?? null,
+            apellidoPaterno: padre.persona.apellidoPaterno,
+            apellidoMaterno: padre.persona.apellidoMaterno ?? null,
+            apellido: [padre.persona.apellidoPaterno, padre.persona.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
             correo: padre.persona.correo,
             telefono: padre.persona.telefono,
           }
         : null,
       cantidadHijos: (padre.alumnos || []).length,
       alumnos: (padre.alumnos || []).map((a) => this.formatearAlumnoParaLista(a)),
+    };
+  }
+
+  private formatearMaestro(maestro: any) {
+    return {
+      id: maestro.id,
+      personaId: maestro.personaId,
+      escuelaId: maestro.escuelaId,
+      especialidad: maestro.especialidad ?? null,
+      fechaContratacion: maestro.fechaContratacion ?? null,
+      activo: maestro.activo ?? true,
+      persona: maestro.persona
+        ? {
+            id: maestro.persona.id,
+            nombre: maestro.persona.nombre,
+            segundoNombre: maestro.persona.segundoNombre ?? null,
+            apellidoPaterno: maestro.persona.apellidoPaterno,
+            apellidoMaterno: maestro.persona.apellidoMaterno ?? null,
+            apellido: [maestro.persona.apellidoPaterno, maestro.persona.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
+            correo: maestro.persona.correo,
+            telefono: maestro.persona.telefono,
+          }
+        : null,
+      escuela: maestro.escuela
+        ? {
+            id: maestro.escuela.id,
+            nombre: maestro.escuela.nombre,
+            nivel: maestro.escuela.nivel,
+          }
+        : null,
     };
   }
 }

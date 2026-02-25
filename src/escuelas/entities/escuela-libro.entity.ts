@@ -36,6 +36,10 @@ export class EscuelaLibro {
   @Column({ name: 'fecha_fin', type: 'date', nullable: true })
   fechaFin: Date | null;
 
+  /** Si no null: libro solo visible para alumnos con ese grupo (ej. "A"). Null = todos los grupos del grado. */
+  @Column({ name: 'grupo', type: 'varchar', length: 10, nullable: true })
+  grupo: string | null;
+
   @ManyToOne(() => Escuela)
   @JoinColumn({ name: 'escuela_id' })
   escuela: Escuela;

@@ -1,18 +1,22 @@
 import { Logger } from '@nestjs/common';
 import type { QueryRunner } from 'typeorm';
 
-const MAX_QUERY_LENGTH = 120;
+/** 0 = sin truncar. Env DB_LOG_QUERY_MAX_LENGTH para cambiar (default 2000 en dev). */
+const MAX_QUERY_LENGTH =
+  process.env.DB_LOG_QUERY_MAX_LENGTH != null
+    ? parseInt(process.env.DB_LOG_QUERY_MAX_LENGTH, 10)
+    : 2000;
 const DB_LOG = '[DB]';
 
 export class TypeOrmLoggerService {
   private readonly logger = new Logger('TypeORM');
 
   /**
-   * Trunca y limpia el SQL para que sea legible en una línea.
+   * Limpia el SQL. Trunca solo si MAX_QUERY_LENGTH > 0.
    */
   private formatQuery(query: string): string {
     const cleaned = query.replace(/\s+/g, ' ').trim();
-    if (cleaned.length <= MAX_QUERY_LENGTH) return cleaned;
+    if (MAX_QUERY_LENGTH <= 0 || cleaned.length <= MAX_QUERY_LENGTH) return cleaned;
     return cleaned.slice(0, MAX_QUERY_LENGTH) + '...';
   }
 

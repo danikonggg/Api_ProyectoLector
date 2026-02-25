@@ -24,11 +24,29 @@ export class ActualizarUsuarioDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   nombre?: string;
 
-  @ApiPropertyOptional({ example: 'Pérez', description: 'Apellido', maxLength: NAME_MAX_LENGTH })
+  @ApiPropertyOptional({ example: 'Carlos', description: 'Segundo nombre', maxLength: NAME_MAX_LENGTH })
   @IsOptional()
   @IsString()
-  @MaxLength(NAME_MAX_LENGTH, { message: `El apellido no puede superar ${NAME_MAX_LENGTH} caracteres` })
+  @MaxLength(NAME_MAX_LENGTH, { message: `El segundo nombre no puede superar ${NAME_MAX_LENGTH} caracteres` })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  segundoNombre?: string;
+
+  @ApiPropertyOptional({ example: 'Pérez', description: 'Apellido paterno', maxLength: NAME_MAX_LENGTH })
+  @IsOptional()
+  @IsString()
+  @MaxLength(NAME_MAX_LENGTH, { message: `El apellido paterno no puede superar ${NAME_MAX_LENGTH} caracteres` })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  apellidoPaterno?: string;
+
+  @ApiPropertyOptional({ example: 'García', description: 'Apellido materno', maxLength: NAME_MAX_LENGTH })
+  @IsOptional()
+  @IsString()
+  @MaxLength(NAME_MAX_LENGTH, { message: `El apellido materno no puede superar ${NAME_MAX_LENGTH} caracteres` })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  apellidoMaterno?: string;
+
+  /** @deprecated Usar apellidoPaterno. Se mantiene por compatibilidad. */
+  @IsOptional()
   apellido?: string;
 
   @ApiPropertyOptional({ example: 'juan@example.com', description: 'Correo electrónico', maxLength: EMAIL_MAX_LENGTH })

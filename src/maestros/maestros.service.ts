@@ -114,7 +114,7 @@ export class MaestrosService {
       throw new NotFoundException(`No se encontró el alumno con ID ${dto.alumnoId}`);
     }
 
-    if (alumno.escuelaId !== maestro.escuelaId) {
+    if (Number(alumno.escuelaId) !== Number(maestro.escuelaId)) {
       throw new ForbiddenException(
         'Solo puedes asignar alumnos de tu misma escuela',
       );

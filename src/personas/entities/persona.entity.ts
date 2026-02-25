@@ -28,8 +28,18 @@ export class Persona {
   @Column({ name: 'nombre', type: 'varchar', length: 100 })
   nombre: string;
 
-  @Column({ name: 'apellido', type: 'varchar', length: 100 })
-  apellido: string;
+  @Column({ name: 'segundo_nombre', type: 'varchar', length: 100, nullable: true })
+  segundoNombre: string | null;
+
+  @Column({ name: 'apellido_paterno', type: 'varchar', length: 100 })
+  apellidoPaterno: string;
+
+  @Column({ name: 'apellido_materno', type: 'varchar', length: 100, nullable: true })
+  apellidoMaterno: string | null;
+
+  /** @deprecated Usar apellidoPaterno. Se mantiene por compatibilidad con columna legacy. */
+  @Column({ name: 'apellido', type: 'varchar', length: 100, nullable: true })
+  apellido: string | null;
 
   @Column({ name: 'correo', type: 'varchar', length: 150, nullable: true })
   correo: string;
@@ -54,6 +64,9 @@ export class Persona {
   @Column({ name: 'activo', type: 'boolean', default: true, nullable: true })
   activo: boolean;
 
+  @Column({ name: 'ultima_conexion', type: 'timestamptz', nullable: true })
+  ultimaConexion: Date;
+
   // Getters para compatibilidad con código existente
   get idPersona(): number {
     return this.id;
@@ -65,22 +78,6 @@ export class Persona {
 
   set email(value: string) {
     this.correo = value;
-  }
-
-  get apellidoPaterno(): string {
-    return this.apellido;
-  }
-
-  set apellidoPaterno(value: string) {
-    this.apellido = value;
-  }
-
-  get apellidoMaterno(): string {
-    return null; // No existe en el esquema
-  }
-
-  set apellidoMaterno(value: string) {
-    // No hacer nada, no existe en el esquema
   }
 
   // Relaciones uno-a-uno con los diferentes tipos de usuario

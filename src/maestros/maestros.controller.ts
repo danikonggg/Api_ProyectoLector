@@ -14,10 +14,13 @@ import {
   Body,
   Param,
   ParseIntPipe,
+  Query,
   UseGuards,
   Req,
   HttpCode,
   HttpStatus,
+  ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -28,7 +31,9 @@ import {
 } from '@nestjs/swagger';
 import { Request } from 'express';
 import { MaestrosService } from './maestros.service';
+import { EscuelasService } from '../escuelas/escuelas.service';
 import { AsignarAlumnoDto } from './dto/asignar-alumno.dto';
+import { AsignarLibroAlumnoDto } from '../escuelas/dto/asignar-libro-alumno.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { MaestroGuard } from '../auth/guards/maestro.guard';
 
@@ -36,7 +41,10 @@ import { MaestroGuard } from '../auth/guards/maestro.guard';
 @UseGuards(JwtAuthGuard, MaestroGuard)
 @ApiBearerAuth('JWT-auth')
 export class MaestrosController {
-  constructor(private readonly maestrosService: MaestrosService) {}
+  constructor(
+    private readonly maestrosService: MaestrosService,
+    private readonly escuelasService: EscuelasService,
+  ) {}
 
   /**
    * GET /maestros/mis-alumnos
@@ -91,6 +99,76 @@ export class MaestrosController {
   async asignarAlumno(@Req() req: Request, @Body() dto: AsignarAlumnoDto) {
     const user = req.user as any;
     return this.maestrosService.asignarAlumno(user.maestro.id, dto);
+  }
+
+  /**
+   * GET /maestros/libros-disponibles-para-asignar
+   * Libros de la escuela que puede asignar a un alumno (mismo grado, grupo).
+   */
+  @Get('libros-disponibles-para-asignar')
+  @ApiTags('Solo Maestro')
+  @ApiOperation({ summary: 'Libros disponibles para asignar a un alumno' })
+  @ApiResponse({ status: 200, description: 'Libros que coinciden con grado y grupo del alumno' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'Solo maestros' })
+  async librosDisponiblesParaAsignar(
+    @Req() req: Request,
+    @Query('alumnoId') alumnoIdStr: string,
+  ) {
+    const user = req.user as any;
+    const escuelaId = user.maestro?.escuelaId ?? user.maestro?.escuela?.id;
+    if (!escuelaId) throw new ForbiddenException('No se encontró la escuela del maestro');
+    const alumnoId = parseInt(alumnoIdStr, 10);
+    if (isNaN(alumnoId)) throw new BadRequestException('alumnoId debe ser un número');
+    return this.escuelasService.listarLibrosDisponiblesParaAsignar(escuelaId, alumnoId);
+  }
+
+  /**
+   * POST /maestros/asignar-libro
+   * Asignar un libro a un alumno (el alumno debe estar en tu clase o ser de tu escuela).
+   */
+  @Post('asignar-libro')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiTags('Solo Maestro')
+  @ApiOperation({ summary: 'Asignar libro a alumno' })
+  @ApiResponse({ status: 201, description: 'Libro asignado' })
+  @ApiResponse({ status: 400, description: 'Datos inválidos o libro no disponible' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'Solo maestros' })
+  @ApiResponse({ status: 404, description: 'Alumno o libro no encontrados' })
+  @ApiResponse({ status: 409, description: 'Libro ya asignado al alumno' })
+  async asignarLibro(@Req() req: Request, @Body() dto: AsignarLibroAlumnoDto) {
+    const user = req.user as any;
+    const escuelaId = user.maestro?.escuelaId ?? user.maestro?.escuela?.id;
+    if (!escuelaId) throw new ForbiddenException('No se encontró la escuela del maestro');
+    return this.escuelasService.asignarLibroAlAlumno(
+      escuelaId,
+      dto.alumnoId,
+      dto.libroId,
+      'maestro',
+      user.maestro.id,
+    );
+  }
+
+  /**
+   * DELETE /maestros/desasignar-libro/:alumnoId/:libroId
+   * Desasignar un libro de un alumno.
+   */
+  @Delete('desasignar-libro/:alumnoId/:libroId')
+  @HttpCode(HttpStatus.OK)
+  @ApiTags('Solo Maestro')
+  @ApiOperation({ summary: 'Desasignar libro de alumno' })
+  @ApiParam({ name: 'alumnoId', description: 'ID del alumno' })
+  @ApiParam({ name: 'libroId', description: 'ID del libro' })
+  @ApiResponse({ status: 200, description: 'Libro desasignado' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'Solo maestros' })
+  @ApiResponse({ status: 404, description: 'Asignación no encontrada' })
+  async desasignarLibro(
+    @Param('alumnoId', ParseIntPipe) alumnoId: number,
+    @Param('libroId', ParseIntPipe) libroId: number,
+  ) {
+    return this.escuelasService.desasignarLibroAlAlumno(alumnoId, libroId);
   }
 
   /**

@@ -12,7 +12,7 @@ API REST para sistema educativo: roles (Administrador, Director, Maestro, Alumno
 2. [Roles y permisos](#2-roles-y-permisos)
 3. [Autenticación](#3-autenticación)
 4. [Referencia de rutas](#4-referencia-de-rutas)
-5. [Endpoints por recurso](#5-endpoints-por-recurso)
+5. [Endpoints por recurso](#5-endpoints-por-recurso) — incl. [Registro de maestro](#registro-de-maestro-profesor-para-escuela), [Editar y eliminar maestro](#editar-y-eliminar-maestro)
 6. [Seguridad](#6-seguridad)
 7. [Auditoría](#7-auditoría)
 8. [Capacidad y escalado](#8-capacidad-y-escalado)
@@ -159,6 +159,8 @@ Todas las rutas con método, body mínimo y rol. `?` = opcional. `*` = ver nota 
 | GET | `/personas/padres` | — |
 | GET | `/personas/padres/:id` | — |
 | GET | `/personas/padres/:id/alumnos` | — |
+| PATCH | `/personas/maestros/:id` | `{ "nombre"?, "apellido"?, "correo"?, "telefono"?, "fechaNacimiento"?, "genero"?, "password"?, "activo"? }` (actualiza datos de persona del maestro) |
+| DELETE | `/personas/maestros/:id` | — (elimina maestro y su persona, admin: cualquier escuela; director: solo de su escuela) |
 
 *Director: puede omitir `idEscuela` (se usa su escuela).
 
@@ -166,6 +168,7 @@ Todas las rutas con método, body mínimo y rol. `?` = opcional. `*` = ver nota 
 
 | Método | Ruta | Body |
 |--------|------|------|
+| GET | `/escuelas/lista` | — (admin/director, lista mínima para dropdowns) |
 | POST | `/escuelas` | `{ "nombre", "nivel" }` + opc. |
 | PUT | `/escuelas/:id` | `{ "nombre"?, "nivel"?, "clave"?, "direccion"?, "telefono"? }` |
 | POST | `/escuelas/:id/libros` | `{ "codigo": "LIB-..." }` (admin otorga) |
@@ -176,7 +179,8 @@ Todas las rutas con método, body mínimo y rol. `?` = opcional. `*` = ver nota 
 | GET | `/escuelas/:id/libros/pendientes` | — |
 | GET | `/escuelas/:id/maestros` | — |
 | GET | `/escuelas/:id/alumnos` | — |
-| GET | `/escuelas/mis-libros` | — (solo alumno) |
+| GET | `/escuelas/mis-libros` | — (solo alumno, libros asignados con progreso) |
+| PATCH | `/escuelas/mis-libros/:libroId/progreso` | `{ "porcentaje"?, "ultimoSegmentoId"? }` (solo alumno) |
 | DELETE | `/escuelas/:id` | — |
 
 ### Libros
@@ -189,7 +193,7 @@ Todas las rutas con método, body mínimo y rol. `?` = opcional. `*` = ver nota 
 | GET | `/libros/:id/pdf` | — (solo admin) |
 | DELETE | `/libros/:id` | — (admin) |
 
-*Alumno: solo libros de su escuela.
+*Alumno: solo libros asignados explícitamente (Alternativa C).
 
 ### Director (sin enviar idEscuela)
 
@@ -199,6 +203,9 @@ Todas las rutas con método, body mínimo y rol. `?` = opcional. `*` = ver nota 
 | GET | `/director/libros` | — |
 | GET | `/director/libros/pendientes` | — |
 | POST | `/director/canjear-libro` | `{ "codigo": "LIB-..." }` |
+| GET | `/director/libros-disponibles-para-asignar` | Query: `?alumnoId=` |
+| POST | `/director/asignar-libro` | `{ "alumnoId", "libroId" }` |
+| DELETE | `/director/desasignar-libro/:alumnoId/:libroId` | — |
 
 ### Maestros
 
@@ -208,6 +215,9 @@ Todas las rutas con método, body mínimo y rol. `?` = opcional. `*` = ver nota 
 | GET | `/maestros/mis-alumnos` | — |
 | GET | `/maestros/mis-alumnos/:id` | — |
 | DELETE | `/maestros/mis-alumnos/:alumnoId/materia/:materiaId` | — |
+| GET | `/maestros/libros-disponibles-para-asignar` | Query: `?alumnoId=` |
+| POST | `/maestros/asignar-libro` | `{ "alumnoId", "libroId" }` |
+| DELETE | `/maestros/desasignar-libro/:alumnoId/:libroId` | — |
 
 ### Admin
 
@@ -215,6 +225,8 @@ Todas las rutas con método, body mínimo y rol. `?` = opcional. `*` = ver nota 
 |--------|------|------|
 | GET | `/admin/dashboard` | — |
 | GET | `/admin/usuarios` | — |
+| PATCH | `/admin/usuarios/:id` | `{ "nombre"?, "apellido"?, "correo"?, "telefono"?, "fechaNacimiento"?, "genero"?, "password"?, "activo"? }` |
+| DELETE | `/admin/usuarios/:id` | — |
 
 ### Auditoría (solo admin)
 
@@ -245,6 +257,8 @@ Todas las rutas con método, body mínimo y rol. `?` = opcional. `*` = ver nota 
 
 - **GET /admin/dashboard**: `data`: `{ escuelasActivas, totalEstudiantes, totalProfesores, librosDisponibles }`.
 - **GET /admin/usuarios**: Lista de usuarios y totales por rol (administrador, director, maestro, alumno, padre).
+- **PATCH /admin/usuarios/:id**: Actualizar usuario por ID (cualquier rol). Body opcional: `nombre`, `apellido`, `correo`, `telefono`, `fechaNacimiento`, `genero`, `password`, `activo`. No cambia el rol. Ver [Editar y eliminar maestro](#editar-y-eliminar-maestro).
+- **DELETE /admin/usuarios/:id**: Eliminar usuario por ID (cualquier rol). Ver [Editar y eliminar maestro](#editar-y-eliminar-maestro).
 
 ### Director
 
@@ -252,6 +266,171 @@ Todas las rutas con método, body mínimo y rol. `?` = opcional. `*` = ver nota 
 - **GET /director/libros**: Libros ya canjeados en su escuela.
 - **GET /director/libros/pendientes**: Libros otorgados por admin que la escuela aún no ha canjeado (director ve título/grado, no código).
 - **POST /director/canjear-libro**: Body `{ "codigo": "LIB-..." }`. Canjea el libro para su escuela.
+
+### Registro de maestro (profesor) para escuela
+
+Permite dar de alta a un profesor/maestro vinculado a una escuela. Quien registra puede ser **Administrador** o **Director**.
+
+| Aspecto | Detalle |
+|--------|---------|
+| **Endpoint** | `POST /personas/registro-maestro` |
+| **Autenticación** | JWT obligatorio (`Authorization: Bearer <token>`) |
+| **Roles** | Administrador o Director (`AdminOrDirectorGuard`) |
+
+#### Quién puede registrar y uso de `idEscuela`
+
+- **Administrador:** puede registrar maestros en **cualquier** escuela. Debe enviar siempre `idEscuela` en el body. Si omite `idEscuela` → **400** "Debe indicar el ID de la escuela (idEscuela)".
+- **Director:** solo puede registrar maestros en **su propia escuela**. Puede omitir `idEscuela` (se usa automáticamente la escuela del token). Si envía un `idEscuela` distinto al de su escuela → **403** "Los directores solo pueden registrar maestros en su propia escuela".
+
+#### Body (JSON)
+
+| Campo | Tipo | Obligatorio | Descripción |
+|-------|------|-------------|-------------|
+| `nombre` | string | Sí | Nombre (máx. según `NAME_MAX_LENGTH`) |
+| `apellidoPaterno` | string | Sí | Apellido paterno |
+| `apellidoMaterno` | string | Sí | Apellido materno |
+| `email` | string | Sí | Correo único en el sistema (formato válido) |
+| `password` | string | Sí | Contraseña (mín. 6 caracteres) |
+| `idEscuela` | number | Admin: sí / Director: no | ID de la escuela. Director puede omitirlo. |
+| `telefono` | string | No | Teléfono (máx. según `PHONE_MAX_LENGTH`) |
+| `fechaNacimiento` | string | No | Fecha en formato `YYYY-MM-DD` |
+| `especialidad` | string | No | Especialidad o materia (máx. 100 caracteres) |
+| `fechaIngreso` | string | No | Fecha de ingreso en la escuela, `YYYY-MM-DD` |
+
+#### Ejemplo de petición (admin)
+
+```http
+POST /personas/registro-maestro
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "nombre": "Ana",
+  "apellidoPaterno": "Rodríguez",
+  "apellidoMaterno": "Fernández",
+  "email": "maestro@example.com",
+  "password": "password123",
+  "idEscuela": 1,
+  "especialidad": "Matemáticas",
+  "fechaIngreso": "2020-08-01",
+  "telefono": "5551234567"
+}
+```
+
+#### Ejemplo de petición (director, sin idEscuela)
+
+El director no envía `idEscuela`; el backend usa la escuela asociada a su token.
+
+```json
+{
+  "nombre": "Luis",
+  "apellidoPaterno": "García",
+  "apellidoMaterno": "López",
+  "email": "luis.garcia@escuela.edu",
+  "password": "claveSegura1"
+}
+```
+
+#### Respuesta exitosa (201)
+
+El servicio devuelve el objeto de la persona creada y la relación con la escuela (maestro). En caso de éxito no se devuelve la contraseña.
+
+#### Errores posibles
+
+| Código | Situación |
+|--------|-----------|
+| **400** | Falta `idEscuela` (solo cuando quien llama es admin). Body inválido o campos obligatorios faltantes. |
+| **403** | Director intenta registrar en una escuela que no es la suya. |
+| **409** | El email ya está registrado ("El email ya está registrado"). |
+| **404** | La escuela indicada no existe ("No se encontró la escuela con ID X"). |
+
+#### Auditoría
+
+La acción se registra en el log de auditoría como `registro_maestro` (ver sección [Auditoría](#7-auditoría)).
+
+#### Listar maestros de una escuela
+
+Para ver los maestros ya registrados en una escuela:
+
+- **GET /escuelas/:id/maestros** — Requiere permisos (admin o director de esa escuela). Devuelve la lista de maestros de la escuela.
+
+---
+
+### Editar y eliminar maestro
+
+En la API, un maestro es un **usuario** (persona con rol maestro) vinculado a una escuela. Hay dos formas de editar/eliminarlo:
+
+- Rutas genéricas de **admin**: `PATCH /admin/usuarios/:id` y `DELETE /admin/usuarios/:id` (usando **ID de persona**).
+- Rutas específicas por **maestro**: `PATCH /personas/maestros/:id` y `DELETE /personas/maestros/:id` (usando **ID de maestro**). En estas rutas, el **director** solo puede actuar sobre maestros de **su escuela**.
+
+#### Editar maestro (admin o director)
+
+| Aspecto | Detalle |
+|--------|---------|
+| **Endpoint (admin o director)** | `PATCH /personas/maestros/:id` |
+| **ID usado** | `:id` = ID del registro en la tabla `Maestro` (no el de persona). Internamente se usa el `personaId` para actualizar. |
+| **Roles** | Admin: cualquier escuela. Director: solo maestros de su escuela (se valida por `escuelaId`). |
+| **Autenticación** | JWT obligatorio + `AdminOrDirectorGuard`. |
+
+**Body (JSON)** — mismos campos que `ActualizarUsuarioDto` (todos opcionales, solo se actualizan los enviados):
+
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| `nombre` | string | Nombre (máx. según `NAME_MAX_LENGTH`) |
+| `apellido` | string | Apellido (en BD la persona tiene un solo apellido) |
+| `correo` | string | Correo electrónico (debe ser único si se cambia) |
+| `telefono` | string | Teléfono (máx. según `PHONE_MAX_LENGTH`) |
+| `fechaNacimiento` | string | Fecha en formato `YYYY-MM-DD` |
+| `genero` | string | Género (máx. 30 caracteres) |
+| `password` | string | Nueva contraseña (mín. 6). Si no se envía, se mantiene la actual. |
+| `activo` | boolean | Si el usuario está activo o no |
+
+**Nota:** Ninguna de estas rutas permite cambiar el **rol** (tipoPersona). Los datos específicos del maestro (`especialidad`, `fechaContratacion`) se guardan en la entidad `Maestro`; por ahora, estas rutas actualizan solo la **persona**.
+
+**Ejemplo (director o admin usando ID de maestro):**
+
+```http
+PATCH /personas/maestros/7
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "nombre": "Ana",
+  "apellido": "Rodríguez Fernández",
+  "correo": "ana.rodriguez@escuela.edu",
+  "telefono": "5559876543",
+  "activo": true
+}
+```
+
+**Alternativa solo admin (ID de persona):**
+
+- `PATCH /admin/usuarios/:id` — mismo body que arriba, pero `:id` es el **ID de la persona**.
+
+#### Eliminar maestro (admin o director)
+
+| Aspecto | Detalle |
+|--------|---------|
+| **Endpoint (admin o director)** | `DELETE /personas/maestros/:id` |
+| **ID usado** | `:id` = ID del registro en la tabla `Maestro`. Internamente se elimina primero el maestro y luego la persona. |
+| **Roles** | Admin: cualquier escuela. Director: solo maestros de su escuela. |
+
+Se elimina el registro del maestro en la tabla `Maestro`, las asignaciones alumno–maestro (`Alumno_Maestro`) asociadas y, por último, la **persona**. La operación es irreversible.
+
+**Ejemplo (director o admin):**
+
+```http
+DELETE /personas/maestros/7
+Authorization: Bearer <access_token>
+```
+
+**Alternativa solo admin (ID de persona):**
+
+- `DELETE /admin/usuarios/:id` — `:id` es el **ID de la persona**.
+
+**Errores posibles (ambas variantes):**  
+**404** (maestro/usuario no encontrado, o pertenece a otra escuela para el director), **403** (no autorizado), **400** (validación en PATCH).  
+**Auditoría:** Las acciones se registran como `actualizar_usuario` y `eliminar_usuario` (ver sección [Auditoría](#7-auditoría)).
 
 ### Libros (admin: catálogo y PDF)
 

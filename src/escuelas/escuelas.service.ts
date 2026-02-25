@@ -12,6 +12,7 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -23,6 +24,7 @@ import { Director } from '../personas/entities/director.entity';
 import { EscuelaLibro } from './entities/escuela-libro.entity';
 import { EscuelaLibroPendiente } from './entities/escuela-libro-pendiente.entity';
 import { Libro } from '../libros/entities/libro.entity';
+import { AlumnoLibro } from './entities/alumno-libro.entity';
 import { CrearEscuelaDto } from './dto/crear-escuela.dto';
 import { ActualizarEscuelaDto } from './dto/actualizar-escuela.dto';
 import { AuditService } from '../audit/audit.service';
@@ -51,6 +53,8 @@ export class EscuelasService {
     private readonly escuelaLibroPendienteRepository: Repository<EscuelaLibroPendiente>,
     @InjectRepository(Libro)
     private readonly libroRepository: Repository<Libro>,
+    @InjectRepository(AlumnoLibro)
+    private readonly alumnoLibroRepository: Repository<AlumnoLibro>,
     private readonly auditService: AuditService,
   ) {}
 
@@ -108,6 +112,22 @@ export class EscuelasService {
       message: 'Escuela creada exitosamente',
       description: 'La escuela ha sido registrada correctamente en el sistema.',
       data: escuelaGuardada,
+    };
+  }
+
+  /**
+   * Lista mínima para dropdowns de registro (público).
+   * Solo escuelas activas: { id, nombre }.
+   */
+  async listarParaRegistro() {
+    const escuelas = await this.escuelaRepository.find({
+      where: { estado: 'activa' },
+      select: ['id', 'nombre'],
+      order: { nombre: 'ASC' },
+    });
+    return {
+      message: 'Lista de escuelas',
+      data: escuelas.map((e) => ({ id: e.id, nombre: e.nombre })),
     };
   }
 
@@ -201,7 +221,10 @@ export class EscuelasService {
         ? {
             id: d.persona.id,
             nombre: d.persona.nombre,
-            apellido: d.persona.apellido,
+            segundoNombre: d.persona.segundoNombre ?? null,
+            apellidoPaterno: d.persona.apellidoPaterno,
+            apellidoMaterno: d.persona.apellidoMaterno ?? null,
+            apellido: [d.persona.apellidoPaterno, d.persona.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
             correo: d.persona.correo,
             telefono: d.persona.telefono,
           }
@@ -579,7 +602,10 @@ export class EscuelasService {
         ? {
             id: d.persona.id,
             nombre: d.persona.nombre,
-            apellido: d.persona.apellido,
+            segundoNombre: d.persona.segundoNombre ?? null,
+            apellidoPaterno: d.persona.apellidoPaterno,
+            apellidoMaterno: d.persona.apellidoMaterno ?? null,
+            apellido: [d.persona.apellidoPaterno, d.persona.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
             correo: d.persona.correo,
             telefono: d.persona.telefono,
           }
@@ -610,7 +636,7 @@ export class EscuelasService {
       personaId: number;
       escuelaId: number;
       fechaNombramiento: Date | null;
-      persona: { id: number; nombre: string; apellido: string; correo: string; telefono: string | null } | null;
+      persona: { id: number; nombre: string; segundoNombre: string | null; apellidoPaterno: string; apellidoMaterno: string | null; correo: string; telefono: string | null } | null;
       escuela: { id: number; nombre: string; nivel: string; clave: string | null };
     }> = [];
 
@@ -625,7 +651,9 @@ export class EscuelasService {
             ? {
                 id: d.persona.id,
                 nombre: d.persona.nombre,
-                apellido: d.persona.apellido,
+                segundoNombre: d.persona.segundoNombre ?? null,
+            apellidoPaterno: d.persona.apellidoPaterno,
+            apellidoMaterno: d.persona.apellidoMaterno ?? null,
                 correo: d.persona.correo,
                 telefono: d.persona.telefono ?? null,
               }
@@ -687,7 +715,10 @@ export class EscuelasService {
         ? {
             id: m.persona.id,
             nombre: m.persona.nombre,
-            apellido: m.persona.apellido,
+            segundoNombre: m.persona.segundoNombre ?? null,
+            apellidoPaterno: m.persona.apellidoPaterno,
+            apellidoMaterno: m.persona.apellidoMaterno ?? null,
+            apellido: [m.persona.apellidoPaterno, m.persona.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
             correo: m.persona.correo,
             telefono: m.persona.telefono,
           }
@@ -728,7 +759,10 @@ export class EscuelasService {
         ? {
             id: a.persona.id,
             nombre: a.persona.nombre,
-            apellido: a.persona.apellido,
+            segundoNombre: a.persona.segundoNombre ?? null,
+            apellidoPaterno: a.persona.apellidoPaterno,
+            apellidoMaterno: a.persona.apellidoMaterno ?? null,
+            apellido: [a.persona.apellidoPaterno, a.persona.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
             correo: a.persona.correo,
             telefono: a.persona.telefono,
           }
@@ -741,7 +775,10 @@ export class EscuelasService {
               ? {
                   id: a.padre.persona.id,
                   nombre: a.padre.persona.nombre,
-                  apellido: a.padre.persona.apellido,
+                  segundoNombre: a.padre.persona.segundoNombre ?? null,
+                  apellidoPaterno: a.padre.persona.apellidoPaterno,
+                  apellidoMaterno: a.padre.persona.apellidoMaterno ?? null,
+                  apellido: [a.padre.persona.apellidoPaterno, a.padre.persona.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
                   correo: a.padre.persona.correo,
                   telefono: a.padre.persona.telefono,
                 }
@@ -919,6 +956,218 @@ export class EscuelasService {
       description: `La escuela tiene ${libros.length} libro(s) asignado(s).`,
       total: libros.length,
       data: libros,
+    };
+  }
+
+  /**
+   * Listar libros asignados al alumno (Alternativa C: asignación explícita).
+   * El alumno solo ve libros que maestro/director le asignó, con su progreso.
+   */
+  async listarLibrosAsignadosAlAlumno(alumnoId: number) {
+    const asignaciones = await this.alumnoLibroRepository.find({
+      where: { alumnoId },
+      relations: ['libro', 'libro.materia', 'ultimoSegmento'],
+      order: { fechaAsignacion: 'DESC' },
+    });
+
+    const data = asignaciones.map((a) => ({
+      ...a.libro,
+      alumnoLibroId: a.id,
+      progreso: a.porcentaje,
+      ultimoSegmentoId: a.ultimoSegmentoId,
+      ultimaLectura: a.ultimaLectura,
+      fechaAsignacion: a.fechaAsignacion,
+    }));
+
+    return {
+      message: 'Libros asignados obtenidos correctamente.',
+      description: `Tienes ${data.length} libro(s) asignado(s).`,
+      total: data.length,
+      data,
+    };
+  }
+
+  /**
+   * Libros disponibles para asignar a un alumno (misma escuela, mismo grado, mismo grupo si aplica).
+   */
+  async listarLibrosDisponiblesParaAsignar(escuelaId: number, alumnoId: number) {
+    const alumno = await this.alumnoRepository.findOne({
+      where: { id: alumnoId },
+    });
+    if (!alumno) {
+      throw new NotFoundException(`No se encontró el alumno con ID ${alumnoId}`);
+    }
+    if (Number(alumno.escuelaId) !== Number(escuelaId)) {
+      throw new ForbiddenException('El alumno no pertenece a esta escuela.');
+    }
+
+    const asignaciones = await this.escuelaLibroRepository.find({
+      where: { escuelaId, activo: true },
+      relations: ['libro', 'libro.materia'],
+      order: { fechaInicio: 'DESC' },
+    });
+
+    // Filtrar: libro activo, mismo grado, grupo (si Escuela_Libro tiene grupo, debe coincidir; si null = todos)
+    const disponibles = asignaciones.filter((a) => {
+      if (!a.libro || a.libro.activo === false) return false;
+      if (Number(a.libro.grado) !== Number(alumno.grado)) return false;
+      if (a.grupo != null && a.grupo !== alumno.grupo) return false;
+      return true;
+    });
+
+    // Excluir ya asignados
+    const yaAsignados = await this.alumnoLibroRepository.find({
+      where: { alumnoId },
+      select: ['libroId'],
+    });
+    const idsAsignados = new Set(yaAsignados.map((x) => x.libroId));
+    const filtrados = disponibles.filter((a) => !idsAsignados.has(a.libroId));
+
+    const data = filtrados.map((a) => ({
+      id: a.libro?.id,
+      titulo: a.libro?.titulo,
+      codigo: a.libro?.codigo,
+      grado: a.libro?.grado,
+      materia: a.libro?.materia?.nombre ?? null,
+    }));
+
+    return {
+      message: 'Libros disponibles para asignar.',
+      description: `Libros de la escuela que coinciden con el grado${alumno.grupo ? ` y grupo ${alumno.grupo}` : ''} del alumno.`,
+      total: data.length,
+      data,
+    };
+  }
+
+  /**
+   * Asignar libro a alumno (maestro o director).
+   */
+  async asignarLibroAlAlumno(
+    escuelaId: number,
+    alumnoId: number,
+    libroId: number,
+    asignadoPorTipo: 'maestro' | 'director',
+    asignadoPorId: number,
+  ) {
+    const alumno = await this.alumnoRepository.findOne({
+      where: { id: alumnoId },
+    });
+    if (!alumno) {
+      throw new NotFoundException(`No se encontró el alumno con ID ${alumnoId}`);
+    }
+    if (Number(alumno.escuelaId) !== Number(escuelaId)) {
+      throw new ForbiddenException('El alumno no pertenece a esta escuela.');
+    }
+
+    const escuelaLibro = await this.escuelaLibroRepository.findOne({
+      where: { escuelaId, libroId, activo: true },
+      relations: ['libro'],
+    });
+    if (!escuelaLibro || !escuelaLibro.libro) {
+      throw new NotFoundException('El libro no está disponible en esta escuela.');
+    }
+    if (escuelaLibro.libro.activo === false) {
+      throw new BadRequestException('El libro está inactivo.');
+    }
+    if (Number(escuelaLibro.libro.grado) !== Number(alumno.grado)) {
+      throw new BadRequestException('El libro no corresponde al grado del alumno.');
+    }
+    if (escuelaLibro.grupo != null && escuelaLibro.grupo !== alumno.grupo) {
+      throw new BadRequestException('El libro no corresponde al grupo del alumno.');
+    }
+
+    const existente = await this.alumnoLibroRepository.findOne({
+      where: { alumnoId, libroId },
+    });
+    if (existente) {
+      throw new ConflictException('El alumno ya tiene asignado este libro.');
+    }
+
+    const asignacion = this.alumnoLibroRepository.create({
+      alumnoId,
+      libroId,
+      porcentaje: 0,
+      ultimoSegmentoId: null,
+      ultimaLectura: null,
+      fechaAsignacion: new Date(),
+      asignadoPorTipo,
+      asignadoPorId,
+    });
+    await this.alumnoLibroRepository.save(asignacion);
+
+    return {
+      message: 'Libro asignado correctamente al alumno.',
+      description: `El alumno puede ver el libro en "Mis libros".`,
+      data: {
+        alumnoLibroId: asignacion.id,
+        alumnoId,
+        libroId,
+        titulo: escuelaLibro.libro.titulo,
+      },
+    };
+  }
+
+  /**
+   * Verificar si un libro está asignado al alumno (Alternativa C).
+   */
+  async libroAsignadoAlAlumno(alumnoId: number, libroId: number): Promise<boolean> {
+    const existe = await this.alumnoLibroRepository.findOne({
+      where: { alumnoId, libroId },
+    });
+    return !!existe;
+  }
+
+  /**
+   * Desasignar libro de alumno.
+   */
+  async desasignarLibroAlAlumno(alumnoId: number, libroId: number) {
+    const asignacion = await this.alumnoLibroRepository.findOne({
+      where: { alumnoId, libroId },
+    });
+    if (!asignacion) {
+      throw new NotFoundException('No se encontró la asignación libro-alumno.');
+    }
+    await this.alumnoLibroRepository.remove(asignacion);
+    return {
+      message: 'Libro desasignado correctamente.',
+      description: 'El alumno ya no verá este libro en "Mis libros".',
+    };
+  }
+
+  /**
+   * Actualizar progreso de lectura del alumno en un libro.
+   */
+  async actualizarProgresoLibro(
+    alumnoId: number,
+    libroId: number,
+    dto: { porcentaje?: number; ultimoSegmentoId?: number },
+  ) {
+    let asignacion = await this.alumnoLibroRepository.findOne({
+      where: { alumnoId, libroId },
+      relations: ['libro'],
+    });
+    if (!asignacion) {
+      throw new NotFoundException('No tienes asignado este libro.');
+    }
+
+    if (dto.porcentaje !== undefined) {
+      asignacion.porcentaje = Math.max(0, Math.min(100, dto.porcentaje));
+    }
+    if (dto.ultimoSegmentoId !== undefined) {
+      asignacion.ultimoSegmentoId = dto.ultimoSegmentoId;
+    }
+    asignacion.ultimaLectura = new Date();
+    await this.alumnoLibroRepository.save(asignacion);
+
+    return {
+      message: 'Progreso actualizado correctamente.',
+      data: {
+        alumnoLibroId: asignacion.id,
+        libroId,
+        progreso: asignacion.porcentaje,
+        ultimoSegmentoId: asignacion.ultimoSegmentoId,
+        ultimaLectura: asignacion.ultimaLectura,
+      },
     };
   }
 }

@@ -43,6 +43,7 @@ import { AdminGuard } from '../auth/guards/admin.guard';
 import { AdminOrDirectorGuard } from '../auth/guards/admin-or-director.guard';
 import { AdminOrDirectorOrAlumnoGuard } from '../auth/guards/admin-or-director-or-alumno.guard';
 import { LibrosService } from './libros.service';
+import { EscuelasService } from '../escuelas/escuelas.service';
 import { CargarLibroDto } from './dto/cargar-libro.dto';
 import type { AuditContext } from './libros.service';
 import type { Request as ExpressRequest } from 'express';
@@ -61,7 +62,10 @@ const PDF_MAX_SIZE = 50 * 1024 * 1024; // 50 MB
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth('JWT-auth')
 export class LibrosController {
-  constructor(private readonly librosService: LibrosService) {}
+  constructor(
+    private readonly librosService: LibrosService,
+    private readonly escuelasService: EscuelasService,
+  ) {}
 
   /**
    * POST /libros/cargar
@@ -205,12 +209,13 @@ export class LibrosController {
 
   /**
    * GET /libros/:id
-   * Obtener libro con unidades y segmentos. Admin, director o alumno (solo libros de su escuela).
+   * Obtener libro con unidades y segmentos. Admin/director: cualquier libro de la escuela.
+   * Alumno: solo libros asignados explícitamente (Alternativa C).
    */
   @Get(':id')
   @UseGuards(AdminOrDirectorOrAlumnoGuard)
   @ApiTags('Admin, Director o Alumno')
-  @ApiOperation({ summary: 'Obtener libro por ID. Alumnos solo ven libros de su escuela.' })
+  @ApiOperation({ summary: 'Obtener libro por ID. Alumnos solo ven libros asignados.' })
   @ApiParam({ name: 'id', type: 'number' })
   @ApiResponse({ status: 200, description: 'Libro con unidades y segmentos.' })
   @ApiResponse({ status: 401, description: 'No autenticado.' })
@@ -218,16 +223,16 @@ export class LibrosController {
   @ApiResponse({ status: 404, description: 'Libro no encontrado.' })
   async obtenerPorId(
     @Param('id', ParseIntPipe) id: number,
-    @Request() req: { user?: { tipoPersona?: string; alumno?: { escuelaId: number } } },
+    @Request() req: { user?: { tipoPersona?: string; alumno?: { id: number; escuelaId: number } } },
   ) {
-    if (req.user?.tipoPersona === 'alumno' && req.user?.alumno?.escuelaId) {
-      const puede = await this.librosService.libroPerteneceAEscuela(
+    if (req.user?.tipoPersona === 'alumno' && req.user?.alumno?.id) {
+      const asignado = await this.escuelasService.libroAsignadoAlAlumno(
+        req.user.alumno.id,
         id,
-        req.user.alumno.escuelaId,
       );
-      if (!puede) {
+      if (!asignado) {
         throw new ForbiddenException(
-          'Este libro no está asignado a tu escuela.',
+          'Este libro no te ha sido asignado. Pide a tu maestro o director que te lo asigne.',
         );
       }
     }

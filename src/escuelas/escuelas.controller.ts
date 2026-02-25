@@ -23,13 +23,15 @@ import {
   Body,
   Param,
   ParseIntPipe,
+  Query,
+  Res,
   HttpCode,
   HttpStatus,
   UseGuards,
+  UseInterceptors,
   ForbiddenException,
   BadRequestException,
   Request,
-  Query,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -39,15 +41,23 @@ import {
   ApiParam,
   ApiBody,
   ApiQuery,
+  ApiConsumes,
 } from '@nestjs/swagger';
 import { EscuelasService } from './escuelas.service';
 import { CrearEscuelaDto } from './dto/crear-escuela.dto';
 import { ActualizarEscuelaDto } from './dto/actualizar-escuela.dto';
 import { AsignarLibroEscuelaDto } from './dto/asignar-libro-escuela.dto';
+import { AsignarLibroAlumnoDto } from './dto/asignar-libro-alumno.dto';
+import { ActualizarProgresoLibroDto } from './dto/actualizar-progreso-libro.dto';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { UploadedFile } from '@nestjs/common';
+import * as multer from 'multer';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Public } from '../auth/decorators/public.decorator';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { AdminOrDirectorGuard } from '../auth/guards/admin-or-director.guard';
 import { AlumnoGuard } from '../auth/guards/alumno.guard';
+import { CargaMasivaService } from '../personas/carga-masiva.service';
 import type { AuditContext } from './escuelas.service';
 import type { Request as ExpressRequest } from 'express';
 
@@ -61,8 +71,8 @@ function getAuditContext(req: ExpressRequest): AuditContext {
 
 type ReqUser = {
   tipoPersona?: string;
-  director?: { escuelaId: number };
-  alumno?: { escuelaId: number };
+  director?: { id: number; escuelaId: number };
+  alumno?: { id: number; escuelaId: number };
 };
 
 function directorSoloSuEscuela(user: ReqUser | undefined, escuelaId: number): void {
@@ -78,7 +88,10 @@ function directorSoloSuEscuela(user: ReqUser | undefined, escuelaId: number): vo
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth('JWT-auth')
 export class EscuelasController {
-  constructor(private readonly escuelasService: EscuelasService) {}
+  constructor(
+    private readonly escuelasService: EscuelasService,
+    private readonly cargaMasivaService: CargaMasivaService,
+  ) {}
 
   /**
    * POST /escuelas
@@ -112,6 +125,41 @@ export class EscuelasController {
   @ApiResponse({ status: 409, description: 'Escuela con nombre o clave duplicada' })
   async crear(@Body() crearEscuelaDto: CrearEscuelaDto, @Request() req: ExpressRequest) {
     return await this.escuelasService.crear(crearEscuelaDto, getAuditContext(req));
+  }
+
+  /**
+   * GET /escuelas/plantilla-carga-masiva
+   * Descarga Excel vacío con las columnas esperadas para carga masiva.
+   * Público para facilitar pruebas (sin datos sensibles).
+   */
+  @Get('plantilla-carga-masiva')
+  @Public()
+  @ApiTags('Público')
+  @ApiOperation({
+    summary: 'Descargar plantilla Excel para carga masiva',
+    description: 'Devuelve un Excel con columnas: nombre, apellidoPaterno, apellidoMaterno, email, password (opc), grado (opc), grupo (opc)',
+  })
+  @ApiResponse({ status: 200, description: 'Archivo Excel' })
+  async plantillaCargaMasiva(@Res() res: any) {
+    const buf = await this.cargaMasivaService.generarPlantillaCargaMasiva();
+    res.setHeader('Content-Disposition', 'attachment; filename="plantilla-carga-masiva.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buf);
+  }
+
+  /**
+   * GET /escuelas/lista
+   * Lista mínima (id, nombre) para dropdowns de registro. Requiere admin o director.
+   */
+  @Get('lista')
+  @UseGuards(AdminOrDirectorGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiTags('Admin o Director')
+  @ApiOperation({ summary: 'Lista de escuelas (para formularios, requiere auth)' })
+  @ApiResponse({ status: 200, description: 'Lista {id, nombre} de escuelas activas' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  async listarParaRegistro() {
+    return await this.escuelasService.listarParaRegistro();
   }
 
   /**
@@ -218,21 +266,129 @@ export class EscuelasController {
 
   /**
    * GET /escuelas/mis-libros
-   * Libros de la escuela del alumno autenticado.
+   * Libros asignados al alumno (Alternativa C: maestro/director asignan).
+   * Incluye progreso de lectura.
    */
   @Get('mis-libros')
   @UseGuards(AlumnoGuard)
   @ApiTags('Solo Alumno')
-  @ApiOperation({ summary: 'Libros de mi escuela (solo alumnos)' })
-  @ApiResponse({ status: 200, description: 'Libros asignados a la escuela del alumno.' })
+  @ApiOperation({ summary: 'Mis libros asignados (con progreso)' })
+  @ApiResponse({ status: 200, description: 'Libros que el maestro/director te asignó, con progreso.' })
   @ApiResponse({ status: 401, description: 'No autenticado.' })
   @ApiResponse({ status: 403, description: 'Solo alumnos.' })
   async misLibros(@Request() req: { user?: ReqUser }) {
-    const escuelaId = req.user?.alumno?.escuelaId;
-    if (!escuelaId) {
-      throw new ForbiddenException('No se encontró la escuela del alumno.');
+    const alumnoId = req.user?.alumno?.id;
+    if (!alumnoId) {
+      throw new ForbiddenException('No se encontró el alumno.');
     }
-    return await this.escuelasService.listarLibrosDeEscuela(escuelaId);
+    return await this.escuelasService.listarLibrosAsignadosAlAlumno(alumnoId);
+  }
+
+  /**
+   * PATCH /escuelas/mis-libros/:libroId/progreso
+   * Actualizar progreso de lectura en un libro asignado.
+   */
+  @Patch('mis-libros/:libroId/progreso')
+  @UseGuards(AlumnoGuard)
+  @ApiTags('Solo Alumno')
+  @ApiOperation({ summary: 'Actualizar progreso de lectura' })
+  @ApiParam({ name: 'libroId', type: 'number', description: 'ID del libro' })
+  @ApiResponse({ status: 200, description: 'Progreso actualizado.' })
+  @ApiResponse({ status: 401, description: 'No autenticado.' })
+  @ApiResponse({ status: 403, description: 'Solo alumnos.' })
+  @ApiResponse({ status: 404, description: 'Libro no asignado.' })
+  async actualizarProgresoLibro(
+    @Request() req: { user?: ReqUser },
+    @Param('libroId', ParseIntPipe) libroId: number,
+    @Body() dto: ActualizarProgresoLibroDto,
+  ) {
+    const alumnoId = req.user?.alumno?.id;
+    if (!alumnoId) {
+      throw new ForbiddenException('No se encontró el alumno.');
+    }
+    return await this.escuelasService.actualizarProgresoLibro(alumnoId, libroId, dto);
+  }
+
+  /**
+   * POST /escuelas/:id/carga-masiva
+   * Carga masiva de alumnos o maestros desde Excel. Admin: cualquier escuela. Director: solo su escuela.
+   */
+  @Post(':id/carga-masiva')
+  @UseGuards(AdminOrDirectorGuard)
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: multer.memoryStorage(),
+      limits: { fileSize: 5 * 1024 * 1024 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiTags('Admin o Director')
+  @ApiOperation({
+    summary: 'Carga masiva de usuarios desde Excel',
+    description:
+      'Sube un Excel con columnas: nombre, apellidoPaterno, apellidoMaterno, email, [password], [grado], [grupo]. Sin password se genera automática. Tipo: alumno o maestro.',
+  })
+  @ApiParam({ name: 'id', type: 'number', description: 'ID de la escuela' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file', 'tipo'],
+      properties: {
+        file: { type: 'string', format: 'binary', description: 'Archivo Excel (.xlsx)' },
+        tipo: { type: 'string', enum: ['alumno', 'maestro'], description: 'Tipo de usuarios a registrar' },
+      },
+    },
+  })
+  @ApiResponse({ status: 200, description: 'Resultado: creados, errores, credenciales.' })
+  @ApiResponse({ status: 400, description: 'Archivo inválido o tipo incorrecto.' })
+  @ApiResponse({ status: 401, description: 'No autenticado.' })
+  @ApiResponse({ status: 403, description: 'Solo admin o director de esa escuela.' })
+  async cargaMasiva(
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() file: { buffer: Buffer; mimetype?: string; originalname?: string },
+    @Body() body: { tipo?: string },
+    @Request() req: ExpressRequest & { user?: ReqUser },
+  ) {
+    directorSoloSuEscuela(req.user, id);
+    const tipo = body?.tipo ?? '';
+    if (!file?.buffer) {
+      throw new BadRequestException('Debes enviar un archivo Excel (campo "file").');
+    }
+    const tipoNorm = (tipo || 'alumno').toLowerCase();
+    if (tipoNorm !== 'alumno' && tipoNorm !== 'maestro') {
+      throw new BadRequestException('El tipo debe ser "alumno" o "maestro".');
+    }
+
+    const filas =
+      tipoNorm === 'alumno'
+        ? this.cargaMasivaService.parseExcelAlumnos(file.buffer)
+        : this.cargaMasivaService.parseExcelMaestros(file.buffer);
+
+    if (filas.length === 0) {
+      throw new BadRequestException(
+        'El Excel está vacío o no tiene el formato correcto. Obligatorias: nombre, email (o correo). Opcionales: apellidoPaterno, apellidoMaterno, password (si no se envía se genera automática).',
+      );
+    }
+
+    const resultado =
+      tipoNorm === 'alumno'
+        ? await this.cargaMasivaService.cargarAlumnos(id, filas, getAuditContext(req))
+        : await this.cargaMasivaService.cargarMaestros(id, filas, getAuditContext(req));
+
+    const excelBase64 =
+      resultado.credenciales.length > 0
+        ? (await this.cargaMasivaService.generarExcelCredenciales(resultado.credenciales)).toString('base64')
+        : null;
+
+    return {
+      message: `Carga masiva completada. Creados: ${resultado.credenciales.length}, errores: ${resultado.errores.length}`,
+      creados: resultado.credenciales.length,
+      totalErrores: resultado.errores.length,
+      credenciales: resultado.credenciales,
+      detalleErrores: resultado.errores,
+      excelBase64,
+    };
   }
 
   /**
