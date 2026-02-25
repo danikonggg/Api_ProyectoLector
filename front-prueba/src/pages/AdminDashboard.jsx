@@ -2,6 +2,94 @@ import { useState, useEffect, useRef } from 'react';
 import Layout from '../components/Layout';
 import { api, apiUpload, getBaseUrl, getToken } from '../api/api';
 
+function CargaMasivaAdmin({ escuela, setEscuela, setMsg, loadEscuelas }) {
+  const [tipo, setTipo] = useState('alumno');
+  const [file, setFile] = useState(null);
+  const [subiendo, setSubiendo] = useState(false);
+  const [resultado, setResultado] = useState(null);
+
+  const descargarPlantilla = async () => {
+    try {
+      const res = await fetch(`${getBaseUrl()}/escuelas/plantilla-carga-masiva`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      if (!res.ok) throw new Error('Error al descargar');
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'plantilla-carga-masiva.xlsx';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (e) {
+      setMsg({ type: 'error', text: e?.message || 'Error al descargar plantilla' });
+    }
+  };
+
+  const subir = async (e) => {
+    e.preventDefault();
+    if (!file) return;
+    setMsg(null);
+    setResultado(null);
+    setSubiendo(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('tipo', tipo);
+      const r = await apiUpload(`/escuelas/${escuela.id}/carga-masiva`, fd);
+      setResultado(r);
+      setMsg({ type: 'success', text: r?.message || `Creados: ${r?.creados ?? 0}, errores: ${r?.totalErrores ?? 0}` });
+      setFile(null);
+      loadEscuelas?.();
+    } catch (e) {
+      setMsg({ type: 'error', text: e?.data?.message || e?.message });
+    } finally {
+      setSubiendo(false);
+    }
+  };
+
+  const descargarCredenciales = () => {
+    if (!resultado?.excelBase64) return;
+    const a = document.createElement('a');
+    a.href = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${resultado.excelBase64}`;
+    a.download = 'credenciales.xlsx';
+    a.click();
+  };
+
+  return (
+    <section className="page-section detail-panel">
+      <div className="detail-panel__header">
+        <span className="detail-panel__title">Carga masiva — {escuela.nombre}</span>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setEscuela(null); setResultado(null); }}>Cerrar</button>
+      </div>
+      <p className="card-desc">Descarga la plantilla, complétala y sube el Excel.</p>
+      <div className="page-section__toolbar" style={{ marginBottom: '1rem' }}>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={descargarPlantilla}>Descargar plantilla Excel</button>
+      </div>
+      <form onSubmit={subir} className="form-grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)', maxWidth: 500 }}>
+        <label>
+          <span>Tipo</span>
+          <select value={tipo} onChange={(e) => setTipo(e.target.value)}>
+            <option value="alumno">Alumnos</option>
+            <option value="maestro">Maestros</option>
+          </select>
+        </label>
+        <label>
+          <span>Archivo Excel</span>
+          <input type="file" accept=".xlsx,.xls" onChange={(e) => setFile(e.target.files?.[0])} required disabled={subiendo} />
+        </label>
+        <button type="submit" className="btn btn-primary" disabled={subiendo || !file} style={{ gridColumn: '1 / -1' }}>
+          {subiendo ? 'Subiendo...' : 'Subir y crear'}
+        </button>
+      </form>
+      {resultado?.excelBase64 && (
+        <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: '0.75rem' }} onClick={descargarCredenciales}>
+          Descargar credenciales generadas
+        </button>
+      )}
+    </section>
+  );
+}
+
 export default function AdminDashboard() {
   const [view, setView] = useState(null);
   return (
@@ -162,6 +250,7 @@ function AdminEscuelas() {
   const [directoresEscuela, setDirectoresEscuela] = useState(null);
   const [todosDirectores, setTodosDirectores] = useState([]);
   const [loadingDirectores, setLoadingDirectores] = useState(false);
+  const [cargaMasivaEscuela, setCargaMasivaEscuela] = useState(null);
 
   const loadEscuelas = async () => {
     setLoading(true);
@@ -309,6 +398,7 @@ function AdminEscuelas() {
                     <td className="cell-actions">
                       <button type="button" className="btn btn-sm btn-primary" onClick={() => verLibros(e.id)}>Libros</button>
                       <button type="button" className="btn btn-sm btn-ghost" onClick={() => verDirectoresEscuela(e)}>Directores</button>
+                      <button type="button" className="btn btn-sm btn-ghost" onClick={() => setCargaMasivaEscuela(e)}>Carga masiva</button>
                     </td>
                   </tr>
                 ))}
@@ -394,6 +484,10 @@ function AdminEscuelas() {
           </div>
           <p className="card-desc"><strong>Activos:</strong> {librosEscuela.activos.length} · <strong>Pendientes de canjear:</strong> {librosEscuela.pendientes.length}</p>
         </section>
+      )}
+
+      {cargaMasivaEscuela && (
+        <CargaMasivaAdmin escuela={cargaMasivaEscuela} setEscuela={setCargaMasivaEscuela} setMsg={setMsg} loadEscuelas={loadEscuelas} />
       )}
     </>
   );

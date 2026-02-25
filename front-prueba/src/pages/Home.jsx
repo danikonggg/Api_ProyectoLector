@@ -14,31 +14,46 @@ export default function Home() {
   const [contenidoLibro, setContenidoLibro] = useState(null);
   const [progresoLectura, setProgresoLectura] = useState(0);
   const [unidadActiva, setUnidadActiva] = useState(null);
+  const [ultimoSegmentoId, setUltimoSegmentoId] = useState(null);
   const readerRef = useRef(null);
+  const saveProgresoTimeoutRef = useRef(null);
 
   const esAlumno = (user?.tipoPersona || '').toLowerCase() === 'alumno';
+  const esAdmin = (user?.tipoPersona || '').toLowerCase() === 'administrador';
 
   useEffect(() => {
     if (esAlumno) {
       api('GET', '/escuelas/mis-libros')
         .then((r) => setLibros(r?.data ?? []))
-        .catch((e) => setError(e?.message || 'No se pudieron cargar los libros'))
+        .catch((e) => setError(e?.data?.message || e?.message || 'No se pudieron cargar los libros'))
         .finally(() => setLoading(false));
     } else {
       setLoading(false);
     }
   }, [esAlumno]);
 
+  const guardarProgreso = useCallback(async (libroId, porcentaje, segId) => {
+    try {
+      await api('PATCH', `/escuelas/mis-libros/${libroId}/progreso`, {
+        porcentaje: Math.round(porcentaje),
+        ...(segId && { ultimoSegmentoId: segId }),
+      });
+    } catch (e) {
+      console.warn('No se pudo guardar progreso:', e?.message);
+    }
+  }, []);
+
   const abrirLibro = async (libro) => {
     setLibroAbierto(libro);
     setContenidoLibro(null);
-    setProgresoLectura(0);
+    setProgresoLectura(libro.progreso ?? 0);
     setUnidadActiva(null);
+    setUltimoSegmentoId(libro.ultimoSegmentoId ?? null);
     try {
       const r = await api('GET', `/libros/${libro.id}`);
       setContenidoLibro(r?.data);
     } catch (e) {
-      setError(e?.message || 'No se pudo cargar el libro');
+      setError(e?.data?.message || e?.message || 'No se pudo cargar el libro');
     }
   };
 
@@ -76,16 +91,26 @@ export default function Home() {
     const unidades = contenidoLibro.unidades;
     const unitElements = unidades.map((u) => document.getElementById(`unidad-${u.id}`)).filter(Boolean);
     const viewportMid = scrollTop + clientHeight * 0.3;
+    let segId = null;
 
     for (let i = unitElements.length - 1; i >= 0; i--) {
       const rect = unitElements[i].getBoundingClientRect();
       const elTop = rect.top + scrollTop - el.offsetTop;
       if (elTop <= viewportMid) {
         setUnidadActiva(unidades[i].id);
+        const segs = unidades[i].segmentos || [];
+        if (segs.length) segId = segs[segs.length - 1].id;
         break;
       }
     }
-  }, [contenidoLibro]);
+
+    if (libroAbierto?.id && esAlumno) {
+      if (saveProgresoTimeoutRef.current) clearTimeout(saveProgresoTimeoutRef.current);
+      saveProgresoTimeoutRef.current = setTimeout(() => {
+        guardarProgreso(libroAbierto.id, progress, segId);
+      }, 800);
+    }
+  }, [contenidoLibro, libroAbierto?.id, esAlumno, guardarProgreso]);
 
   useEffect(() => {
     const el = readerRef.current;
@@ -108,13 +133,19 @@ export default function Home() {
     );
   }
 
+  useEffect(() => {
+    return () => {
+      if (saveProgresoTimeoutRef.current) clearTimeout(saveProgresoTimeoutRef.current);
+    };
+  }, []);
+
   return (
     <div className="home-alumno">
       <header className="home-header">
         <div>
           <h1>Mi Biblioteca</h1>
           <p className="home-subtitle">
-            Hola, {user?.nombre}. Estos son los libros de tu escuela.
+            Hola, {user?.nombre}. {esAlumno ? 'Libros que tu maestro o director te asignó.' : 'Bienvenido.'}
           </p>
         </div>
         <button
@@ -149,8 +180,8 @@ export default function Home() {
       ) : libros.length === 0 ? (
         <div className="home-empty">
           <div className="book-stack-icon">📚</div>
-          <h3>Sin libros aún</h3>
-          <p>Tu escuela aún no tiene libros asignados. Pregunta a tu director.</p>
+          <h3>Sin libros asignados</h3>
+          <p>Pide a tu maestro o director que te asigne libros. Ellos eligen qué libros puedes leer.</p>
         </div>
       ) : (
         <div className="book-shelf">
@@ -171,6 +202,9 @@ export default function Home() {
                     {libro.descripcion && (
                       <p className="book-desc">{libro.descripcion}</p>
                     )}
+                    {esAlumno && libro.progreso != null && libro.progreso > 0 && (
+                      <span className="book-progress-badge">{libro.progreso}% leído</span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -188,12 +222,14 @@ export default function Home() {
             <div className="book-modal-header">
               <h2>{libroAbierto.titulo}</h2>
               <div className="book-modal-actions">
-                <button
-                  className="btn btn-sm btn-primary"
-                  onClick={() => descargarPdf(libroAbierto.id)}
-                >
-                  📥 Descargar PDF
-                </button>
+                {esAdmin && (
+                  <button
+                    className="btn btn-sm btn-primary"
+                    onClick={() => descargarPdf(libroAbierto.id)}
+                  >
+                    📥 Descargar PDF
+                  </button>
+                )}
                 <button
                   className="btn btn-ghost btn-sm"
                   onClick={() => setLibroAbierto(null)}

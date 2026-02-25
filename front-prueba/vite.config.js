@@ -11,6 +11,8 @@ export default defineConfig({
       '/escuelas': { target: 'http://localhost:3000', changeOrigin: true },
       '/libros': { target: 'http://localhost:3000', changeOrigin: true },
       '/maestros': { target: 'http://localhost:3000', changeOrigin: true },
+      '/director': { target: 'http://localhost:3000', changeOrigin: true },
+      '/admin': { target: 'http://localhost:3000', changeOrigin: true },
       '/audit': { target: 'http://localhost:3000', changeOrigin: true },
     },
   },

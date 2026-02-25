@@ -185,6 +185,16 @@
   z-index: 1;
 }
 
+.book-progress-badge {
+  display: inline-block;
+  margin-top: 0.5rem;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.7rem;
+  background: rgba(16, 185, 129, 0.2);
+  color: var(--accent);
+  border-radius: 4px;
+}
+
 .book-grade {
   display: inline-block;
   font-size: 0.65rem;
