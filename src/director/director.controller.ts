@@ -1,15 +1,19 @@
-import { Controller, Get, Post, Delete, Body, Param, ParseIntPipe, Query, UseGuards, Request, ForbiddenException, BadRequestException, HttpCode, HttpStatus, UseInterceptors } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
+import { Controller, Get, Post, Patch, Delete, Body, Param, ParseIntPipe, Query, UseGuards, Request, ForbiddenException, BadRequestException, HttpCode, HttpStatus, UseInterceptors } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiConsumes, ApiBody, ApiParam } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { DirectorGuard } from '../auth/guards/director.guard';
 import { DirectorService } from './director.service';
 import { EscuelasService } from '../escuelas/escuelas.service';
-import { AsignarLibroEscuelaDto } from '../escuelas/dto/asignar-libro-escuela.dto';
 import { AsignarLibroAlumnoDto } from '../escuelas/dto/asignar-libro-alumno.dto';
+import { CrearGrupoDto } from './dto/crear-grupo.dto';
+import { ActualizarGrupoDto } from './dto/actualizar-grupo.dto';
+import { ActualizarAlumnoGrupoDto } from './dto/actualizar-alumno-grupo.dto';
+import { AsignarGrupoMaestroDto } from './dto/asignar-grupo-maestro.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UploadedFile } from '@nestjs/common';
 import * as multer from 'multer';
 import { CargaMasivaService } from '../personas/carga-masiva.service';
+import { getAuditContext } from '../common/utils/audit.utils';
 import type { Request as ExpressRequest } from 'express';
 
 function getEscuelaId(req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } }): number {
@@ -18,14 +22,6 @@ function getEscuelaId(req: ExpressRequest & { user?: { director?: { escuelaId?: 
     throw new ForbiddenException('No se encontró la escuela del director');
   }
   return Number(escuelaId);
-}
-
-function getAuditContext(req: ExpressRequest) {
-  const ip = req.ip ?? (Array.isArray(req.headers?.['x-forwarded-for']) ? req.headers['x-forwarded-for'][0] : req.headers?.['x-forwarded-for']) ?? req.headers?.['x-real-ip'];
-  return {
-    usuarioId: (req.user as any)?.id ?? null,
-    ip: typeof ip === 'string' ? ip : undefined,
-  };
 }
 
 @Controller('director')
@@ -99,6 +95,185 @@ export class DirectorController {
   }
 
   /**
+   * PATCH /director/alumnos/:id
+   * Cambiar el grupo de un alumno. Solo director, alumno de su escuela.
+   */
+  @Patch('alumnos/:id')
+  @ApiTags('Solo Director')
+  @ApiOperation({
+    summary: 'Cambiar grupo de alumno',
+    description: 'Asigna o cambia el grupo de un alumno. Body: { grupoId } (número) o { grupoId: null } para quitar del grupo.',
+  })
+  @ApiParam({ name: 'id', description: 'ID del alumno' })
+  @ApiBody({ type: ActualizarAlumnoGrupoDto, examples: { asignar: { value: { grupoId: 2 } }, quitar: { value: { grupoId: null } } } })
+  @ApiResponse({ status: 200, description: 'Grupo del alumno actualizado' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'No autorizado' })
+  @ApiResponse({ status: 404, description: 'Alumno o grupo no encontrado' })
+  async actualizarGrupoAlumno(
+    @Param('id', ParseIntPipe) alumnoId: number,
+    @Body() dto: ActualizarAlumnoGrupoDto,
+    @Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } },
+  ) {
+    const escuelaId = getEscuelaId(req);
+    return await this.directorService.actualizarGrupoDeAlumno(escuelaId, alumnoId, dto, getAuditContext(req));
+  }
+
+  /**
+   * GET /director/grupos
+   * Grupos de mi escuela. Solo el director puede crear/gestionar grupos.
+   */
+  @Get('grupos')
+  @ApiTags('Solo Director')
+  @ApiOperation({
+    summary: 'Listar grupos de mi escuela',
+    description: 'Grupos creados por el director para su escuela (ej. 1A, 2B).',
+  })
+  @ApiResponse({ status: 200, description: 'Lista de grupos' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'Solo directores' })
+  async getGrupos(@Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } }) {
+    const escuelaId = getEscuelaId(req);
+    return await this.directorService.listarGrupos(escuelaId);
+  }
+
+  /**
+   * POST /director/grupos
+   * Crear grupo en mi escuela.
+   */
+  @Post('grupos')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiTags('Solo Director')
+  @ApiOperation({ summary: 'Crear grupo en mi escuela' })
+  @ApiResponse({ status: 201, description: 'Grupo creado' })
+  @ApiResponse({ status: 400, description: 'Datos inválidos' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'Solo directores' })
+  @ApiResponse({ status: 409, description: 'Ya existe un grupo con ese grado y nombre' })
+  async crearGrupo(
+    @Body() dto: CrearGrupoDto,
+    @Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } },
+  ) {
+    const escuelaId = getEscuelaId(req);
+    return await this.directorService.crearGrupo(escuelaId, dto, getAuditContext(req));
+  }
+
+  /**
+   * PATCH /director/grupos/:id
+   * Actualizar grupo de mi escuela. Incluye asignación de maestros con maestroIds.
+   */
+  @Patch('grupos/:id')
+  @ApiTags('Solo Director')
+  @ApiOperation({
+    summary: 'Actualizar grupo',
+    description: 'Actualiza grado, nombre, activo. Opcional: maestroIds para asignar maestros al grupo (reemplaza la lista actual).',
+  })
+  @ApiBody({
+    type: ActualizarGrupoDto,
+    description: 'Campos opcionales. maestroIds: array de IDs de maestros a asignar.',
+    examples: {
+      soloNombre: { summary: 'Solo cambiar nombre', value: { nombre: 'A1' } },
+      asignarMaestros: { summary: 'Asignar maestros', value: { maestroIds: [5, 7] } },
+      todo: { summary: 'Todo', value: { grado: 1, nombre: 'A', activo: true, maestroIds: [5] } },
+    },
+  })
+  @ApiResponse({ status: 200, description: 'Grupo actualizado (incluye maestros)' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'No autorizado o grupo de otra escuela' })
+  @ApiResponse({ status: 404, description: 'Grupo no encontrado' })
+  @ApiResponse({ status: 409, description: 'Conflicto: ya existe grupo con grado/nombre' })
+  async actualizarGrupo(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ActualizarGrupoDto,
+    @Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } },
+  ) {
+    const escuelaId = getEscuelaId(req);
+    return await this.directorService.actualizarGrupo(escuelaId, id, dto, getAuditContext(req));
+  }
+
+  /**
+   * DELETE /director/grupos/:id
+   * Eliminar grupo de mi escuela.
+   */
+  @Delete('grupos/:id')
+  @HttpCode(HttpStatus.OK)
+  @ApiTags('Solo Director')
+  @ApiOperation({ summary: 'Eliminar grupo' })
+  @ApiResponse({ status: 200, description: 'Grupo eliminado' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'No autorizado o grupo de otra escuela' })
+  @ApiResponse({ status: 404, description: 'Grupo no encontrado' })
+  async eliminarGrupo(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } },
+  ) {
+    const escuelaId = getEscuelaId(req);
+    return await this.directorService.eliminarGrupo(escuelaId, id, getAuditContext(req));
+  }
+
+  /**
+   * GET /director/maestros/:maestroId/grupos
+   * Grupos asignados a un maestro.
+   */
+  @Get('maestros/:maestroId/grupos')
+  @ApiTags('Solo Director')
+  @ApiOperation({ summary: 'Grupos asignados a un maestro' })
+  @ApiResponse({ status: 200, description: 'Lista de grupos del maestro' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'Solo directores' })
+  @ApiResponse({ status: 404, description: 'Maestro no encontrado' })
+  async getGruposDeMaestro(
+    @Param('maestroId', ParseIntPipe) maestroId: number,
+    @Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } },
+  ) {
+    const escuelaId = getEscuelaId(req);
+    return await this.directorService.listarGruposDeMaestro(escuelaId, maestroId);
+  }
+
+  /**
+   * POST /director/maestros/asignar-grupo
+   * Asignar un grupo a un maestro.
+   */
+  @Post('maestros/asignar-grupo')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiTags('Solo Director')
+  @ApiOperation({ summary: 'Asignar grupo a maestro' })
+  @ApiResponse({ status: 201, description: 'Grupo asignado al maestro' })
+  @ApiResponse({ status: 400, description: 'Datos inválidos' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'Solo directores' })
+  @ApiResponse({ status: 404, description: 'Maestro o grupo no encontrado' })
+  @ApiResponse({ status: 409, description: 'El maestro ya tiene asignado este grupo' })
+  async asignarGrupoAMaestro(
+    @Body() dto: AsignarGrupoMaestroDto,
+    @Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } },
+  ) {
+    const escuelaId = getEscuelaId(req);
+    return await this.directorService.asignarGrupoAMaestro(escuelaId, dto.maestroId, dto.grupoId, getAuditContext(req));
+  }
+
+  /**
+   * DELETE /director/maestros/desasignar-grupo/:maestroId/:grupoId
+   * Desasignar un grupo de un maestro.
+   */
+  @Delete('maestros/desasignar-grupo/:maestroId/:grupoId')
+  @HttpCode(HttpStatus.OK)
+  @ApiTags('Solo Director')
+  @ApiOperation({ summary: 'Desasignar grupo de maestro' })
+  @ApiResponse({ status: 200, description: 'Grupo desasignado' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'Solo directores' })
+  @ApiResponse({ status: 404, description: 'Maestro o asignación no encontrada' })
+  async desasignarGrupoDeMaestro(
+    @Param('maestroId', ParseIntPipe) maestroId: number,
+    @Param('grupoId', ParseIntPipe) grupoId: number,
+    @Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } },
+  ) {
+    const escuelaId = getEscuelaId(req);
+    return await this.directorService.desasignarGrupoDeMaestro(escuelaId, maestroId, grupoId, getAuditContext(req));
+  }
+
+  /**
    * GET /director/directores
    * Directores de mi escuela. El ID de escuela se obtiene del token.
    */
@@ -129,47 +304,6 @@ export class DirectorController {
   async getLibros(@Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } }) {
     const escuelaId = getEscuelaId(req);
     return await this.escuelasService.listarLibrosDeEscuela(escuelaId);
-  }
-
-  /**
-   * GET /director/libros/pendientes
-   * Libros otorgados por admin pendientes de canjear (sin enviar ID de escuela).
-   */
-  @Get('libros/pendientes')
-  @ApiTags('Solo Director')
-  @ApiOperation({
-    summary: 'Libros pendientes de canjear en mi escuela',
-    description: 'Sin parámetros. La escuela se toma del token. No se envía ID de escuela.',
-  })
-  @ApiResponse({ status: 200, description: 'Pendientes de canjear' })
-  @ApiResponse({ status: 401, description: 'No autenticado' })
-  @ApiResponse({ status: 403, description: 'Solo directores' })
-  async getLibrosPendientes(@Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } }) {
-    const escuelaId = getEscuelaId(req);
-    return await this.escuelasService.listarLibrosPendientesDeEscuela(escuelaId, true);
-  }
-
-  /**
-   * POST /director/canjear-libro
-   * Canjear libro con el código que dio el admin. No se envía ID de escuela (se usa la del director).
-   */
-  @Post('canjear-libro')
-  @HttpCode(HttpStatus.CREATED)
-  @ApiTags('Solo Director')
-  @ApiOperation({
-    summary: 'Canjear libro en mi escuela (solo código)',
-    description: 'Body: { "codigo": "..." }. No se envía ID de escuela; se usa la del director (token).',
-  })
-  @ApiResponse({ status: 201, description: 'Libro canjeado' })
-  @ApiResponse({ status: 400, description: 'Código inválido o no otorgado a tu escuela' })
-  @ApiResponse({ status: 401, description: 'No autenticado' })
-  @ApiResponse({ status: 403, description: 'Solo directores' })
-  async canjearLibro(
-    @Body() body: AsignarLibroEscuelaDto,
-    @Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } },
-  ) {
-    const escuelaId = getEscuelaId(req);
-    return await this.escuelasService.canjearLibroPorCodigo(escuelaId, body.codigo, getAuditContext(req));
   }
 
   /**
@@ -294,6 +428,7 @@ export class DirectorController {
       dto.libroId,
       'director',
       directorId,
+      getAuditContext(req),
     );
   }
 
@@ -312,7 +447,12 @@ export class DirectorController {
   async desasignarLibro(
     @Param('alumnoId', ParseIntPipe) alumnoId: number,
     @Param('libroId', ParseIntPipe) libroId: number,
+    @Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } },
   ) {
-    return await this.escuelasService.desasignarLibroAlAlumno(alumnoId, libroId);
+    const escuelaId = getEscuelaId(req);
+    return await this.escuelasService.desasignarLibroAlAlumno(alumnoId, libroId, {
+      escuelaIdRestriccion: escuelaId,
+      auditContext: getAuditContext(req),
+    });
   }
 }

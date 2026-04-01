@@ -14,8 +14,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Persona } from './entities/persona.entity';
 import { Alumno } from './entities/alumno.entity';
+import { AlumnoVinculacionPadre } from './entities/alumno-vinculacion-padre.entity';
 import { Maestro } from './entities/maestro.entity';
 import { Escuela } from './entities/escuela.entity';
+import { Grupo } from '../escuelas/entities/grupo.entity';
 import { AuditService } from '../audit/audit.service';
 import type { AuditContext } from './personas.service';
 
@@ -69,6 +71,12 @@ function normalizarHeader(h: string): string {
     .replace(/ú/g, 'u');
 }
 
+/** Normaliza nombre de grupo para comparación (trim + mayúsculas) */
+function normalizarGrupo(s: string | undefined | null): string {
+  if (s == null || typeof s !== 'string') return '';
+  return s.trim().toUpperCase();
+}
+
 /** Busca índice de columna probando varios alias (ej: email/correo) */
 function buscarColumna(headers: string[], nombres: string[]): number {
   for (const n of nombres) {
@@ -82,14 +90,18 @@ function buscarColumna(headers: string[], nombres: string[]): number {
 export class CargaMasivaService {
   private readonly logger = new Logger(CargaMasivaService.name);
 
+  /** Tipo para filas de Excel (celdas pueden ser string, number, Date, null, undefined) */
+  private static readonly EXCEL_ROW = [] as (string | number | Date | null | undefined)[];
+
   /** Detecta la fila de encabezados (por si hay título/instrucciones arriba en la plantilla) */
   private detectarFilaEncabezados(
-    rows: any[][],
+    rows: (typeof CargaMasivaService.EXCEL_ROW)[],
     columnasRequeridas: string[],
   ): { headerRowIndex: number; headers: string[] } {
+    type ExcelRow = (string | number | Date | null | undefined)[];
     for (let r = 0; r < Math.min(5, rows.length); r++) {
-      const row = rows[r] as any[];
-      const headers = (row || []).map((h: any) => normalizarHeader(String(h ?? '')));
+      const row = (rows[r] ?? []) as ExcelRow;
+      const headers = row.map((h) => normalizarHeader(String(h ?? '')));
       const tieneNombre = headers.some((h) => h === 'nombre');
       const tieneEmailOCorreo = headers.some((h) => h === 'email' || h === 'correo');
       if (tieneNombre && tieneEmailOCorreo) {
@@ -104,10 +116,14 @@ export class CargaMasivaService {
     private readonly personaRepository: Repository<Persona>,
     @InjectRepository(Alumno)
     private readonly alumnoRepository: Repository<Alumno>,
+    @InjectRepository(AlumnoVinculacionPadre)
+    private readonly alumnoVinculacionPadreRepository: Repository<AlumnoVinculacionPadre>,
     @InjectRepository(Maestro)
     private readonly maestroRepository: Repository<Maestro>,
     @InjectRepository(Escuela)
     private readonly escuelaRepository: Repository<Escuela>,
+    @InjectRepository(Grupo)
+    private readonly grupoRepository: Repository<Grupo>,
     private readonly auditService: AuditService,
   ) {}
 
@@ -138,9 +154,10 @@ export class CargaMasivaService {
       if (idx >= 0) map[k] = idx;
     });
 
+    type ExcelRow = (string | number | Date | null | undefined)[];
     const result: FilaAlumno[] = [];
     for (let i = headerRowIndex + 1; i < rows.length; i++) {
-      const row = rows[i] as any[];
+      const row = (rows[i] ?? []) as ExcelRow;
       const nombre = map['nombre'] >= 0 ? String(row[map['nombre']] ?? '').trim() : '';
       const email = map['email'] >= 0 ? String(row[map['email']] ?? '').trim().toLowerCase() : '';
       if (!nombre || !email) continue;
@@ -193,9 +210,10 @@ export class CargaMasivaService {
       if (idx >= 0) map[k] = idx;
     });
 
+    type ExcelRow = (string | number | Date | null | undefined)[];
     const result: FilaMaestro[] = [];
     for (let i = headerRowIndex + 1; i < rows.length; i++) {
-      const row = rows[i] as any[];
+      const row = (rows[i] ?? []) as ExcelRow;
       const nombre = map['nombre'] >= 0 ? String(row[map['nombre']] ?? '').trim() : '';
       const email = map['email'] >= 0 ? String(row[map['email']] ?? '').trim().toLowerCase() : '';
       if (!nombre || !email) continue;
@@ -253,6 +271,32 @@ export class CargaMasivaService {
         continue;
       }
 
+      let grupoId: number | null = null;
+      let gradoFinal = f.grado ?? 1;
+      let grupoNombre: string | null = null;
+
+      if (f.grado != null && f.grupo != null && normalizarGrupo(f.grupo) !== '') {
+        const grupoNorm = normalizarGrupo(f.grupo);
+        const gruposDelGrado = await this.grupoRepository.find({
+          where: { escuelaId, grado: f.grado, activo: true },
+        });
+        const grupoMatch = gruposDelGrado.find((g) => normalizarGrupo(g.nombre) === grupoNorm);
+        if (!grupoMatch) {
+          errores.push({
+            fila: filaNum,
+            email,
+            mensaje: `No existe un grupo con grado ${f.grado} y nombre "${f.grupo}" en esta escuela. El director debe crearlo primero.`,
+          });
+          continue;
+        }
+        grupoId = grupoMatch.id;
+        gradoFinal = Number(grupoMatch.grado);
+        grupoNombre = grupoMatch.nombre;
+      } else if (f.grado != null) {
+        gradoFinal = f.grado;
+        grupoNombre = f.grupo?.trim() || null;
+      }
+
       try {
         const hashed = await bcrypt.hash(password, 10);
         const persona = this.personaRepository.create({
@@ -269,12 +313,16 @@ export class CargaMasivaService {
         const alumno = this.alumnoRepository.create({
           personaId: personaGuardada.id,
           escuelaId,
-          grado: f.grado ?? 1,
-          grupo: f.grupo ?? null,
+          grado: gradoFinal,
+          grupo: grupoNombre,
+          grupoId,
           cicloEscolar: f.cicloEscolar ?? null,
           padreId: null,
         });
-        await this.alumnoRepository.save(alumno);
+        const alumnoGuardado = await this.alumnoRepository.save(alumno);
+
+        // Crear código de vinculación padre–alumno (una vez por alumno creado en carga masiva)
+        await this.crearCodigoVinculacionParaAlumno(alumnoGuardado.id);
 
         credenciales.push({
           nombre: f.nombre,
@@ -297,6 +345,45 @@ export class CargaMasivaService {
     }
 
     return { creados, errores, credenciales };
+  }
+
+  /**
+   * Crea un código de vinculación para un alumno (fuera de transacción).
+   */
+  private async crearCodigoVinculacionParaAlumno(alumnoId: number): Promise<AlumnoVinculacionPadre> {
+    const codigo = this.generarCodigoVinculacion();
+    const ahora = new Date();
+    const expiraEn = new Date(ahora.getTime() + 100 * 24 * 60 * 60 * 1000); // 100 días
+
+    const entidad = this.alumnoVinculacionPadreRepository.create({
+      alumnoId,
+      codigo,
+      usado: false,
+      usadoEn: null,
+      expiraEn,
+    });
+
+    try {
+      return await this.alumnoVinculacionPadreRepository.save(entidad);
+    } catch (e) {
+      const entidadRetry = this.alumnoVinculacionPadreRepository.create({
+        alumnoId,
+        codigo: this.generarCodigoVinculacion(),
+        usado: false,
+        usadoEn: null,
+        expiraEn,
+      });
+      return await this.alumnoVinculacionPadreRepository.save(entidadRetry);
+    }
+  }
+
+  /**
+   * Genera un código aleatorio, no predecible, para vinculación padre–alumno.
+   */
+  private generarCodigoVinculacion(): string {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { randomBytes } = require('crypto') as typeof import('crypto');
+    return randomBytes(16).toString('hex');
   }
 
   /**
@@ -455,7 +542,7 @@ export class CargaMasivaService {
 
     ws.mergeCells('A2:H2');
     const infoCell = ws.getCell('A2');
-    infoCell.value = 'Complete las filas. Obligatorios: nombre, apellidoPaterno, apellidoMaterno, email. Password opcional (mín 6 caracteres). Grado, grupo y cicloEscolar opcionales.';
+    infoCell.value = 'Complete las filas. Obligatorios: nombre, apellidoPaterno, apellidoMaterno, email. Password opcional (mín 6 caracteres). Grado y grupo asignan al alumno a un grupo (ej. grado 1, grupo A = 1A). CicloEscolar opcional.';
     infoCell.font = { size: 9, italic: true, color: { argb: 'FF6B7280' } };
     infoCell.alignment = { wrapText: true, vertical: 'middle' };
     infoCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };

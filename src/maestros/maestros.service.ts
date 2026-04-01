@@ -13,11 +13,15 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, IsNull } from 'typeorm';
+import { AuditService } from '../audit/audit.service';
+import type { AuditContext } from '../common/utils/audit.utils';
 import { Alumno } from '../personas/entities/alumno.entity';
 import { Maestro } from '../personas/entities/maestro.entity';
 import { Materia } from '../personas/entities/materia.entity';
 import { AlumnoMaestro } from '../personas/entities/alumno-maestro.entity';
+import { MaestroGrupo } from '../escuelas/entities/maestro-grupo.entity';
 import { AsignarAlumnoDto } from './dto/asignar-alumno.dto';
+import { alumnoPerteneceAGrupos } from '../common/utils/grupo.utils';
 
 @Injectable()
 export class MaestrosService {
@@ -30,72 +34,98 @@ export class MaestrosService {
     private readonly materiaRepository: Repository<Materia>,
     @InjectRepository(AlumnoMaestro)
     private readonly alumnoMaestroRepository: Repository<AlumnoMaestro>,
+    @InjectRepository(MaestroGrupo)
+    private readonly maestroGrupoRepository: Repository<MaestroGrupo>,
+    private readonly auditService: AuditService,
   ) {}
 
   /**
-   * Listar alumnos asignados al maestro (vía Alumno_Maestro).
+   * Listar alumnos del maestro (por grupos asignados).
+   * Solo muestra alumnos cuyo (grado, grupo) coincide con los grupos del maestro.
    */
   async obtenerMisAlumnos(maestroId: number) {
-    const asignaciones = await this.alumnoMaestroRepository.find({
-      where: {
-        maestroId,
-        fechaFin: IsNull(),
-      },
-      relations: ['alumno', 'alumno.persona', 'alumno.escuela', 'materia'],
-      order: { fechaInicio: 'DESC' },
+    const maestro = await this.maestroRepository.findOne({
+      where: { id: maestroId },
+      relations: ['escuela'],
+    });
+    if (!maestro) throw new NotFoundException('Maestro no encontrado');
+
+    const escuelaId = Number(maestro.escuelaId);
+    const maestroGrupos = await this.maestroGrupoRepository.find({
+      where: { maestroId },
+      relations: ['grupo'],
     });
 
-    const alumnos = asignaciones.map((a) => ({
-      ...a.alumno,
-      persona: a.alumno.persona,
-      escuela: a.alumno.escuela,
-      materiaAsignada: a.materia,
-      fechaAsignacion: a.fechaInicio,
+    if (maestroGrupos.length === 0) {
+      return {
+        message: 'Alumnos obtenidos exitosamente',
+        description: 'No tienes grupos asignados. El director debe asignarte grupos.',
+        total: 0,
+        data: [],
+      };
+    }
+
+    const alumnos = await this.alumnoRepository.find({
+      where: { escuelaId, activo: true },
+      relations: ['persona', 'escuela'],
+    });
+    const filtrados = alumnos.filter((a) => alumnoPerteneceAGrupos(a, maestroGrupos));
+
+    const data = filtrados.map((a) => ({
+      ...a,
+      persona: a.persona,
+      escuela: a.escuela,
     }));
 
     return {
       message: 'Alumnos obtenidos exitosamente',
-      description: `Tienes ${alumnos.length} alumno(s) asignado(s)`,
-      total: alumnos.length,
-      data: alumnos,
+      description: `Tienes ${data.length} alumno(s) en tus grupos`,
+      total: data.length,
+      data,
     };
   }
 
   /**
-   * Obtener un alumno por ID. Solo si está asignado a este maestro.
+   * Obtener un alumno por ID. Solo si pertenece a uno de los grupos del maestro.
    */
   async obtenerAlumnoPorId(maestroId: number, alumnoId: number) {
-    const asignacion = await this.alumnoMaestroRepository.findOne({
-      where: {
-        maestroId,
-        alumnoId,
-        fechaFin: IsNull(),
-      },
-      relations: ['alumno', 'alumno.persona', 'alumno.escuela', 'materia'],
+    const maestro = await this.maestroRepository.findOne({
+      where: { id: maestroId },
     });
+    if (!maestro) throw new NotFoundException('Maestro no encontrado');
 
-    if (!asignacion) {
+    const alumno = await this.alumnoRepository.findOne({
+      where: { id: alumnoId, escuelaId: maestro.escuelaId, activo: true },
+      relations: ['persona', 'escuela'],
+    });
+    if (!alumno) {
+      throw new NotFoundException('Alumno no encontrado');
+    }
+
+    const maestroGrupos = await this.maestroGrupoRepository.find({
+      where: { maestroId },
+      relations: ['grupo'],
+    });
+    const pertenece = alumnoPerteneceAGrupos(alumno, maestroGrupos);
+
+    if (!pertenece) {
       throw new NotFoundException(
-        'Alumno no encontrado o no está asignado a tu clase',
+        'Alumno no encontrado o no pertenece a tus grupos',
       );
     }
 
-    const alumno = asignacion.alumno as any;
-    alumno.materiaAsignada = asignacion.materia;
-    alumno.fechaAsignacion = asignacion.fechaInicio;
-
     return {
       message: 'Alumno obtenido exitosamente',
-      description: 'El alumno está asignado a tu clase',
+      description: 'El alumno pertenece a uno de tus grupos',
       data: alumno,
     };
   }
 
   /**
    * Asignar un alumno a la clase del maestro (por materia).
-   * El alumno debe ser de la misma escuela que el maestro.
+   * El alumno debe ser de la misma escuela y pertenecer a uno de los grupos del maestro.
    */
-  async asignarAlumno(maestroId: number, dto: AsignarAlumnoDto) {
+  async asignarAlumno(maestroId: number, dto: AsignarAlumnoDto, auditContext?: AuditContext) {
     const maestro = await this.maestroRepository.findOne({
       where: { id: maestroId },
       relations: ['escuela'],
@@ -117,6 +147,21 @@ export class MaestrosService {
     if (Number(alumno.escuelaId) !== Number(maestro.escuelaId)) {
       throw new ForbiddenException(
         'Solo puedes asignar alumnos de tu misma escuela',
+      );
+    }
+
+    const maestroGrupos = await this.maestroGrupoRepository.find({
+      where: { maestroId },
+      relations: ['grupo'],
+    });
+    if (maestroGrupos.length === 0) {
+      throw new ForbiddenException(
+        'No tienes grupos asignados. El director debe asignarte grupos antes de poder asignar alumnos.',
+      );
+    }
+    if (!alumnoPerteneceAGrupos(alumno, maestroGrupos)) {
+      throw new ForbiddenException(
+        'Solo puedes asignar alumnos que pertenezcan a tus grupos',
       );
     }
 
@@ -153,6 +198,12 @@ export class MaestrosService {
 
     await this.alumnoMaestroRepository.save(asignacion);
 
+    await this.auditService.log('maestro_asignar_alumno', {
+      usuarioId: auditContext?.usuarioId ?? null,
+      ip: auditContext?.ip ?? null,
+      detalles: `maestroId=${maestroId} alumnoId=${dto.alumnoId} materiaId=${dto.materiaId}`,
+    });
+
     return {
       message: 'Alumno asignado exitosamente',
       description: `El alumno ${alumno.persona?.nombre} ha sido asignado a tu clase de ${materia.nombre}`,
@@ -166,9 +217,26 @@ export class MaestrosService {
   }
 
   /**
+   * Verifica si un alumno pertenece a alguno de los grupos del maestro.
+   */
+  async alumnoPerteneceAGruposDelMaestro(maestroId: number, alumnoId: number): Promise<boolean> {
+    const maestro = await this.maestroRepository.findOne({ where: { id: maestroId } });
+    if (!maestro) return false;
+    const alumno = await this.alumnoRepository.findOne({
+      where: { id: alumnoId, escuelaId: maestro.escuelaId },
+    });
+    if (!alumno) return false;
+    const maestroGrupos = await this.maestroGrupoRepository.find({
+      where: { maestroId },
+      relations: ['grupo'],
+    });
+    return alumnoPerteneceAGrupos(alumno, maestroGrupos);
+  }
+
+  /**
    * Desasignar un alumno de la clase (marcar fecha_fin).
    */
-  async desasignarAlumno(maestroId: number, alumnoId: number, materiaId: number) {
+  async desasignarAlumno(maestroId: number, alumnoId: number, materiaId: number, auditContext?: AuditContext) {
     const asignacion = await this.alumnoMaestroRepository.findOne({
       where: {
         maestroId,
@@ -186,6 +254,12 @@ export class MaestrosService {
 
     asignacion.fechaFin = new Date();
     await this.alumnoMaestroRepository.save(asignacion);
+
+    await this.auditService.log('maestro_desasignar_alumno', {
+      usuarioId: auditContext?.usuarioId ?? null,
+      ip: auditContext?.ip ?? null,
+      detalles: `maestroId=${maestroId} alumnoId=${alumnoId} materiaId=${materiaId}`,
+    });
 
     return {
       message: 'Alumno desasignado exitosamente',

@@ -9,7 +9,7 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import { PDF, SEGMENTOS, ORACION_REGEX } from './constants/pdf.constants';
+import { PDF, SEGMENTOS, ORACION_REGEX, TITULO_CAPITULO } from './constants/pdf.constants';
 import { limpiarTextoPdf } from './pdf-text-cleaner';
 
 export interface TextoExtraido {
@@ -23,6 +23,12 @@ export interface SegmentoDto {
   orden: number;
   numeroPagina: number | null;
   idExterno: string;
+}
+
+export interface UnidadConSegmentosDto {
+  nombre: string;
+  orden: number;
+  segmentos: SegmentoDto[];
 }
 
 @Injectable()
@@ -584,5 +590,70 @@ export class LibrosPdfService {
     const limpio = this.limpiarTexto(raw);
     const segmentos = this.dividirEnSegmentos(limpio, numPaginas);
     return { texto: limpio, numPaginas, segmentos };
+  }
+
+  /**
+   * Pipeline con detección de capítulos: divide el texto por TITULO_CAPITULO
+   * y crea una unidad por capítulo. Si no hay capítulos, una sola "Unidad 1".
+   */
+  async procesarPdfConUnidades(buffer: Buffer): Promise<{
+    texto: string;
+    numPaginas: number;
+    unidades: UnidadConSegmentosDto[];
+  }> {
+    const { texto: raw, numPaginas } = await this.extraerTexto(buffer);
+    const limpio = this.limpiarTexto(raw);
+    const bloques = this.dividirPorCapítulos(limpio);
+    const unidades: UnidadConSegmentosDto[] = [];
+    let ordenGlobalSegmentos = 0;
+
+    for (let i = 0; i < bloques.length; i++) {
+      const { titulo, contenido } = bloques[i]!;
+      const nombreUnidad = titulo ? titulo.slice(0, 150) : `Unidad ${i + 1}`;
+      const segmentos = this.dividirEnSegmentos(contenido, numPaginas);
+      for (const s of segmentos) {
+        s.orden = ++ordenGlobalSegmentos;
+      }
+      unidades.push({ nombre: nombreUnidad, orden: i + 1, segmentos });
+    }
+
+    return { texto: limpio, numPaginas, unidades };
+  }
+
+  /**
+   * Divide el texto en bloques por títulos de capítulo (TITULO_CAPITULO).
+   * El primer bloque puede no tener título (antes del primer capítulo).
+   */
+  private dividirPorCapítulos(texto: string): Array<{ titulo: string | null; contenido: string }> {
+    const lineas = texto.split(/\n/);
+    const bloques: Array<{ titulo: string | null; contenido: string }> = [];
+    let bloqueActual: string[] = [];
+    let tituloActual: string | null = null;
+
+    for (const linea of lineas) {
+      const trimmed = linea.trim();
+      if (TITULO_CAPITULO.test(trimmed) && trimmed.length <= 120) {
+        if (bloqueActual.length > 0) {
+          const contenido = bloqueActual.join('\n').trim();
+          if (contenido.length >= 20) {
+            bloques.push({ titulo: tituloActual, contenido });
+          }
+          bloqueActual = [];
+        }
+        tituloActual = trimmed;
+      } else if (trimmed) {
+        bloqueActual.push(linea);
+      }
+    }
+
+    if (bloqueActual.length > 0) {
+      const contenido = bloqueActual.join('\n').trim();
+      bloques.push({ titulo: tituloActual, contenido });
+    }
+
+    if (bloques.length === 0 && texto.trim().length > 0) {
+      return [{ titulo: null, contenido: texto.trim() }];
+    }
+    return bloques;
   }
 }

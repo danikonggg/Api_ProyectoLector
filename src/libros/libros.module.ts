@@ -2,7 +2,8 @@
  * ============================================
  * MÓDULO: LibrosModule
  * ============================================
- * Carga de libros (PDF → extracción → segmentos). Admin only.
+ * Carga de libros: PDF → extracción → segmentación con unidades → BD.
+ * Para procesamiento asíncrono con BullMQ, importar LibrosQueueModule.
  */
 
 import { Module } from '@nestjs/common';
@@ -10,8 +11,10 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { LibrosService } from './libros.service';
 import { LibrosController } from './libros.controller';
 import { LibrosPdfService } from './libros-pdf.service';
+import { LibrosPdfImagenesService } from './libros-pdf-imagenes.service';
 import { PdfStorageService } from './pdf-storage.service';
-import { PreguntasSegmentoService } from './preguntas-segmento.service';
+import { LibroProcesamientoService } from './libro-procesamiento.service';
+import { LibroUploadValidationService } from './libro-upload-validation.service';
 import { Libro } from './entities/libro.entity';
 import { Unidad } from './entities/unidad.entity';
 import { Segmento } from './entities/segmento.entity';
@@ -35,7 +38,14 @@ import { EscuelasModule } from '../escuelas/escuelas.module';
     ]),
   ],
   controllers: [LibrosController],
-  providers: [LibrosService, LibrosPdfService, PdfStorageService, PreguntasSegmentoService],
+  providers: [
+    LibrosService,
+    LibrosPdfService,
+    LibrosPdfImagenesService,
+    PdfStorageService,
+    LibroProcesamientoService,
+    LibroUploadValidationService,
+  ],
   exports: [LibrosService],
 })
 export class LibrosModule {}

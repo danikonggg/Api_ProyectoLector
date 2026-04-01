@@ -46,7 +46,6 @@ import {
 import { EscuelasService } from './escuelas.service';
 import { CrearEscuelaDto } from './dto/crear-escuela.dto';
 import { ActualizarEscuelaDto } from './dto/actualizar-escuela.dto';
-import { AsignarLibroEscuelaDto } from './dto/asignar-libro-escuela.dto';
 import { AsignarLibroAlumnoDto } from './dto/asignar-libro-alumno.dto';
 import { ActualizarProgresoLibroDto } from './dto/actualizar-progreso-libro.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -58,16 +57,8 @@ import { AdminGuard } from '../auth/guards/admin.guard';
 import { AdminOrDirectorGuard } from '../auth/guards/admin-or-director.guard';
 import { AlumnoGuard } from '../auth/guards/alumno.guard';
 import { CargaMasivaService } from '../personas/carga-masiva.service';
-import type { AuditContext } from './escuelas.service';
+import { getAuditContext } from '../common/utils/audit.utils';
 import type { Request as ExpressRequest } from 'express';
-
-function getAuditContext(req: ExpressRequest): AuditContext {
-  const ip = req.ip ?? (Array.isArray(req.headers?.['x-forwarded-for']) ? req.headers['x-forwarded-for'][0] : req.headers?.['x-forwarded-for']) ?? req.headers?.['x-real-ip'];
-  return {
-    usuarioId: (req.user as any)?.id ?? null,
-    ip: typeof ip === 'string' ? ip : undefined,
-  };
-}
 
 type ReqUser = {
   tipoPersona?: string;
@@ -392,57 +383,6 @@ export class EscuelasController {
   }
 
   /**
-   * GET /escuelas/:id/libros/pendientes
-   * Libros otorgados por admin, pendientes de canjear por la escuela.
-   */
-  @Get(':id/libros/pendientes')
-  @UseGuards(AdminGuard)
-  @ApiTags('Solo Administrador')
-  @ApiOperation({
-    summary: 'Libros pendientes de canjear (solo admin)',
-    description: 'Requiere id de escuela en la URL. **Directores:** usar GET /director/libros/pendientes (tag Director, sin id).',
-  })
-  @ApiParam({ name: 'id', type: 'number', description: 'ID de la escuela' })
-  @ApiResponse({ status: 200, description: 'Libros pendientes de canjear.' })
-  @ApiResponse({ status: 403, description: 'Solo administradores.' })
-  async listarLibrosPendientes(
-    @Param('id', ParseIntPipe) id: number,
-  ) {
-    return await this.escuelasService.listarLibrosPendientesDeEscuela(id, false);
-  }
-
-  /**
-   * POST /escuelas/:id/libros/canjear
-   * La escuela (director) canjea el código. Solo si el admin ya otorgó ese libro.
-   */
-  @Post(':id/libros/canjear')
-  @UseGuards(AdminGuard)
-  @HttpCode(HttpStatus.CREATED)
-  @ApiTags('Solo Administrador')
-  @ApiOperation({
-    summary: 'Canjear libro (Paso 2) — solo admin',
-    description: 'Requiere id de escuela en la URL. **Directores:** usar POST /director/canjear-libro (tag Director, sin id en la ruta).',
-  })
-  @ApiParam({ name: 'id', type: 'number', description: 'ID de la escuela' })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['codigo'],
-      properties: { codigo: { type: 'string', example: 'LIB-1735123456-abc12345' } },
-    },
-  })
-  @ApiResponse({ status: 201, description: 'Libro canjeado correctamente.' })
-  @ApiResponse({ status: 400, description: 'El admin no otorgó este libro a la escuela.' })
-  @ApiResponse({ status: 403, description: 'Solo administradores.' })
-  async canjearLibro(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() dto: AsignarLibroEscuelaDto,
-    @Request() req: ExpressRequest,
-  ) {
-    return await this.escuelasService.canjearLibroPorCodigo(id, dto.codigo, getAuditContext(req));
-  }
-
-  /**
    * GET /escuelas/:id/libros/asignaciones
    * Listar todas las asignaciones libro-escuela (activas e inactivas) para asignar/desasignar desde el front.
    */
@@ -553,6 +493,50 @@ export class EscuelasController {
   }
 
   /**
+   * GET /escuelas/alumnos/:alumnoId/libros
+   * Ver los libros asignados a un alumno concreto.
+   * - Admin: puede ver cualquier alumno.
+   * - Director: solo alumnos de su escuela.
+   */
+  @Get('alumnos/:alumnoId/libros')
+  @UseGuards(AdminOrDirectorGuard)
+  @ApiTags('Admin o Director')
+  @ApiOperation({
+    summary: 'Ver libros asignados a un alumno (admin o director de su escuela)',
+  })
+  @ApiParam({
+    name: 'alumnoId',
+    type: 'number',
+    description: 'ID del alumno',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Libros asignados al alumno con su progreso.',
+  })
+  @ApiResponse({ status: 401, description: 'No autenticado.' })
+  @ApiResponse({
+    status: 403,
+    description: 'Solo admin o director de la escuela del alumno.',
+  })
+  @ApiResponse({ status: 404, description: 'Alumno no encontrado.' })
+  async listarLibrosDeAlumno(
+    @Param('alumnoId', ParseIntPipe) alumnoId: number,
+    @Request() req: { user?: ReqUser },
+  ) {
+    const user = req.user;
+    if (user?.tipoPersona === 'director' && user?.director) {
+      const escuelaAlumno =
+        await this.escuelasService.obtenerEscuelaIdDeAlumno(alumnoId);
+      if (Number(escuelaAlumno) !== Number(user.director.escuelaId)) {
+        throw new ForbiddenException(
+          'Solo puedes ver los libros de alumnos de tu escuela.',
+        );
+      }
+    }
+    return this.escuelasService.listarLibrosAsignadosAlAlumno(alumnoId);
+  }
+
+  /**
    * GET /escuelas/:id/directores
    * Listar directores de la escuela. Admin: cualquier escuela. Director: solo su escuela.
    */
@@ -571,38 +555,6 @@ export class EscuelasController {
   ) {
     directorSoloSuEscuela(req.user, id);
     return await this.escuelasService.listarDirectoresDeEscuela(id);
-  }
-
-  /**
-   * POST /escuelas/:id/libros
-   * PASO 1 - Admin otorga libro a la escuela. Crea pendiente de canje.
-   * La escuela debe canjear el código para que el libro se active.
-   */
-  @Post(':id/libros')
-  @UseGuards(AdminGuard)
-  @HttpCode(HttpStatus.CREATED)
-  @ApiTags('Solo Administrador')
-  @ApiOperation({
-    summary: 'Otorgar libro a la escuela (Paso 1: admin otorga; la escuela debe canjear después)',
-  })
-  @ApiParam({ name: 'id', type: 'number', description: 'ID de la escuela' })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['codigo'],
-      properties: { codigo: { type: 'string', example: 'LIB-1735123456-abc12345' } },
-    },
-  })
-  @ApiResponse({ status: 201, description: 'Libro otorgado. La escuela debe canjear el código.' })
-  @ApiResponse({ status: 401, description: 'No autenticado.' })
-  @ApiResponse({ status: 403, description: 'Solo administradores.' })
-  @ApiResponse({ status: 404, description: 'Escuela o libro (código) no encontrado.' })
-  @ApiResponse({ status: 409, description: 'Libro ya otorgado o ya canjeado.' })
-  async otorgarLibro(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() dto: AsignarLibroEscuelaDto,
-  ) {
-    return await this.escuelasService.otorgarLibroPorCodigo(id, dto.codigo);
   }
 
   /**

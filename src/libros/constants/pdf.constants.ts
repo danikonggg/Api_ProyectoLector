@@ -18,6 +18,8 @@ export const PDF = {
   MIN_TEXT_LENGTH_ESCANEADO: 20,
   /** Máximo de páginas a parsear (0 = todas). Evitar docs gigantes. */
   MAX_PAGES: 0,
+  /** Límite absoluto de páginas (validación post-extracción). */
+  MAX_PAGINAS_VALIDACION: 500,
 } as const;
 
 export const SEGMENTOS = {
@@ -59,7 +61,7 @@ export const LINEA_INDICE = /^(.+?)\s*[.\s]{3,}\s*\d{1,5}\s*$/;
 
 /** Patrones de títulos de capítulo o sección principal (para marcar con ##). */
 export const TITULO_CAPITULO =
-  /^(Capítulo\s+\d+[.:]?\s*.+|Chapter\s+\d+[.:]?\s*.+|Cap\.\s*\d+[.:]?\s*.+|\d+\.\s+[A-ZÁÉÍÓÚÑ].+|[IVXLCDM]+\.\s+[A-ZÁÉÍÓÚÑa-záéíóú].+|Introducci[oó]n|Pr[oó]logo|Ep[ií]logo|Conclusi[oó]n|Anexos?|Bibliograf[ií]a|[IÍ]ndice|Prefacio|Agradecimientos|Parte\s+[IVXLCDMivxlcdm\d]+[.:]?\s*.+|Part\s+\d+[.:]?\s*.+)$/im;
+  /^(Capítulo\s+\d+[.:]?\s*.*|Chapter\s+\d+[.:]?\s*.*|Cap\.\s*\d+[.:]?\s*.*|Unidad\s+\d+[.:]?\s*.*|Unidad\s+[IVXLCDMivxlcdm]+[.:]?\s*.*|Tema\s+\d+[.:]?\s*.*|Lecci[oó]n\s+\d+[.:]?\s*.*|Bloque\s+\d+[.:]?\s*.*|Secci[oó]n\s+\d+[.:]?\s*.*|M[oó]dulo\s+\d+[.:]?\s*.*|\d+\.\s+[A-ZÁÉÍÓÚÑ].+|[IVXLCDM]+\.\s+[A-ZÁÉÍÓÚÑa-záéíóú].+|Introducci[oó]n|Pr[oó]logo|Ep[ií]logo|Conclusi[oó]n|Anexos?|Bibliograf[ií]a|[IÍ]ndice|Prefacio|Agradecimientos|Parte\s+[IVXLCDMivxlcdm\d]+[.:]?\s*.*|Part\s+\d+[.:]?\s*.*)$/im;
 
 /** Patrones de subtítulos/secciones (líneas cortas, sin punto final). */
 export const MAX_CHARS_SUBTITULO = 80;

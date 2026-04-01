@@ -15,23 +15,38 @@ import {
   ForbiddenException,
   Logger,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
+import { Repository, DataSource, IsNull, In } from 'typeorm';
 import { Escuela } from '../personas/entities/escuela.entity';
 import { Alumno } from '../personas/entities/alumno.entity';
 import { Maestro } from '../personas/entities/maestro.entity';
 import { Director } from '../personas/entities/director.entity';
 import { EscuelaLibro } from './entities/escuela-libro.entity';
-import { EscuelaLibroPendiente } from './entities/escuela-libro-pendiente.entity';
 import { Libro } from '../libros/entities/libro.entity';
+import { Segmento } from '../libros/entities/segmento.entity';
 import { AlumnoLibro } from './entities/alumno-libro.entity';
+import { MaestroGrupo } from './entities/maestro-grupo.entity';
+import { Anotacion } from './entities/anotacion.entity';
+import { AlumnoMaestro } from '../personas/entities/alumno-maestro.entity';
+import { alumnoPerteneceAGrupos, grupoCoincide } from '../common/utils/grupo.utils';
+import { LicenciasService } from '../licencias/licencias.service';
 import { CrearEscuelaDto } from './dto/crear-escuela.dto';
 import { ActualizarEscuelaDto } from './dto/actualizar-escuela.dto';
 import { AuditService } from '../audit/audit.service';
+import { CrearAnotacionDto } from './dto/crear-anotacion.dto';
 
 export interface AuditContext {
   usuarioId?: number | null;
   ip?: string | null;
+}
+
+export interface DesasignarLibroContext {
+  /** Director: solo permite si alumno.escuelaId === escuelaIdRestriccion */
+  escuelaIdRestriccion?: number;
+  /** Maestro: solo permite si alumno está en Alumno_Maestro O en grupos del maestro */
+  maestroId?: number;
+  /** Contexto para auditoría (usuarioId, ip) */
+  auditContext?: AuditContext;
 }
 
 @Injectable()
@@ -49,13 +64,20 @@ export class EscuelasService {
     private readonly directorRepository: Repository<Director>,
     @InjectRepository(EscuelaLibro)
     private readonly escuelaLibroRepository: Repository<EscuelaLibro>,
-    @InjectRepository(EscuelaLibroPendiente)
-    private readonly escuelaLibroPendienteRepository: Repository<EscuelaLibroPendiente>,
     @InjectRepository(Libro)
     private readonly libroRepository: Repository<Libro>,
     @InjectRepository(AlumnoLibro)
     private readonly alumnoLibroRepository: Repository<AlumnoLibro>,
+    @InjectRepository(Anotacion)
+    private readonly anotacionRepository: Repository<Anotacion>,
+    @InjectRepository(MaestroGrupo)
+    private readonly maestroGrupoRepository: Repository<MaestroGrupo>,
+    @InjectRepository(Segmento)
+    private readonly segmentoRepository: Repository<Segmento>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
     private readonly auditService: AuditService,
+    private readonly licenciasService: LicenciasService,
   ) {}
 
   /**
@@ -132,7 +154,7 @@ export class EscuelasService {
   }
 
   /**
-   * Obtener todas las escuelas. Listado simple, sin joins ni filtros.
+   * Obtener todas las escuelas con director(es), alumnos, profesores y grupos.
    */
   async obtenerTodas(page?: number, limit?: number) {
     const qb = this.escuelaRepository
@@ -146,20 +168,98 @@ export class EscuelasService {
     }
 
     const escuelas = await qb.getMany();
+    const escuelaIds = escuelas.map((e) => e.id);
 
-    this.logger.log(`Consulta de escuelas: ${escuelas.length} encontradas`);
+    if (escuelaIds.length === 0) {
+      const meta =
+        page != null && limit != null
+          ? { page, limit, total, totalPages: Math.ceil(total / limit) }
+          : undefined;
+      return {
+        message: 'Escuelas obtenidas exitosamente',
+        description: 'Se encontraron 0 escuela(s) en el sistema',
+        total,
+        ...(meta && { meta }),
+        data: [],
+      };
+    }
+
+    const [directores, conteoAlumnos, conteoMaestros, conteoGrupos] = await Promise.all([
+      this.directorRepository.find({
+        where: { escuelaId: In(escuelaIds), activo: true },
+        relations: ['persona'],
+      }),
+      this.alumnoRepository
+        .createQueryBuilder('a')
+        .select('a.escuela_id', 'escuelaId')
+        .addSelect('COUNT(*)', 'total')
+        .where('a.escuela_id IN (:...ids)', { ids: escuelaIds })
+        .andWhere('a.activo = true')
+        .groupBy('a.escuela_id')
+        .getRawMany(),
+      this.maestroRepository
+        .createQueryBuilder('m')
+        .select('m.escuela_id', 'escuelaId')
+        .addSelect('COUNT(*)', 'total')
+        .where('m.escuela_id IN (:...ids)', { ids: escuelaIds })
+        .groupBy('m.escuela_id')
+        .getRawMany(),
+      this.dataSource
+        .createQueryBuilder()
+        .select('a.escuela_id', 'escuelaId')
+        .addSelect('COUNT(DISTINCT (a.grado::text || \'-\' || COALESCE(a.grupo, \'\')))', 'total')
+        .from(Alumno, 'a')
+        .where('a.escuela_id IN (:...ids)', { ids: escuelaIds })
+        .andWhere('a.activo = true')
+        .groupBy('a.escuela_id')
+        .getRawMany(),
+    ]);
+
+    const mapDirectores = new Map<number, string[]>();
+    for (const d of directores) {
+      const list = mapDirectores.get(Number(d.escuelaId)) ?? [];
+      const nombreCompleto = [d.persona?.nombre, d.persona?.apellidoPaterno, d.persona?.apellidoMaterno].filter(Boolean).join(' ');
+      list.push(nombreCompleto || '—');
+      mapDirectores.set(Number(d.escuelaId), list);
+    }
+
+    const mapAlumnos = new Map<number, number>();
+    for (const r of conteoAlumnos) {
+      mapAlumnos.set(Number(r.escuelaId), Number(r.total));
+    }
+    const mapMaestros = new Map<number, number>();
+    for (const r of conteoMaestros) {
+      mapMaestros.set(Number(r.escuelaId), Number(r.total));
+    }
+    const mapGrupos = new Map<number, number>();
+    for (const r of conteoGrupos) {
+      mapGrupos.set(Number(r.escuelaId), Number(r.total));
+    }
+
+    const data = escuelas.map((e) => {
+      const id = Number(e.id);
+      return {
+        ...e,
+        directores: mapDirectores.get(id) ?? [],
+        alumnosRegistrados: mapAlumnos.get(id) ?? 0,
+        profesores: mapMaestros.get(id) ?? 0,
+        grupos: mapGrupos.get(id) ?? 0,
+      };
+    });
 
     const meta =
       page != null && limit != null
         ? { page, limit, total, totalPages: Math.ceil(total / limit) }
         : undefined;
 
+    this.logger.log(`Consulta de escuelas: ${escuelas.length} encontradas`);
+
     return {
       message: 'Escuelas obtenidas exitosamente',
       description: `Se encontraron ${escuelas.length} escuela(s) en el sistema`,
       total,
       ...(meta && { meta }),
-      data: escuelas,
+      data,
     };
   }
 
@@ -221,12 +321,11 @@ export class EscuelasService {
         ? {
             id: d.persona.id,
             nombre: d.persona.nombre,
-            segundoNombre: d.persona.segundoNombre ?? null,
             apellidoPaterno: d.persona.apellidoPaterno,
             apellidoMaterno: d.persona.apellidoMaterno ?? null,
-            apellido: [d.persona.apellidoPaterno, d.persona.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
             correo: d.persona.correo,
             telefono: d.persona.telefono,
+            genero: d.persona.genero ?? null,
           }
         : null,
     }));
@@ -384,202 +483,6 @@ export class EscuelasService {
   }
 
   /**
-   * PASO 1 - Admin otorga un libro a una escuela.
-   * Crea registro pendiente. El libro NO aparece en la escuela hasta que ella canjee.
-   */
-  async otorgarLibroPorCodigo(escuelaId: number, codigo: string) {
-    const escuela = await this.escuelaRepository.findOne({
-      where: { id: escuelaId },
-    });
-    if (!escuela) {
-      throw new NotFoundException(`No se encontró la escuela con ID ${escuelaId}`);
-    }
-
-    const libro = await this.libroRepository.findOne({
-      where: { codigo: codigo.trim() },
-    });
-    if (!libro) {
-      throw new NotFoundException(
-        `No se encontró ningún libro con código "${codigo}". Verifica el código en la lista de libros.`,
-      );
-    }
-    if (libro.activo === false) {
-      throw new BadRequestException(
-        `El libro "${libro.titulo}" está desactivado globalmente. Actívalo primero en la lista de libros.`,
-      );
-    }
-
-    // Ya canjeado = ya está en Escuela_Libro
-    const yaCanjeado = await this.escuelaLibroRepository.findOne({
-      where: { escuelaId, libroId: libro.id },
-    });
-    if (yaCanjeado) {
-      throw new ConflictException(
-        `El libro "${libro.titulo}" (${codigo}) ya está activo en esta escuela (ya fue canjeado).`,
-      );
-    }
-
-    // Ya otorgado pendiente de canje
-    const yaPendiente = await this.escuelaLibroPendienteRepository.findOne({
-      where: { escuelaId, libroId: libro.id },
-    });
-    if (yaPendiente) {
-      throw new ConflictException(
-        `El libro "${libro.titulo}" (${codigo}) ya fue otorgado a esta escuela. La escuela debe canjear el código.`,
-      );
-    }
-
-    const pendiente = this.escuelaLibroPendienteRepository.create({
-      escuelaId,
-      libroId: libro.id,
-    });
-    await this.escuelaLibroPendienteRepository.save(pendiente);
-
-    this.logger.log(
-      `Libro otorgado (pendiente de canje): "${libro.titulo}" (${codigo}) → escuela ID ${escuelaId}`,
-    );
-
-    return {
-      message: 'Libro otorgado a la escuela correctamente.',
-      description: `El libro "${libro.titulo}" (código ${codigo}) está disponible para que la escuela lo canjee. La escuela debe introducir el código para activarlo.`,
-      data: {
-        pendienteId: pendiente.id,
-        escuelaId,
-        libroId: libro.id,
-        codigo: libro.codigo,
-        titulo: libro.titulo,
-        estado: 'pendiente_de_canje',
-      },
-    };
-  }
-
-  /**
-   * PASO 2 - La escuela (director) canjea el código.
-   * Solo funciona si el admin ya otorgó ese libro a la escuela.
-   * Crea Escuela_Libro y elimina el pendiente.
-   */
-  async canjearLibroPorCodigo(escuelaId: number, codigo: string, auditContext?: AuditContext) {
-    const escuela = await this.escuelaRepository.findOne({
-      where: { id: escuelaId },
-    });
-    if (!escuela) {
-      throw new NotFoundException(`No se encontró la escuela con ID ${escuelaId}`);
-    }
-
-    const libro = await this.libroRepository.findOne({
-      where: { codigo: codigo.trim() },
-    });
-    if (!libro) {
-      throw new NotFoundException(
-        `No se encontró ningún libro con código "${codigo}". Verifica el código.`,
-      );
-    }
-
-    // Verificar que el admin otorgó este libro a esta escuela
-    const pendiente = await this.escuelaLibroPendienteRepository.findOne({
-      where: { escuelaId, libroId: libro.id },
-    });
-    if (!pendiente) {
-      throw new BadRequestException(
-        `Este libro (código ${codigo}) no ha sido otorgado a tu escuela por el administrador. Solicita que te asignen el libro primero.`,
-      );
-    }
-
-    // Ya no debe existir en Escuela_Libro (por si acaso)
-    const yaActivo = await this.escuelaLibroRepository.findOne({
-      where: { escuelaId, libroId: libro.id },
-    });
-    if (yaActivo) {
-      await this.escuelaLibroPendienteRepository.remove(pendiente);
-      throw new ConflictException(
-        `El libro "${libro.titulo}" (${codigo}) ya está activo en tu escuela.`,
-      );
-    }
-
-    const hoy = new Date();
-    hoy.setHours(0, 0, 0, 0);
-
-    const el = this.escuelaLibroRepository.create({
-      escuelaId,
-      libroId: libro.id,
-      activo: true,
-      fechaInicio: hoy,
-      fechaFin: null,
-    });
-    await this.escuelaLibroRepository.save(el);
-    await this.escuelaLibroPendienteRepository.remove(pendiente);
-
-    this.logger.log(
-      `Libro canjeado: "${libro.titulo}" (${codigo}) → escuela ID ${escuelaId}`,
-    );
-
-    await this.auditService.log('libro_canjear', {
-      usuarioId: auditContext?.usuarioId ?? null,
-      ip: auditContext?.ip ?? null,
-      detalles: `${libro.titulo} (id: ${libro.id}, codigo: ${codigo}) → escuela ID ${escuelaId}`,
-    });
-
-    return {
-      message: 'Libro canjeado correctamente.',
-      description: `El libro "${libro.titulo}" ya está activo en tu escuela.`,
-      data: {
-        escuelaLibroId: el.id,
-        escuelaId,
-        libroId: libro.id,
-        codigo: libro.codigo,
-        titulo: libro.titulo,
-        fechaInicio: el.fechaInicio,
-      },
-    };
-  }
-
-  /**
-   * Listar libros pendientes de canjear (otorgados por admin, aún no canjeados por la escuela).
-   * Director: solo ve título y grado (no código) para que no pueda copiarlo sin que el admin se lo entregue.
-   * Admin: ve toda la información incluyendo el código.
-   */
-  async listarLibrosPendientesDeEscuela(escuelaId: number, paraDirector = false) {
-    const escuela = await this.escuelaRepository.findOne({
-      where: { id: escuelaId },
-    });
-    if (!escuela) {
-      throw new NotFoundException(`No se encontró la escuela con ID ${escuelaId}`);
-    }
-
-    const pendientes = await this.escuelaLibroPendienteRepository.find({
-      where: { escuelaId },
-      relations: ['libro', 'libro.materia'],
-      order: { fechaOtorgado: 'DESC' },
-    });
-
-    const libros = pendientes.map((p) => {
-      if (paraDirector) {
-        // Director: solo nombre y grado. Sin código ni ids sensibles.
-        return {
-          titulo: p.libro.titulo,
-          grado: p.libro.grado,
-          fechaOtorgado: p.fechaOtorgado,
-        };
-      }
-      // Admin: información completa
-      return {
-        ...p.libro,
-        fechaOtorgado: p.fechaOtorgado,
-        pendienteId: p.id,
-      };
-    });
-
-    return {
-      message: 'Libros pendientes de canjear obtenidos correctamente.',
-      description: paraDirector
-        ? `Hay ${libros.length} libro(s) pendientes de canjear. Solicita el código al administrador para activarlos.`
-        : `Hay ${libros.length} libro(s) otorgados pendientes de canjear.`,
-      total: libros.length,
-      data: libros,
-    };
-  }
-
-  /**
    * Listar directores activos de una escuela.
    */
   async listarDirectoresDeEscuela(escuelaId: number) {
@@ -602,12 +505,11 @@ export class EscuelasService {
         ? {
             id: d.persona.id,
             nombre: d.persona.nombre,
-            segundoNombre: d.persona.segundoNombre ?? null,
             apellidoPaterno: d.persona.apellidoPaterno,
             apellidoMaterno: d.persona.apellidoMaterno ?? null,
-            apellido: [d.persona.apellidoPaterno, d.persona.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
             correo: d.persona.correo,
             telefono: d.persona.telefono,
+            genero: d.persona.genero ?? null,
           }
         : null,
     }));
@@ -636,7 +538,15 @@ export class EscuelasService {
       personaId: number;
       escuelaId: number;
       fechaNombramiento: Date | null;
-      persona: { id: number; nombre: string; segundoNombre: string | null; apellidoPaterno: string; apellidoMaterno: string | null; correo: string; telefono: string | null } | null;
+      persona: {
+        id: number;
+        nombre: string;
+        apellidoPaterno: string;
+        apellidoMaterno: string | null;
+        correo: string;
+        telefono: string | null;
+        genero: string | null;
+      } | null;
       escuela: { id: number; nombre: string; nivel: string; clave: string | null };
     }> = [];
 
@@ -651,11 +561,11 @@ export class EscuelasService {
             ? {
                 id: d.persona.id,
                 nombre: d.persona.nombre,
-                segundoNombre: d.persona.segundoNombre ?? null,
-            apellidoPaterno: d.persona.apellidoPaterno,
-            apellidoMaterno: d.persona.apellidoMaterno ?? null,
+                apellidoPaterno: d.persona.apellidoPaterno,
+                apellidoMaterno: d.persona.apellidoMaterno ?? null,
                 correo: d.persona.correo,
                 telefono: d.persona.telefono ?? null,
+                genero: d.persona.genero ?? null,
               }
             : null,
           escuela: {
@@ -692,7 +602,7 @@ export class EscuelasService {
   }
 
   /**
-   * Listar maestros activos de una escuela.
+   * Listar maestros activos de una escuela con sus grupos asignados.
    */
   async listarMaestrosDeEscuela(escuelaId: number) {
     const escuela = await this.escuelaRepository.findOne({
@@ -705,25 +615,82 @@ export class EscuelasService {
       where: { escuelaId, activo: true },
       relations: ['persona'],
     });
-    const maestros = maestrosEntidad.map((m) => ({
-      id: m.id,
-      personaId: m.personaId,
-      escuelaId: m.escuelaId,
-      especialidad: m.especialidad,
-      fechaContratacion: m.fechaContratacion,
-      persona: m.persona
-        ? {
-            id: m.persona.id,
-            nombre: m.persona.nombre,
-            segundoNombre: m.persona.segundoNombre ?? null,
-            apellidoPaterno: m.persona.apellidoPaterno,
-            apellidoMaterno: m.persona.apellidoMaterno ?? null,
-            apellido: [m.persona.apellidoPaterno, m.persona.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
-            correo: m.persona.correo,
-            telefono: m.persona.telefono,
-          }
-        : null,
-    }));
+
+    const maestroIds = maestrosEntidad.map((m) => m.id);
+    const gruposPorMaestro = new Map<number, Array<{ id: number; grado: number; nombre: string; cantidadAlumnos: number }>>();
+    const cantidadAlumnosPorGrupo = new Map<number, number>();
+
+    if (maestroIds.length > 0) {
+      const asignaciones = await this.maestroGrupoRepository.find({
+        where: { maestroId: In(maestroIds) },
+        relations: ['grupo'],
+      });
+      const grupoIds = [...new Set(asignaciones.map((a) => a.grupoId).filter(Boolean))];
+      const gruposUnicos: Array<{ id: number; grado: number; nombre: string }> = [];
+      for (const a of asignaciones) {
+        if (!a.grupo || gruposUnicos.some((g) => g.id === a.grupo!.id)) continue;
+        gruposUnicos.push({
+          id: a.grupo.id,
+          grado: Number(a.grupo.grado),
+          nombre: a.grupo.nombre,
+        });
+      }
+
+      if (grupoIds.length > 0) {
+        const alumnosEnGrupos = await this.alumnoRepository.find({
+          where: { escuelaId, activo: true },
+          select: ['id', 'grupoId', 'grado', 'grupo'],
+        });
+        for (const g of gruposUnicos) {
+          const count = alumnosEnGrupos.filter(
+            (a) =>
+              Number(a.grupoId) === Number(g.id) ||
+              (a.grupoId == null && grupoCoincide(Number(a.grado), a.grupo, g.grado, g.nombre)),
+          ).length;
+          cantidadAlumnosPorGrupo.set(g.id, count);
+        }
+      }
+      for (const a of asignaciones) {
+        if (!a.grupo) continue;
+        const cantidadAlumnos = cantidadAlumnosPorGrupo.get(a.grupo.id) ?? 0;
+        const item = {
+          id: a.grupo.id,
+          grado: Number(a.grupo.grado),
+          nombre: a.grupo.nombre,
+          cantidadAlumnos,
+        };
+        const list = gruposPorMaestro.get(a.maestroId) ?? [];
+        if (!list.some((g) => g.id === item.id)) list.push(item);
+        gruposPorMaestro.set(a.maestroId, list);
+      }
+    }
+
+    const maestros = maestrosEntidad.map((m) => {
+      const grupos = gruposPorMaestro.get(m.id) ?? [];
+      const cantidadGrupos = grupos.length;
+      const cantidadAlumnos = grupos.reduce((sum, g) => sum + g.cantidadAlumnos, 0);
+      return {
+        id: m.id,
+        personaId: m.personaId,
+        escuelaId: m.escuelaId,
+        especialidad: m.especialidad,
+        fechaContratacion: m.fechaContratacion,
+        persona: m.persona
+          ? {
+              id: m.persona.id,
+              nombre: m.persona.nombre,
+              apellidoPaterno: m.persona.apellidoPaterno,
+              apellidoMaterno: m.persona.apellidoMaterno ?? null,
+              correo: m.persona.correo,
+              telefono: m.persona.telefono,
+              genero: m.persona.genero ?? null,
+            }
+          : null,
+        cantidadGrupos,
+        cantidadAlumnos,
+        grupos,
+      };
+    });
     return {
       message: 'Maestros de la escuela obtenidos correctamente.',
       description: `La escuela tiene ${maestros.length} maestro(s).`,
@@ -754,17 +721,22 @@ export class EscuelasService {
       padreId: a.padreId ?? null,
       grado: a.grado,
       grupo: a.grupo,
+      grupoId: a.grupoId ?? null,
       cicloEscolar: a.cicloEscolar,
       persona: a.persona
         ? {
             id: a.persona.id,
             nombre: a.persona.nombre,
-            segundoNombre: a.persona.segundoNombre ?? null,
             apellidoPaterno: a.persona.apellidoPaterno,
             apellidoMaterno: a.persona.apellidoMaterno ?? null,
-            apellido: [a.persona.apellidoPaterno, a.persona.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
             correo: a.persona.correo,
             telefono: a.persona.telefono,
+            genero: a.persona.genero ?? null,
+            fechaNacimiento: a.persona.fechaNacimiento != null
+              ? (a.persona.fechaNacimiento instanceof Date
+                  ? a.persona.fechaNacimiento.toISOString().split('T')[0]
+                  : String(a.persona.fechaNacimiento).split('T')[0])
+              : null,
           }
         : null,
       padre: a.padre
@@ -775,12 +747,11 @@ export class EscuelasService {
               ? {
                   id: a.padre.persona.id,
                   nombre: a.padre.persona.nombre,
-                  segundoNombre: a.padre.persona.segundoNombre ?? null,
                   apellidoPaterno: a.padre.persona.apellidoPaterno,
                   apellidoMaterno: a.padre.persona.apellidoMaterno ?? null,
-                  apellido: [a.padre.persona.apellidoPaterno, a.padre.persona.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
                   correo: a.padre.persona.correo,
                   telefono: a.padre.persona.telefono,
+                  genero: a.padre.persona.genero ?? null,
                 }
               : null,
           }
@@ -988,59 +959,30 @@ export class EscuelasService {
   }
 
   /**
-   * Libros disponibles para asignar a un alumno (misma escuela, mismo grado, mismo grupo si aplica).
+   * Obtiene el escuelaId de un alumno (para validaciones de director).
    */
-  async listarLibrosDisponiblesParaAsignar(escuelaId: number, alumnoId: number) {
+  async obtenerEscuelaIdDeAlumno(alumnoId: number): Promise<number> {
     const alumno = await this.alumnoRepository.findOne({
       where: { id: alumnoId },
+      select: ['id', 'escuelaId'],
     });
     if (!alumno) {
-      throw new NotFoundException(`No se encontró el alumno con ID ${alumnoId}`);
+      throw new NotFoundException(
+        `No se encontró el alumno con ID ${alumnoId}`,
+      );
     }
-    if (Number(alumno.escuelaId) !== Number(escuelaId)) {
-      throw new ForbiddenException('El alumno no pertenece a esta escuela.');
-    }
-
-    const asignaciones = await this.escuelaLibroRepository.find({
-      where: { escuelaId, activo: true },
-      relations: ['libro', 'libro.materia'],
-      order: { fechaInicio: 'DESC' },
-    });
-
-    // Filtrar: libro activo, mismo grado, grupo (si Escuela_Libro tiene grupo, debe coincidir; si null = todos)
-    const disponibles = asignaciones.filter((a) => {
-      if (!a.libro || a.libro.activo === false) return false;
-      if (Number(a.libro.grado) !== Number(alumno.grado)) return false;
-      if (a.grupo != null && a.grupo !== alumno.grupo) return false;
-      return true;
-    });
-
-    // Excluir ya asignados
-    const yaAsignados = await this.alumnoLibroRepository.find({
-      where: { alumnoId },
-      select: ['libroId'],
-    });
-    const idsAsignados = new Set(yaAsignados.map((x) => x.libroId));
-    const filtrados = disponibles.filter((a) => !idsAsignados.has(a.libroId));
-
-    const data = filtrados.map((a) => ({
-      id: a.libro?.id,
-      titulo: a.libro?.titulo,
-      codigo: a.libro?.codigo,
-      grado: a.libro?.grado,
-      materia: a.libro?.materia?.nombre ?? null,
-    }));
-
-    return {
-      message: 'Libros disponibles para asignar.',
-      description: `Libros de la escuela que coinciden con el grado${alumno.grupo ? ` y grupo ${alumno.grupo}` : ''} del alumno.`,
-      total: data.length,
-      data,
-    };
+    return Number(alumno.escuelaId);
   }
 
   /**
-   * Asignar libro a alumno (maestro o director).
+   * Libros disponibles para asignar a un alumno (con licencias disponibles, mismo grado/grupo).
+   */
+  async listarLibrosDisponiblesParaAsignar(escuelaId: number, alumnoId: number) {
+    return await this.licenciasService.listarLibrosDisponiblesParaAsignar(escuelaId, alumnoId);
+  }
+
+  /**
+   * Asignar libro a alumno (maestro o director). Consume una licencia disponible.
    */
   async asignarLibroAlAlumno(
     escuelaId: number,
@@ -1048,63 +990,24 @@ export class EscuelasService {
     libroId: number,
     asignadoPorTipo: 'maestro' | 'director',
     asignadoPorId: number,
+    auditContext?: AuditContext,
   ) {
-    const alumno = await this.alumnoRepository.findOne({
-      where: { id: alumnoId },
-    });
-    if (!alumno) {
-      throw new NotFoundException(`No se encontró el alumno con ID ${alumnoId}`);
-    }
-    if (Number(alumno.escuelaId) !== Number(escuelaId)) {
-      throw new ForbiddenException('El alumno no pertenece a esta escuela.');
-    }
-
-    const escuelaLibro = await this.escuelaLibroRepository.findOne({
-      where: { escuelaId, libroId, activo: true },
-      relations: ['libro'],
-    });
-    if (!escuelaLibro || !escuelaLibro.libro) {
-      throw new NotFoundException('El libro no está disponible en esta escuela.');
-    }
-    if (escuelaLibro.libro.activo === false) {
-      throw new BadRequestException('El libro está inactivo.');
-    }
-    if (Number(escuelaLibro.libro.grado) !== Number(alumno.grado)) {
-      throw new BadRequestException('El libro no corresponde al grado del alumno.');
-    }
-    if (escuelaLibro.grupo != null && escuelaLibro.grupo !== alumno.grupo) {
-      throw new BadRequestException('El libro no corresponde al grupo del alumno.');
-    }
-
-    const existente = await this.alumnoLibroRepository.findOne({
-      where: { alumnoId, libroId },
-    });
-    if (existente) {
-      throw new ConflictException('El alumno ya tiene asignado este libro.');
-    }
-
-    const asignacion = this.alumnoLibroRepository.create({
+    const result = await this.licenciasService.consumirLicenciaParaAlumno(
+      escuelaId,
       alumnoId,
       libroId,
-      porcentaje: 0,
-      ultimoSegmentoId: null,
-      ultimaLectura: null,
-      fechaAsignacion: new Date(),
       asignadoPorTipo,
       asignadoPorId,
-    });
-    await this.alumnoLibroRepository.save(asignacion);
-
-    return {
-      message: 'Libro asignado correctamente al alumno.',
-      description: `El alumno puede ver el libro en "Mis libros".`,
-      data: {
-        alumnoLibroId: asignacion.id,
-        alumnoId,
-        libroId,
-        titulo: escuelaLibro.libro.titulo,
+    );
+    await this.auditService.log(
+      asignadoPorTipo === 'director' ? 'director_asignar_libro' : 'maestro_asignar_libro',
+      {
+        usuarioId: auditContext?.usuarioId ?? null,
+        ip: auditContext?.ip ?? null,
+        detalles: `escuelaId=${escuelaId} alumnoId=${alumnoId} libroId=${libroId} asignadoPor=${asignadoPorTipo}:${asignadoPorId}`,
       },
-    };
+    );
+    return result;
   }
 
   /**
@@ -1119,18 +1022,162 @@ export class EscuelasService {
 
   /**
    * Desasignar libro de alumno.
+   * @param context - Si director: escuelaIdRestriccion. Si maestro: maestroId. Sin context = admin (sin restricción).
    */
-  async desasignarLibroAlAlumno(alumnoId: number, libroId: number) {
+  async desasignarLibroAlAlumno(
+    alumnoId: number,
+    libroId: number,
+    context?: DesasignarLibroContext,
+  ) {
     const asignacion = await this.alumnoLibroRepository.findOne({
       where: { alumnoId, libroId },
+      relations: ['alumno'],
     });
     if (!asignacion) {
       throw new NotFoundException('No se encontró la asignación libro-alumno.');
     }
+
+    if (context?.escuelaIdRestriccion != null) {
+      if (Number(asignacion.alumno?.escuelaId) !== Number(context.escuelaIdRestriccion)) {
+        throw new ForbiddenException('Solo puedes desasignar libros de alumnos de tu escuela.');
+      }
+    }
+
+    if (context?.maestroId != null) {
+      const enClase = await this.dataSource.getRepository(AlumnoMaestro).findOne({
+        where: {
+          maestroId: context.maestroId,
+          alumnoId,
+          fechaFin: IsNull(),
+        },
+      });
+      if (!enClase) {
+        const mgList = await this.maestroGrupoRepository.find({
+          where: { maestroId: context.maestroId },
+          relations: ['grupo'],
+        });
+        if (!asignacion.alumno || !alumnoPerteneceAGrupos(asignacion.alumno, mgList)) {
+          throw new ForbiddenException('Solo puedes desasignar libros de alumnos de tus grupos.');
+        }
+      }
+    }
+
     await this.alumnoLibroRepository.remove(asignacion);
+    const accion = context?.escuelaIdRestriccion != null ? 'director_desasignar_libro' : context?.maestroId != null ? 'maestro_desasignar_libro' : null;
+    if (accion && context?.auditContext) {
+      await this.auditService.log(accion, {
+        usuarioId: context.auditContext.usuarioId ?? null,
+        ip: context.auditContext.ip ?? null,
+        detalles: `alumnoId=${alumnoId} libroId=${libroId}`,
+      });
+    }
     return {
       message: 'Libro desasignado correctamente.',
       description: 'El alumno ya no verá este libro en "Mis libros".',
+    };
+  }
+
+  /**
+   * Actualizar progreso de lectura del alumno en un libro.
+   */
+  async crearAnotacionAlumno(alumnoId: number, dto: CrearAnotacionDto) {
+    if (dto.offsetFin <= dto.offsetInicio) {
+      throw new BadRequestException('offsetFin debe ser mayor a offsetInicio.');
+    }
+
+    const [alumno, libroAsignado, segmento] = await Promise.all([
+      this.alumnoRepository.findOne({ where: { id: alumnoId }, select: ['id'] }),
+      this.alumnoLibroRepository.findOne({
+        where: { alumnoId, libroId: dto.libroId },
+        select: ['id'],
+      }),
+      this.segmentoRepository.findOne({
+        where: { id: dto.segmentoId },
+        select: ['id', 'libroId', 'contenido'],
+      }),
+    ]);
+
+    if (!alumno) {
+      throw new NotFoundException('Alumno no encontrado.');
+    }
+    if (!libroAsignado) {
+      throw new ForbiddenException('No tienes asignado este libro.');
+    }
+    if (!segmento) {
+      throw new NotFoundException('Segmento no encontrado.');
+    }
+    if (Number(segmento.libroId) !== Number(dto.libroId)) {
+      throw new BadRequestException('El segmento no pertenece al libro enviado.');
+    }
+
+    const largo = (segmento.contenido || '').length;
+    if (dto.offsetInicio < 0 || dto.offsetFin > largo) {
+      throw new BadRequestException('Offsets fuera del rango del contenido del segmento.');
+    }
+
+    if (dto.tipo === 'highlight' && !dto.color) {
+      throw new BadRequestException('Para tipo "highlight" debes enviar color.');
+    }
+    if (dto.tipo === 'comentario' && (!dto.comentario || dto.comentario.trim().length === 0)) {
+      throw new BadRequestException('Para tipo "comentario" debes enviar comentario.');
+    }
+
+    const anotacion = this.anotacionRepository.create({
+      alumnoId,
+      libroId: dto.libroId,
+      segmentoId: dto.segmentoId,
+      tipo: dto.tipo,
+      textoSeleccionado: dto.textoSeleccionado,
+      offsetInicio: dto.offsetInicio,
+      offsetFin: dto.offsetFin,
+      color: dto.tipo === 'highlight' ? dto.color ?? null : null,
+      comentario: dto.tipo === 'comentario' ? (dto.comentario ?? '').trim() : null,
+    });
+    const guardada = await this.anotacionRepository.save(anotacion);
+
+    return {
+      message: 'Anotación guardada correctamente.',
+      data: guardada,
+    };
+  }
+
+  async eliminarAnotacionAlumno(alumnoId: number, anotacionId: number) {
+    const anotacion = await this.anotacionRepository.findOne({
+      where: { id: anotacionId },
+      select: ['id', 'alumnoId'],
+    });
+    if (!anotacion) {
+      throw new NotFoundException('Anotación no encontrada.');
+    }
+    if (Number(anotacion.alumnoId) !== Number(alumnoId)) {
+      throw new ForbiddenException('No puedes eliminar anotaciones de otro alumno.');
+    }
+
+    await this.anotacionRepository.delete({ id: anotacionId });
+    return {
+      message: 'Anotación eliminada correctamente.',
+      data: { id: anotacionId },
+    };
+  }
+
+  async listarAnotacionesAlumnoPorLibro(alumnoId: number, libroId: number) {
+    const existeAsignacion = await this.alumnoLibroRepository.findOne({
+      where: { alumnoId, libroId },
+      select: ['id'],
+    });
+    if (!existeAsignacion) {
+      throw new ForbiddenException('No tienes asignado este libro.');
+    }
+
+    const data = await this.anotacionRepository.find({
+      where: { alumnoId, libroId },
+      order: { creadoEn: 'ASC' },
+    });
+
+    return {
+      message: 'Anotaciones obtenidas correctamente.',
+      total: data.length,
+      data,
     };
   }
 

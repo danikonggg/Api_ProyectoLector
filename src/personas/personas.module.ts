@@ -20,6 +20,8 @@ import { Maestro } from './entities/maestro.entity';
 import { Director } from './entities/director.entity';
 import { Escuela } from './entities/escuela.entity';
 import { AlumnoMaestro } from './entities/alumno-maestro.entity';
+import { Grupo } from '../escuelas/entities/grupo.entity';
+import { AlumnoVinculacionPadre } from './entities/alumno-vinculacion-padre.entity';
 
 @Module({
   imports: [
@@ -28,10 +30,12 @@ import { AlumnoMaestro } from './entities/alumno-maestro.entity';
       Administrador,
       Padre,
       Alumno,
+      AlumnoVinculacionPadre,
       Maestro,
       Director,
       Escuela,
       AlumnoMaestro,
+      Grupo,
     ]),
   ],
   controllers: [PersonasController],

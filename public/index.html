@@ -1,0 +1,703 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <title>ApiLector – Panel rápido</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        color-scheme: dark light;
+        --bg: #080816;
+        --card: #111827;
+        --card-soft: #020617;
+        --border: #1f2933;
+        --accent: #4f46e5;
+        --accent-soft: rgba(79, 70, 229, 0.12);
+        --accent-soft-strong: rgba(79, 70, 229, 0.2);
+        --text: #e5e7eb;
+        --text-soft: #9ca3af;
+        --danger: #f97373;
+        --success: #34d399;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'SF Pro Text',
+          'Segoe UI', sans-serif;
+        background: radial-gradient(circle at top, #111827 0, #020617 40%, #020617 100%);
+        color: var(--text);
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .shell {
+        max-width: 1120px;
+        width: 100%;
+        margin: 0 auto;
+        padding: 1.75rem 1.25rem 3rem;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1.5rem;
+        margin-bottom: 1.75rem;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
+      }
+
+      .logo {
+        width: 32px;
+        height: 32px;
+        border-radius: 0.9rem;
+        background: conic-gradient(
+          from 200deg,
+          #6366f1,
+          #a855f7,
+          #22c55e,
+          #f97316,
+          #6366f1
+        );
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.85),
+          0 18px 30px rgba(15, 23, 42, 0.8);
+      }
+
+      .logo span {
+        font-size: 0.9rem;
+        font-weight: 700;
+        color: #020617;
+      }
+
+      .brand h1 {
+        margin: 0;
+        font-size: 1.1rem;
+        letter-spacing: -0.02em;
+      }
+
+      .brand p {
+        margin: 0.15rem 0 0;
+        font-size: 0.78rem;
+        color: var(--text-soft);
+      }
+
+      .token-box {
+        padding: 0.75rem 0.9rem;
+        border-radius: 0.8rem;
+        background: linear-gradient(
+          135deg,
+          rgba(15, 23, 42, 0.92),
+          rgba(15, 23, 42, 0.7)
+        );
+        border: 1px solid rgba(55, 65, 81, 0.65);
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        min-width: 260px;
+      }
+
+      .token-box label {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--text-soft);
+      }
+
+      .token-row {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+      }
+
+      input[type='text'],
+      input[type='number'],
+      select,
+      textarea {
+        width: 100%;
+        padding: 0.55rem 0.65rem;
+        border-radius: 0.55rem;
+        border: 1px solid rgba(55, 65, 81, 0.9);
+        background: rgba(15, 23, 42, 0.85);
+        color: var(--text);
+        font-size: 0.82rem;
+        outline: none;
+      }
+
+      input[type='text']::placeholder {
+        color: #4b5563;
+      }
+
+      input[type='text']:focus,
+      input[type='number']:focus,
+      select:focus,
+      textarea:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 1px rgba(79, 70, 229, 0.5);
+      }
+
+      button {
+        border-radius: 999px;
+        border: none;
+        padding: 0.5rem 0.9rem;
+        font-size: 0.8rem;
+        font-weight: 500;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+      }
+
+      .btn-primary {
+        background: linear-gradient(135deg, #4f46e5, #6366f1);
+        color: white;
+      }
+
+      .btn-secondary {
+        background: rgba(15, 23, 42, 0.85);
+        border: 1px solid rgba(75, 85, 99, 0.85);
+        color: var(--text-soft);
+      }
+
+      main {
+        display: grid;
+        grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.1fr);
+        gap: 1.5rem;
+        align-items: flex-start;
+      }
+
+      @media (max-width: 900px) {
+        main {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+
+      .card {
+        background: radial-gradient(circle at top left, #111827 0, #020617 55%);
+        border-radius: 1.1rem;
+        border: 1px solid rgba(31, 41, 55, 0.9);
+        box-shadow: 0 22px 50px rgba(15, 23, 42, 0.9);
+        padding: 1.1rem 1.1rem 1rem;
+      }
+
+      .card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        margin-bottom: 0.9rem;
+      }
+
+      .card-title {
+        font-size: 0.95rem;
+        font-weight: 600;
+      }
+
+      .card-subtitle {
+        font-size: 0.78rem;
+        color: var(--text-soft);
+        margin-top: 0.12rem;
+      }
+
+      .card-badge {
+        font-size: 0.7rem;
+        padding: 0.15rem 0.55rem;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: #c7d2fe;
+        border: 1px solid rgba(99, 102, 241, 0.8);
+      }
+
+      .card-body {
+        display: flex;
+        flex-direction: column;
+        gap: 0.9rem;
+      }
+
+      .field-row {
+        display: flex;
+        gap: 0.6rem;
+        flex-wrap: wrap;
+      }
+
+      .field {
+        flex: 1 1 0;
+        min-width: 140px;
+      }
+
+      .field label {
+        display: block;
+        font-size: 0.78rem;
+        color: var(--text-soft);
+        margin-bottom: 0.15rem;
+      }
+
+      .field small {
+        display: block;
+        font-size: 0.7rem;
+        color: #6b7280;
+        margin-top: 0.12rem;
+      }
+
+      .file-input {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .file-input input[type='file'] {
+        font-size: 0.8rem;
+        color: var(--text-soft);
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        padding: 0.18rem 0.5rem;
+        border-radius: 999px;
+        background: rgba(15, 23, 42, 0.9);
+        border: 1px solid rgba(55, 65, 81, 0.85);
+        font-size: 0.7rem;
+        color: var(--text-soft);
+      }
+
+      .status-bar {
+        margin-top: 0.7rem;
+        font-size: 0.78rem;
+        color: var(--text-soft);
+      }
+
+      .status-ok {
+        color: var(--success);
+      }
+
+      .status-error {
+        color: var(--danger);
+      }
+
+      .list {
+        margin: 0.3rem 0 0;
+        padding: 0;
+        list-style: none;
+        max-height: 220px;
+        overflow: auto;
+        border-radius: 0.7rem;
+        border: 1px solid rgba(31, 41, 55, 0.9);
+        background: linear-gradient(
+          180deg,
+          rgba(15, 23, 42, 0.95),
+          rgba(15, 23, 42, 0.9)
+        );
+      }
+
+      .list-item {
+        padding: 0.45rem 0.7rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.6rem;
+        border-bottom: 1px solid rgba(31, 41, 55, 0.9);
+      }
+
+      .list-item:last-child {
+        border-bottom: none;
+      }
+
+      .list-item-main {
+        display: flex;
+        flex-direction: column;
+        gap: 0.1rem;
+      }
+
+      .list-item-title {
+        font-size: 0.8rem;
+      }
+
+      .list-item-sub {
+        font-size: 0.7rem;
+        color: var(--text-soft);
+      }
+
+      .badge {
+        font-size: 0.68rem;
+        padding: 0.15rem 0.45rem;
+        border-radius: 999px;
+        border: 1px solid rgba(55, 65, 81, 0.85);
+      }
+
+      .badge-on {
+        background: var(--accent-soft-strong);
+        border-color: rgba(129, 140, 248, 0.9);
+        color: #e0e7ff;
+      }
+
+      .badge-off {
+        background: rgba(31, 41, 55, 0.9);
+        color: #9ca3af;
+      }
+
+      pre {
+        margin: 0;
+        padding: 0.55rem 0.7rem;
+        border-radius: 0.7rem;
+        background: rgba(15, 23, 42, 0.9);
+        border: 1px solid rgba(31, 41, 55, 0.9);
+        font-size: 0.74rem;
+        max-height: 240px;
+        overflow: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header>
+        <div class="brand">
+          <div class="logo"><span>A</span></div>
+          <div>
+            <h1>ApiLector – Panel rápido</h1>
+            <p>Subir libros y asignarlos a escuelas para probar “qué pedo”.</p>
+          </div>
+        </div>
+        <div class="token-box">
+          <label for="token-input">TOKEN JWT (admin)</label>
+          <div class="token-row">
+            <input
+              id="token-input"
+              type="text"
+              placeholder="Pega aquí tu Bearer token…"
+            />
+            <button class="btn-secondary" id="btn-clear-token">X</button>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <!-- Columna izquierda: cargar libro -->
+        <section class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Cargar libro (PDF + metadatos)</div>
+              <div class="card-subtitle">
+                Hace POST <code>/libros/cargar</code>. Máx. 50 MB.
+              </div>
+            </div>
+            <span class="card-badge">Libros</span>
+          </div>
+          <div class="card-body">
+            <div class="field">
+              <label for="pdf-file">Archivo PDF</label>
+              <div class="file-input">
+                <input id="pdf-file" type="file" accept="application/pdf" />
+              </div>
+              <small>Solo PDF con texto seleccionable (no escaneos puros).</small>
+            </div>
+
+            <div class="field-row">
+              <div class="field">
+                <label for="titulo-input">Título</label>
+                <input
+                  id="titulo-input"
+                  type="text"
+                  placeholder="Ej. Matemáticas 5°"
+                />
+              </div>
+              <div class="field">
+                <label for="grado-input">Grado</label>
+                <input id="grado-input" type="number" min="1" max="9" value="5" />
+              </div>
+            </div>
+
+            <div class="field-row">
+              <div class="field">
+                <label for="codigo-input">Código (opcional)</label>
+                <input
+                  id="codigo-input"
+                  type="text"
+                  placeholder="Si lo dejas vacío se autogenera"
+                />
+              </div>
+              <div class="field">
+                <label for="materia-input">ID Materia (opcional)</label>
+                <input
+                  id="materia-input"
+                  type="number"
+                  min="1"
+                  placeholder="Ej. 1"
+                />
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="descripcion-input">Descripción (opcional)</label>
+              <textarea
+                id="descripcion-input"
+                rows="2"
+                placeholder="Breve descripción del libro…"
+              ></textarea>
+            </div>
+
+            <div class="field-row" style="justify-content: space-between">
+              <button class="btn-primary" id="btn-upload">
+                <span>Subir libro</span>
+              </button>
+              <span class="pill">
+                <span style="width: 7px; height: 7px; border-radius: 999px; background: #22c55e"></span>
+                Dev → mismo host (fetch /libros/…)
+              </span>
+            </div>
+
+            <div class="status-bar" id="upload-status"></div>
+          </div>
+        </section>
+
+        <!-- Columna derecha: escuelas + asignación -->
+        <section class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Escuelas y libros asignados</div>
+              <div class="card-subtitle">
+                Usa <code>/escuelas</code> y <code>/escuelas/:id/libros/asignaciones</code>.
+              </div>
+            </div>
+            <span class="card-badge">Escuelas</span>
+          </div>
+          <div class="card-body">
+            <div class="field-row">
+              <div class="field">
+                <label for="escuela-select">Escuela</label>
+                <select id="escuela-select">
+                  <option value="">Cargar escuelas…</option>
+                </select>
+              </div>
+              <div class="field" style="align-self: flex-end">
+                <button class="btn-secondary" id="btn-load-escuelas">
+                  Cargar escuelas
+                </button>
+              </div>
+            </div>
+
+            <div class="field">
+              <label>Libros de la escuela</label>
+              <ul class="list" id="lista-libros-escuela"></ul>
+              <small>
+                Toggle = PATCH <code>/escuelas/:id/libros/:libroId/activo</code>.
+              </small>
+            </div>
+
+            <div class="field">
+              <label>Última respuesta API</label>
+              <pre id="api-log">{}</pre>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+
+      function getToken() {
+        const t = $('token-input').value.trim();
+        return t ? t : null;
+      }
+
+      function setStatus(id, msg, type = '') {
+        const el = $(id);
+        if (!el) return;
+        el.textContent = msg || '';
+        el.classList.remove('status-ok', 'status-error');
+        if (type === 'ok') el.classList.add('status-ok');
+        if (type === 'error') el.classList.add('status-error');
+      }
+
+      function logApi(obj) {
+        $('api-log').textContent = JSON.stringify(obj ?? {}, null, 2);
+      }
+
+      async function apiFetch(path, options = {}) {
+        const token = getToken();
+        const headers = options.headers ? { ...options.headers } : {};
+        if (token) {
+          headers['Authorization'] = 'Bearer ' + token;
+        }
+        const res = await fetch(path, { ...options, headers });
+        const contentType = res.headers.get('content-type') || '';
+        let data = null;
+        if (contentType.includes('application/json')) {
+          data = await res.json();
+        } else {
+          data = await res.text();
+        }
+        logApi({ status: res.status, path, data });
+        if (!res.ok) {
+          const msg =
+            (data && (data.message || data.error || JSON.stringify(data))) ||
+            'Error HTTP ' + res.status;
+          throw new Error(msg);
+        }
+        return data;
+      }
+
+      // Cargar libro
+      $('btn-upload').addEventListener('click', async () => {
+        setStatus('upload-status', 'Subiendo libro…');
+        try {
+          const file = $('pdf-file').files[0];
+          if (!file) {
+            setStatus('upload-status', 'Selecciona un PDF primero.', 'error');
+            return;
+          }
+          const titulo = $('titulo-input').value.trim();
+          const grado = $('grado-input').value;
+          if (!titulo || !grado) {
+            setStatus(
+              'upload-status',
+              'Título y grado son obligatorios.',
+              'error',
+            );
+            return;
+          }
+          const form = new FormData();
+          form.append('pdf', file);
+          form.append('titulo', titulo);
+          form.append('grado', String(grado));
+          const codigo = $('codigo-input').value.trim();
+          const desc = $('descripcion-input').value.trim();
+          const materia = $('materia-input').value;
+          if (codigo) form.append('codigo', codigo);
+          if (desc) form.append('descripcion', desc);
+          if (materia) form.append('materiaId', materia);
+
+          const data = await apiFetch('/libros/cargar', {
+            method: 'POST',
+            body: form,
+          });
+
+          setStatus(
+            'upload-status',
+            `OK: libro id=${data?.data?.id ?? '?'} (${data?.data?.titulo ?? 'sin título'})`,
+            'ok',
+          );
+        } catch (err) {
+          console.error(err);
+          setStatus('upload-status', String(err.message || err), 'error');
+        }
+      });
+
+      $('btn-clear-token').addEventListener('click', () => {
+        $('token-input').value = '';
+      });
+
+      // Escuelas + libros
+      $('btn-load-escuelas').addEventListener('click', async () => {
+        try {
+          const data = await apiFetch('/escuelas');
+          const select = $('escuela-select');
+          select.innerHTML = '<option value=\"\">Selecciona una escuela…</option>';
+          (data?.data ?? data ?? []).forEach((e) => {
+            const opt = document.createElement('option');
+            opt.value = e.id;
+            opt.textContent = `${e.id} – ${e.nombre ?? 'Escuela'}`;
+            select.appendChild(opt);
+          });
+        } catch (err) {
+          console.error(err);
+        }
+      });
+
+      $('escuela-select').addEventListener('change', () => {
+        const id = $('escuela-select').value;
+        if (!id) {
+          $('lista-libros-escuela').innerHTML = '';
+          return;
+        }
+        cargarLibrosEscuela(id);
+      });
+
+      async function cargarLibrosEscuela(escuelaId) {
+        try {
+          const data = await apiFetch(
+            `/escuelas/${encodeURIComponent(
+              escuelaId,
+            )}/libros/asignaciones`,
+          );
+          const list = $('lista-libros-escuela');
+          list.innerHTML = '';
+          (data?.data ?? data ?? []).forEach((item) => {
+            const li = document.createElement('li');
+            li.className = 'list-item';
+
+            const main = document.createElement('div');
+            main.className = 'list-item-main';
+
+            const title = document.createElement('div');
+            title.className = 'list-item-title';
+            title.textContent = `${item.libroTitulo ?? item.titulo ?? 'Libro'} (id=${item.libroId ?? item.libro_id ?? '??'})`;
+
+            const sub = document.createElement('div');
+            sub.className = 'list-item-sub';
+            sub.textContent = `Código: ${item.codigo ?? item.libroCodigo ?? '—'} · Activo en escuela: ${item.activoEnEscuela ? 'sí' : 'no'}`;
+
+            main.appendChild(title);
+            main.appendChild(sub);
+
+            const right = document.createElement('div');
+            right.style.display = 'flex';
+            right.style.alignItems = 'center';
+            right.style.gap = '0.4rem';
+
+            const badge = document.createElement('span');
+            badge.className =
+              'badge ' + (item.activoEnEscuela ? 'badge-on' : 'badge-off');
+            badge.textContent = item.activoEnEscuela ? 'Activo' : 'Inactivo';
+
+            const btn = document.createElement('button');
+            btn.className = 'btn-secondary';
+            btn.textContent = item.activoEnEscuela ? 'Desactivar' : 'Activar';
+            btn.addEventListener('click', async () => {
+              try {
+                const libroId = item.libroId ?? item.libro_id;
+                const body = { activo: !item.activoEnEscuela };
+                await apiFetch(
+                  `/escuelas/${encodeURIComponent(
+                    escuelaId,
+                  )}/libros/${encodeURIComponent(libroId)}/activo`,
+                  {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                  },
+                );
+                await cargarLibrosEscuela(escuelaId);
+              } catch (err) {
+                console.error(err);
+              }
+            });
+
+            right.appendChild(badge);
+            right.appendChild(btn);
+
+            li.appendChild(main);
+            li.appendChild(right);
+            list.appendChild(li);
+          });
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    </script>
+  </body>
+</html>
+

@@ -39,13 +39,6 @@ export class RegistroAlumnoDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   nombre: string;
 
-  @ApiProperty({ example: 'José', description: 'Segundo nombre (opcional)', required: false, maxLength: NAME_MAX_LENGTH })
-  @IsString()
-  @IsOptional()
-  @MaxLength(NAME_MAX_LENGTH, { message: `El segundo nombre no puede superar ${NAME_MAX_LENGTH} caracteres` })
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
-  segundoNombre?: string;
-
   @ApiProperty({ example: 'González', description: 'Apellido paterno', required: true, maxLength: NAME_MAX_LENGTH })
   @IsString()
   @IsNotEmpty({ message: 'El apellido paterno es obligatorio' })
@@ -98,12 +91,18 @@ export class RegistroAlumnoDto {
   @Max(GRADO_MAX, { message: `El grado no puede ser mayor a ${GRADO_MAX}` })
   grado?: number;
 
-  @ApiProperty({ example: 'A', description: 'Grupo o sección', required: false, maxLength: 20 })
+  @ApiProperty({ example: 'A', description: 'Grupo o sección. Si se envía con grado, se valida que exista en la escuela.', required: false, maxLength: 20 })
   @IsString()
   @IsOptional()
   @MaxLength(20, { message: 'El grupo no puede superar 20 caracteres' })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   grupo?: string;
+
+  @ApiProperty({ example: 2, description: 'ID del grupo (alternativa a grado+grupo). El grupo debe existir en la escuela.', required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  grupoId?: number;
 
   @ApiProperty({ example: '2024-2025', description: 'Ciclo escolar', required: false, maxLength: 30 })
   @IsString()

@@ -14,6 +14,7 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   ParseIntPipe,
   UseGuards,
   UseInterceptors,
@@ -43,18 +44,12 @@ import { AdminGuard } from '../auth/guards/admin.guard';
 import { AdminOrDirectorGuard } from '../auth/guards/admin-or-director.guard';
 import { AdminOrDirectorOrAlumnoGuard } from '../auth/guards/admin-or-director-or-alumno.guard';
 import { LibrosService } from './libros.service';
+import { LibrosPdfImagenesService } from './libros-pdf-imagenes.service';
 import { EscuelasService } from '../escuelas/escuelas.service';
 import { CargarLibroDto } from './dto/cargar-libro.dto';
-import type { AuditContext } from './libros.service';
+import { getAuditContext } from '../common/utils/audit.utils';
+import { ListarLibrosQueryDto } from './dto/listar-libros-query.dto';
 import type { Request as ExpressRequest } from 'express';
-
-function getAuditContext(req: ExpressRequest): AuditContext {
-  const ip = req.ip ?? (Array.isArray(req.headers?.['x-forwarded-for']) ? req.headers['x-forwarded-for'][0] : req.headers?.['x-forwarded-for']) ?? req.headers?.['x-real-ip'];
-  return {
-    usuarioId: (req.user as any)?.id ?? null,
-    ip: typeof ip === 'string' ? ip : undefined,
-  };
-}
 
 const PDF_MAX_SIZE = 50 * 1024 * 1024; // 50 MB
 
@@ -64,6 +59,7 @@ const PDF_MAX_SIZE = 50 * 1024 * 1024; // 50 MB
 export class LibrosController {
   constructor(
     private readonly librosService: LibrosService,
+    private readonly librosPdfImagenesService: LibrosPdfImagenesService,
     private readonly escuelasService: EscuelasService,
   ) {}
 
@@ -96,7 +92,9 @@ export class LibrosController {
       },
     },
   })
-  @ApiOperation({ summary: 'Cargar libro (PDF + metadatos). Requiere admin.' })
+  @ApiOperation({
+    summary: 'Cargar libro (PDF + metadatos). Requiere admin. Pipeline: validación → extracción → unidades por capítulos.',
+  })
   @ApiResponse({ status: 201, description: 'Libro procesado y guardado.' })
   @ApiResponse({ status: 400, description: 'PDF inválido o sin texto.' })
   @ApiResponse({ status: 401, description: 'No autenticado.' })
@@ -122,18 +120,112 @@ export class LibrosController {
   }
 
   /**
+   * POST /libros/probar-paginas-imagen
+   * PRUEBA: Sube un PDF y extrae cada página como imagen. Devuelve URLs para consumir imagen por imagen.
+   * No modifica el flujo normal de cargar libros.
+   */
+  @Post('probar-paginas-imagen')
+  @UseGuards(AdminGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiTags('Prueba - Imágenes por página')
+  @UseInterceptors(
+    FileInterceptor('pdf', {
+      storage: multer.memoryStorage(),
+      limits: { fileSize: PDF_MAX_SIZE },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['pdf'],
+      properties: { pdf: { type: 'string', format: 'binary', description: 'Archivo PDF' } },
+    },
+  })
+  @ApiOperation({
+    summary: '[PRUEBA] Extraer PDF página por página como imágenes',
+    description: 'Sube un PDF y recibe URLs para cada página en formato imagen. Para probar en el front.',
+  })
+  @ApiResponse({ status: 200, description: 'sessionId, numPaginas y array de { numero, url }.' })
+  async probarPaginasImagen(
+    @UploadedFile() file?: { buffer: Buffer; mimetype: string; originalname?: string },
+  ) {
+    if (!file?.buffer) {
+      throw new BadRequestException('Debes enviar un archivo PDF.');
+    }
+    const ok =
+      file.mimetype === 'application/pdf' ||
+      (file.originalname && file.originalname.toLowerCase().endsWith('.pdf'));
+    if (!ok) {
+      throw new BadRequestException('Solo se permiten archivos PDF.');
+    }
+    return this.librosPdfImagenesService.extraerPaginasComoImagenes(file.buffer);
+  }
+
+  /**
+   * GET /libros/probar-paginas-imagen/:sessionId/:numero
+   * Sirve la imagen PNG de una página generada por POST probar-paginas-imagen.
+   */
+  @Get('probar-paginas-imagen/:sessionId/:numero')
+  @UseGuards(JwtAuthGuard)
+  @ApiTags('Prueba - Imágenes por página')
+  @ApiOperation({ summary: '[PRUEBA] Obtener imagen de una página' })
+  @ApiParam({ name: 'sessionId', description: 'ID de sesión retornado por POST probar-paginas-imagen' })
+  @ApiParam({ name: 'numero', description: 'Número de página (1, 2, 3...)' })
+  @ApiResponse({ status: 200, description: 'Imagen PNG.' })
+  @ApiResponse({ status: 404, description: 'Imagen no encontrada.' })
+  async servirImagenPrueba(
+    @Param('sessionId') sessionId: string,
+    @Param('numero', ParseIntPipe) numero: number,
+  ): Promise<StreamableFile> {
+    const ruta = await this.librosPdfImagenesService.rutaImagenPrueba(sessionId, numero);
+    if (!ruta) {
+      throw new NotFoundException(`No se encontró la imagen de la página ${numero}.`);
+    }
+    const stream = createReadStream(ruta);
+    return new StreamableFile(stream, { type: 'image/png' });
+  }
+
+  /**
    * GET /libros
    * Listar todos los libros (solo admin).
    */
   @Get()
   @UseGuards(AdminGuard)
   @ApiTags('Solo Administrador')
-  @ApiOperation({ summary: 'Listar libros. Requiere admin.' })
-  @ApiResponse({ status: 200, description: 'Lista de libros.' })
+  @ApiOperation({ summary: 'Listar libros con paginación. Requiere admin.' })
+  @ApiResponse({ status: 200, description: 'Lista de libros con meta (page, limit, totalPages).' })
   @ApiResponse({ status: 401, description: 'No autenticado.' })
   @ApiResponse({ status: 403, description: 'No es administrador.' })
-  async listar() {
-    return this.librosService.listar();
+  async listar(@Query() query: ListarLibrosQueryDto) {
+    const page = query?.page ?? 1;
+    const limit = query?.limit ?? 50;
+    return this.librosService.listar(page, limit);
+  }
+
+  /**
+   * GET /libros/:id/paginas/:numero/imagen
+   * Sirve la imagen (captura) de una página del libro. Mismo formato que el libro, página por página.
+   */
+  @Get(':id/paginas/:numero/imagen')
+  @UseGuards(AdminOrDirectorOrAlumnoGuard)
+  @ApiTags('Libros')
+  @ApiOperation({ summary: 'Obtener imagen de una página del libro' })
+  @ApiParam({ name: 'id', type: 'number', description: 'ID del libro' })
+  @ApiParam({ name: 'numero', type: 'number', description: 'Número de página (1, 2, 3...)' })
+  @ApiResponse({ status: 200, description: 'Imagen PNG de la página.' })
+  @ApiResponse({ status: 404, description: 'Libro o imagen no encontrada.' })
+  async servirImagenPaginaLibro(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('numero', ParseIntPipe) numero: number,
+  ): Promise<StreamableFile> {
+    const { id: libroId, codigo } = await this.librosService.obtenerLibroBasico(id);
+    const ruta = await this.librosPdfImagenesService.rutaImagenPaginaLibro(libroId, codigo, numero);
+    if (!ruta) {
+      throw new NotFoundException(`No se encontró la imagen de la página ${numero}. Es posible que el libro se haya cargado sin generar imágenes.`);
+    }
+    const stream = createReadStream(ruta);
+    return new StreamableFile(stream, { type: 'image/png' });
   }
 
   /**
@@ -205,6 +297,20 @@ export class LibrosController {
       throw new BadRequestException('El body debe incluir "activo" (boolean).');
     }
     return this.librosService.setLibroActivoEnEscuela(id, escuelaId, body.activo);
+  }
+
+  /**
+   * GET /libros/:id/estado
+   * Estado del libro (procesamiento async o debugging).
+   */
+  @Get(':id/estado')
+  @UseGuards(AdminGuard)
+  @ApiTags('Solo Administrador')
+  @ApiOperation({ summary: 'Obtener estado de procesamiento del libro.' })
+  @ApiParam({ name: 'id', type: 'number' })
+  @ApiResponse({ status: 200, description: 'Estado del libro (estado, mensajeError, jobId).' })
+  async obtenerEstado(@Param('id', ParseIntPipe) id: number) {
+    return this.librosService.obtenerEstado(id);
   }
 
   /**

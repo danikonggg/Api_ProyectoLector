@@ -41,21 +41,18 @@ import { PersonasService } from './personas.service';
 import { RegistroPadreDto } from './dto/registro-padre.dto';
 import { RegistroAlumnoDto } from './dto/registro-alumno.dto';
 import { RegistroMaestroDto } from './dto/registro-maestro.dto';
+import { RegistroPadreConHijoDto } from './dto/registro-padre-con-hijo.dto';
 import { RegistroDirectorDto } from './dto/registro-director.dto';
 import { ActualizarUsuarioDto } from './dto/actualizar-usuario.dto';
+import { VincularAlumnoDto } from './dto/vincular-alumno.dto';
+import { DesvincularAlumnoDto } from './dto/desvincular-alumno.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { AdminOrDirectorGuard } from '../auth/guards/admin-or-director.guard';
-import type { AuditContext } from './personas.service';
+import { getAuditContext } from '../common/utils/audit.utils';
+import { User } from '../auth/decorators/user.decorator';
+import { RequestUser } from '../common/interfaces/request-user.interface';
 import type { Request } from 'express';
-
-function getAuditContext(req: Request): AuditContext {
-  const ip = req.ip ?? (Array.isArray(req.headers?.['x-forwarded-for']) ? req.headers['x-forwarded-for'][0] : req.headers?.['x-forwarded-for']) ?? req.headers?.['x-real-ip'];
-  return {
-    usuarioId: (req.user as any)?.id ?? null,
-    ip: typeof ip === 'string' ? ip : undefined,
-  };
-}
 
 @Controller('personas')
 export class PersonasController {
@@ -97,6 +94,79 @@ export class PersonasController {
   }
 
   /**
+   * POST /personas/registro-padre-con-hijo
+   * Registrar un padre/tutor y un alumno (hijo) a la vez.
+   * Solo administradores.
+   */
+  @Post('registro-padre-con-hijo')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth('JWT-auth')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiTags('Solo Administrador')
+  @ApiOperation({ summary: 'Registrar un padre/tutor y un alumno (requiere admin)' })
+  @ApiResponse({ status: 201, description: 'Padre e hijo registrados exitosamente' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'No es administrador' })
+  @ApiResponse({ status: 409, description: 'Email ya registrado' })
+  async registrarPadreConHijo(
+    @Body() registroDto: RegistroPadreConHijoDto,
+    @Req() req: Request,
+  ) {
+    return await this.personasService.registrarPadreConHijo(registroDto, getAuditContext(req));
+  }
+
+  /**
+   * POST /personas/padres/vincular-alumno
+   * Vincular un alumno a la cuenta de un padre/tutor mediante un código único.
+   * Debe ser llamado por un usuario cuyo tipoPersona sea "padre".
+   */
+  @Post('padres/vincular-alumno')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiTags('Padre')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Vincular un alumno a un padre mediante un código de un solo uso' })
+  @ApiResponse({ status: 200, description: 'Alumno vinculado correctamente' })
+  @ApiResponse({ status: 400, description: 'Código inválido, ya utilizado o expirado' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  async vincularAlumnoComoPadre(
+    @Body() dto: VincularAlumnoDto,
+    @Req() req: Request,
+  ) {
+    const user = req.user as RequestUser;
+    if (user.tipoPersona !== 'padre' || !user.padre) {
+      throw new ForbiddenException('Solo los padres/tutores pueden vincular alumnos con un código');
+    }
+    return await this.personasService.vincularAlumnoConPadrePorCodigo(user.padre.id, dto.codigo);
+  }
+
+  /**
+   * POST /personas/padres/desvincular-alumno
+   * Desvincular un alumno de la cuenta del padre/tutor autenticado.
+   * Solo el tutor puede desvincular alumnos que tenga vinculados.
+   */
+  @Post('padres/desvincular-alumno')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiTags('Padre')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Desvincular un alumno del tutor' })
+  @ApiResponse({ status: 200, description: 'Alumno desvinculado correctamente' })
+  @ApiResponse({ status: 403, description: 'El alumno no está vinculado a tu cuenta' })
+  @ApiResponse({ status: 404, description: 'Alumno no encontrado' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  async desvincularAlumnoComoPadre(
+    @Body() dto: DesvincularAlumnoDto,
+    @Req() req: Request,
+  ) {
+    const user = req.user as RequestUser;
+    if (user.tipoPersona !== 'padre' || !user.padre) {
+      throw new ForbiddenException('Solo los padres/tutores pueden desvincular alumnos');
+    }
+    return await this.personasService.desvincularAlumnoDelPadre(user.padre.id, dto.alumnoId);
+  }
+
+  /**
    * POST /personas/registro-alumno
    * Registrar un alumno (administradores o directores)
    * - Los administradores pueden registrar en cualquier escuela
@@ -133,7 +203,7 @@ export class PersonasController {
   @ApiResponse({ status: 403, description: 'No es administrador ni director' })
   @ApiResponse({ status: 409, description: 'Email ya registrado' })
   async registrarAlumno(@Body() registroDto: RegistroAlumnoDto, @Req() req: Request) {
-    const user = req.user as any;
+    const user = req.user as RequestUser;
 
     if (user.tipoPersona === 'director' && user.director) {
       const miEscuelaId = Number(user.director.escuelaId ?? user.director.escuela?.id);
@@ -188,7 +258,7 @@ export class PersonasController {
   @ApiResponse({ status: 403, description: 'No es administrador ni director' })
   @ApiResponse({ status: 409, description: 'Email ya registrado' })
   async registrarMaestro(@Body() registroDto: RegistroMaestroDto, @Req() req: Request) {
-    const user = req.user as any;
+    const user = req.user as RequestUser;
 
     if (user.tipoPersona === 'director' && user.director) {
       const miEscuelaId = Number(user.director.escuelaId ?? user.director.escuela?.id);
@@ -316,7 +386,7 @@ export class PersonasController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    const user = req.user as any;
+    const user = req.user as RequestUser;
     let escuelaIdFiltro: number | undefined;
     if (user.tipoPersona === 'director' && user.director) {
       escuelaIdFiltro = Number(user.director.escuelaId ?? user.director.escuela?.id);
@@ -354,12 +424,74 @@ export class PersonasController {
     if (!campo || !valor) {
       throw new BadRequestException('Se requieren los query params "campo" y "valor".');
     }
-    const user = req.user as any;
+    const user = req.user as RequestUser;
     let escuelaIdFiltro: number | undefined;
     if (user.tipoPersona === 'director' && user.director) {
       escuelaIdFiltro = Number(user.director.escuelaId ?? user.director.escuela?.id);
     }
     return await this.personasService.buscarAlumnos(campo, valor, escuelaIdFiltro);
+  }
+
+  /**
+   * GET /personas/alumnos/codigo-vinculacion
+   * Compatibilidad con Frontend: devuelve el código del alumno autenticado.
+   */
+  @Get('alumnos/codigo-vinculacion')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiTags('Alumno')
+  @ApiOperation({ summary: 'Obtener el código de vinculación del alumno (propio, sin id en URL)' })
+  @ApiResponse({ status: 200, description: 'Código de vinculación obtenido correctamente' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'No autorizado' })
+  async obtenerMiCodigoVinculacionAlumno(
+    @Req() req: Request,
+  ) {
+    const user = req.user as RequestUser;
+    // El frontend puede consumir este endpoint como Alumno o como Padre/Tutor.
+    if (user.alumno) {
+      return await this.personasService.obtenerCodigoVinculacionAlumno(Number(user.alumno.id));
+    }
+    if (user.padre) {
+      return await this.personasService.obtenerCodigoVinculacionParaPadre(Number(user.padre.id));
+    }
+    throw new ForbiddenException('Solo alumnos o padres/tutores pueden acceder a esta ruta');
+  }
+
+  /**
+   * GET /personas/alumnos/:id/codigo-vinculacion
+   * Obtener el código de vinculación del alumno (solo para su propio código).
+   *
+   * Importante:
+   * - Esta ruta NO usa AdminOrDirectorGuard para que el rol Alumno pueda consultarla.
+   * - Valida que el :id corresponda al alumno autenticado (por alumno.id o por alumno.personaId, para compatibilidad).
+   */
+  @Get('alumnos/:id/codigo-vinculacion')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiTags('Alumno')
+  @ApiOperation({ summary: 'Obtener el código de vinculación del alumno (propio)' })
+  @ApiResponse({ status: 200, description: 'Código de vinculación obtenido correctamente' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'No autorizado' })
+  async obtenerCodigoVinculacionAlumno(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request,
+  ) {
+    const user = req.user as RequestUser;
+    // Preferimos basarnos en la relación "alumno" para evitar inconsistencias en tipoPersona.
+    if (!user.alumno) {
+      throw new ForbiddenException('Solo los alumnos pueden acceder a esta ruta');
+    }
+
+    // Para compatibilidad: el frontend puede enviar id de alumno o id de persona.
+    const alumnoId = Number(user.alumno.id);
+    const personaId = Number((user.alumno as any).personaId ?? user.alumno.persona?.id);
+    if (alumnoId !== Number(id) && personaId !== Number(id)) {
+      throw new ForbiddenException('No puedes consultar el código de otro alumno');
+    }
+
+    return await this.personasService.obtenerCodigoVinculacionAlumno(id);
   }
 
   /**
@@ -380,7 +512,7 @@ export class PersonasController {
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request,
   ) {
-    const user = req.user as any;
+    const user = req.user as RequestUser;
     const escuelaId = user.tipoPersona === 'director' && user.director
       ? Number(user.director.escuelaId ?? user.director.escuela?.id)
       : undefined;
@@ -404,7 +536,8 @@ export class PersonasController {
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request,
   ) {
-    const user = req.user as any;
+    const user = req.user as RequestUser;
+
     const escuelaId = user.tipoPersona === 'director' && user.director
       ? Number(user.director.escuelaId ?? user.director.escuela?.id)
       : undefined;
@@ -420,7 +553,10 @@ export class PersonasController {
   @UseGuards(JwtAuthGuard, AdminOrDirectorGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiTags('Admin o Director')
-  @ApiOperation({ summary: 'Actualizar alumno (admin o director; director solo de su escuela)' })
+  @ApiOperation({
+    summary: 'Actualizar alumno (admin o director; director solo de su escuela)',
+    description: 'Actualiza datos de persona (nombre, correo, etc.) y opcionalmente grupoId para asignar o quitar del grupo.',
+  })
   @ApiResponse({ status: 200, description: 'Alumno actualizado' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'No autorizado' })
@@ -430,12 +566,11 @@ export class PersonasController {
     @Body() dto: ActualizarUsuarioDto,
     @Req() req: Request,
   ) {
-    const user = req.user as any;
+    const user = req.user as RequestUser;
     const escuelaId = user.tipoPersona === 'director' && user.director
       ? Number(user.director.escuelaId ?? user.director.escuela?.id)
       : undefined;
-    const { data } = await this.personasService.obtenerAlumnoPorId(id, escuelaId);
-    return await this.personasService.actualizarUsuarioPorId(data.personaId, dto, getAuditContext(req));
+    return await this.personasService.actualizarAlumno(id, dto, escuelaId, getAuditContext(req));
   }
 
   /**
@@ -456,7 +591,7 @@ export class PersonasController {
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request,
   ) {
-    const user = req.user as any;
+    const user = req.user as RequestUser;
     const escuelaId = user.tipoPersona === 'director' && user.director
       ? Number(user.director.escuelaId ?? user.director.escuela?.id)
       : undefined;
@@ -483,7 +618,7 @@ export class PersonasController {
     @Body() dto: ActualizarUsuarioDto,
     @Req() req: Request,
   ) {
-    const user = req.user as any;
+    const user = req.user as RequestUser;
     const escuelaId = user.tipoPersona === 'director' && user.director
       ? Number(user.director.escuelaId ?? user.director.escuela?.id)
       : undefined;
@@ -509,7 +644,7 @@ export class PersonasController {
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request,
   ) {
-    const user = req.user as any;
+    const user = req.user as RequestUser;
     const escuelaId = user.tipoPersona === 'director' && user.director
       ? Number(user.director.escuelaId ?? user.director.escuela?.id)
       : undefined;
@@ -544,15 +679,29 @@ export class PersonasController {
    * Ruta más específica debe ir antes que padres/:id
    */
   @Get('padres/:id/alumnos')
-  @UseGuards(JwtAuthGuard, AdminGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
-  @ApiTags('Solo Administrador')
-  @ApiOperation({ summary: 'Ver los hijos/alumnos de un padre' })
+  @ApiTags('Padre o Administrador')
+  @ApiOperation({ summary: 'Ver los hijos/alumnos de un padre (propio o admin)' })
   @ApiResponse({ status: 200, description: 'Lista de alumnos del padre' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
-  @ApiResponse({ status: 403, description: 'Solo administradores' })
+  @ApiResponse({ status: 403, description: 'No autorizado (solo admin o tu propio padre)' })
   @ApiResponse({ status: 404, description: 'Padre no encontrado' })
-  async obtenerAlumnosDePadre(@Param('id', ParseIntPipe) id: number) {
+  async obtenerAlumnosDePadre(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request,
+  ) {
+    const user = req.user as RequestUser;
+    if (user.tipoPersona === 'padre' && user.padre) {
+      // El Frontend podría mandar el id incorrecto (padre.id vs personaId).
+      // Para seguridad, siempre resolvemos contra el padre del token.
+      return await this.personasService.obtenerAlumnosDePadre(Number(user.padre.id));
+    } else if (user.tipoPersona === 'administrador' && user.administrador) {
+      // Admin: puede ver cualquier padre
+    } else {
+      throw new ForbiddenException('Solo administradores o padres/tutores pueden acceder a esta ruta');
+    }
+
     return await this.personasService.obtenerAlumnosDePadre(id);
   }
 
@@ -561,15 +710,28 @@ export class PersonasController {
    * Obtener padre por ID con sus alumnos (de quién es padre)
    */
   @Get('padres/:id')
-  @UseGuards(JwtAuthGuard, AdminGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
-  @ApiTags('Solo Administrador')
-  @ApiOperation({ summary: 'Obtener padre por ID con sus hijos/alumnos' })
+  @ApiTags('Padre o Administrador')
+  @ApiOperation({ summary: 'Obtener padre por ID con sus hijos/alumnos (propio o admin)' })
   @ApiResponse({ status: 200, description: 'Padre encontrado con sus alumnos' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
-  @ApiResponse({ status: 403, description: 'Solo administradores' })
+  @ApiResponse({ status: 403, description: 'No autorizado (solo admin o tu propio padre)' })
   @ApiResponse({ status: 404, description: 'Padre no encontrado' })
-  async obtenerPadrePorId(@Param('id', ParseIntPipe) id: number) {
+  async obtenerPadrePorId(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request,
+  ) {
+    const user = req.user as RequestUser;
+    if (user.tipoPersona === 'padre' && user.padre) {
+      // Para seguridad, siempre resolvemos el padre del token.
+      return await this.personasService.obtenerPadrePorId(Number(user.padre.id));
+    } else if (user.tipoPersona === 'administrador' && user.administrador) {
+      // Admin: puede ver cualquier padre
+    } else {
+      throw new ForbiddenException('Solo administradores o padres/tutores pueden acceder a esta ruta');
+    }
+
     return await this.personasService.obtenerPadrePorId(id);
   }
 }

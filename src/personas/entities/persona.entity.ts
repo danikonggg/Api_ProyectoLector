@@ -28,18 +28,11 @@ export class Persona {
   @Column({ name: 'nombre', type: 'varchar', length: 100 })
   nombre: string;
 
-  @Column({ name: 'segundo_nombre', type: 'varchar', length: 100, nullable: true })
-  segundoNombre: string | null;
-
   @Column({ name: 'apellido_paterno', type: 'varchar', length: 100 })
   apellidoPaterno: string;
 
   @Column({ name: 'apellido_materno', type: 'varchar', length: 100, nullable: true })
   apellidoMaterno: string | null;
-
-  /** @deprecated Usar apellidoPaterno. Se mantiene por compatibilidad con columna legacy. */
-  @Column({ name: 'apellido', type: 'varchar', length: 100, nullable: true })
-  apellido: string | null;
 
   @Column({ name: 'correo', type: 'varchar', length: 150, nullable: true })
   correo: string;

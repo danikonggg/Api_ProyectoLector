@@ -101,6 +101,8 @@ CREATE TABLE IF NOT EXISTS "Libro" (
 	"codigo" varchar(50) NOT NULL,
 	"grado" bigint NOT NULL,
 	"descripcion" varchar(255),
+  "editorial" varchar(150),
+  "autor" varchar(150),
 	PRIMARY KEY ("id")
 );
 

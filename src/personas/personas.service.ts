@@ -12,6 +12,7 @@ import {
   Injectable,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
   Logger,
 } from '@nestjs/common';
@@ -26,13 +27,17 @@ import { Maestro } from './entities/maestro.entity';
 import { Director } from './entities/director.entity';
 import { Escuela } from './entities/escuela.entity';
 import { AlumnoMaestro } from './entities/alumno-maestro.entity';
+import { AlumnoVinculacionPadre } from './entities/alumno-vinculacion-padre.entity';
+import { Grupo } from '../escuelas/entities/grupo.entity';
 import { RegistroPadreDto } from './dto/registro-padre.dto';
 import { RegistroAlumnoDto } from './dto/registro-alumno.dto';
 import { RegistroMaestroDto } from './dto/registro-maestro.dto';
 import { RegistroDirectorDto } from './dto/registro-director.dto';
+import { RegistroPadreConHijoDto } from './dto/registro-padre-con-hijo.dto';
 import { ActualizarUsuarioDto } from './dto/actualizar-usuario.dto';
 import { AuditService } from '../audit/audit.service';
 import { MAX_PAGE_SIZE, MAX_PAGE_NUMBER } from '../common/constants/validation.constants';
+import { mapPersonaToUsuarioListItem } from './mappers/usuario.mapper';
 
 export interface AuditContext {
   usuarioId?: number | null;
@@ -53,12 +58,16 @@ export class PersonasService {
     private readonly padreRepository: Repository<Padre>,
     @InjectRepository(Alumno)
     private readonly alumnoRepository: Repository<Alumno>,
+    @InjectRepository(AlumnoVinculacionPadre)
+    private readonly alumnoVinculacionPadreRepository: Repository<AlumnoVinculacionPadre>,
     @InjectRepository(Maestro)
     private readonly maestroRepository: Repository<Maestro>,
     @InjectRepository(Director)
     private readonly directorRepository: Repository<Director>,
     @InjectRepository(Escuela)
     private readonly escuelaRepository: Repository<Escuela>,
+    @InjectRepository(Grupo)
+    private readonly grupoRepository: Repository<Grupo>,
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly auditService: AuditService,
@@ -77,10 +86,11 @@ export class PersonasService {
       const personaRepo = manager.getRepository(Persona);
       const padreRepo = manager.getRepository(Padre);
       const alumnoRepo = manager.getRepository(Alumno);
+      const alumnoVinculacionRepo = manager.getRepository(AlumnoVinculacionPadre);
 
       const personaExistente = await personaRepo.findOne({
         where: { correo: registroDto.email },
-        select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
+        select: ['id', 'nombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
       });
 
       if (personaExistente) {
@@ -93,7 +103,6 @@ export class PersonasService {
 
       const persona = personaRepo.create({
         nombre: registroDto.nombre,
-        segundoNombre: registroDto.segundoNombre?.trim() || null,
         apellidoPaterno: registroDto.apellidoPaterno,
         apellidoMaterno: registroDto.apellidoMaterno?.trim() || null,
         correo: registroDto.email,
@@ -120,6 +129,12 @@ export class PersonasService {
           alumno.padreId = padreGuardado.id;
           await alumnoRepo.save(alumno);
           this.logger.log(`Alumno ID ${alumno.id} vinculado al padre ID ${padreGuardado.id}`);
+
+          // Si había un código de vinculación pendiente para este alumno, márcalo como usado
+          await alumnoVinculacionRepo.update(
+            { alumnoId: alumno.id, usado: false },
+            { usado: true, usadoEn: new Date() },
+          );
         }
       }
 
@@ -134,7 +149,7 @@ export class PersonasService {
       const resultado = await personaRepo.findOne({
         where: { id: personaGuardada.id },
         relations: ['padre'],
-        select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
+        select: ['id', 'nombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
       });
 
       const { password, ...resultadoSinPassword } = resultado;
@@ -148,87 +163,349 @@ export class PersonasService {
   }
 
   /**
+   * Registrar un padre/tutor y un alumno (hijo) en una sola operación.
+   * Se crea el padre + el alumno y se vinculan directamente.
+   */
+  async registrarPadreConHijo(registroDto: RegistroPadreConHijoDto, auditContext?: AuditContext) {
+    this.logger.log(
+      `Intento de registro de padre+alumno: ${registroDto.padre.email} -> hijo=${registroDto.hijo.email}`,
+    );
+
+    if (!registroDto?.hijo?.idEscuela) {
+      throw new BadRequestException('Debe indicar el ID de la escuela para el alumno (hijo.idEscuela)');
+    }
+
+    return await this.dataSource.transaction(async (manager) => {
+      const personaRepo = manager.getRepository(Persona);
+      const padreRepo = manager.getRepository(Padre);
+      const alumnoRepo = manager.getRepository(Alumno);
+      const alumnoVinculacionRepo = manager.getRepository(AlumnoVinculacionPadre);
+      const escuelaRepo = manager.getRepository(Escuela);
+      const grupoRepo = manager.getRepository(Grupo);
+
+      const padreDto = registroDto.padre;
+      const hijoDto = registroDto.hijo;
+
+      // Validación: correo del padre único
+      const personaPadreExistente = await personaRepo.findOne({
+        where: { correo: padreDto.email },
+        select: ['id'],
+      });
+      if (personaPadreExistente) {
+        throw new ConflictException('El email del padre ya está registrado');
+      }
+
+      // Validación: correo del hijo único
+      const personaHijoExistente = await personaRepo.findOne({
+        where: { correo: hijoDto.email },
+        select: ['id'],
+      });
+      if (personaHijoExistente) {
+        throw new ConflictException('El email del alumno ya está registrado');
+      }
+
+      const escuela = await escuelaRepo.findOne({ where: { id: hijoDto.idEscuela } });
+      if (!escuela) {
+        throw new NotFoundException(`No se encontró la escuela con ID ${hijoDto.idEscuela}`);
+      }
+
+      let grupoId: number | null = null;
+      let gradoFinal = hijoDto.grado ? parseInt(hijoDto.grado.toString()) : 1;
+      let grupoNombre: string | null = hijoDto.grupo?.trim() || null;
+
+      if (hijoDto.grupoId != null) {
+        const g = await grupoRepo.findOne({
+          where: { id: hijoDto.grupoId, escuelaId: hijoDto.idEscuela, activo: true },
+        });
+        if (!g) {
+          throw new NotFoundException(
+            `No existe el grupo con ID ${hijoDto.grupoId} en esta escuela`,
+          );
+        }
+        grupoId = g.id;
+        gradoFinal = Number(g.grado);
+        grupoNombre = g.nombre;
+      } else if (
+        hijoDto.grado != null &&
+        hijoDto.grupo != null &&
+        hijoDto.grupo.trim() !== ''
+      ) {
+        const grupoNorm = hijoDto.grupo.trim().toUpperCase();
+        const grupos = await grupoRepo.find({
+          where: { escuelaId: hijoDto.idEscuela!, grado: hijoDto.grado, activo: true },
+        });
+        const g = grupos.find((x) => x.nombre.trim().toUpperCase() === grupoNorm);
+        if (!g) {
+          throw new BadRequestException(
+            `No existe un grupo con grado ${hijoDto.grado} y nombre "${hijoDto.grupo}". El admin/director debe crearlo primero.`,
+          );
+        }
+        grupoId = g.id;
+        gradoFinal = Number(g.grado);
+        grupoNombre = g.nombre;
+      }
+
+      // Padre
+      const saltRounds = 10;
+      const hashedPasswordPadre = await bcrypt.hash(padreDto.password, saltRounds);
+      const personaPadre = personaRepo.create({
+        nombre: padreDto.nombre,
+        apellidoPaterno: padreDto.apellidoPaterno,
+        apellidoMaterno: padreDto.apellidoMaterno?.trim() || null,
+        correo: padreDto.email,
+        password: hashedPasswordPadre,
+        telefono: padreDto.telefono,
+        fechaNacimiento: padreDto.fechaNacimiento ? new Date(padreDto.fechaNacimiento) : null,
+        tipoPersona: 'padre',
+        activo: true,
+      });
+      const personaPadreGuardada = await personaRepo.save(personaPadre);
+
+      const padre = padreRepo.create({
+        personaId: personaPadreGuardada.id,
+      });
+      const padreGuardado = await padreRepo.save(padre);
+
+      // Hijo (alumno)
+      const hashedPasswordHijo = await bcrypt.hash(hijoDto.password, saltRounds);
+      const personaHijo = personaRepo.create({
+        nombre: hijoDto.nombre,
+        apellidoPaterno: hijoDto.apellidoPaterno,
+        apellidoMaterno: hijoDto.apellidoMaterno?.trim() || null,
+        correo: hijoDto.email,
+        password: hashedPasswordHijo,
+        telefono: hijoDto.telefono,
+        fechaNacimiento: hijoDto.fechaNacimiento ? new Date(hijoDto.fechaNacimiento) : null,
+        tipoPersona: 'alumno',
+        activo: true,
+      });
+      const personaHijoGuardada = await personaRepo.save(personaHijo);
+
+      const alumno = alumnoRepo.create({
+        personaId: personaHijoGuardada.id,
+        escuelaId: hijoDto.idEscuela!,
+        grado: gradoFinal,
+        grupo: grupoNombre,
+        grupoId,
+        cicloEscolar: hijoDto.cicloEscolar || null,
+        padreId: padreGuardado.id,
+        activo: true,
+      });
+      const alumnoGuardado = await alumnoRepo.save(alumno);
+
+      // Crear código de vinculación del alumno y marcarlo como usado
+      // (evita que luego sea reutilizado para vincular al mismo alumno a otro padre).
+      await this.crearCodigoVinculacionParaAlumnoTransactional(
+        alumnoGuardado.id,
+        alumnoVinculacionRepo,
+      );
+      await alumnoVinculacionRepo.update(
+        { alumnoId: alumnoGuardado.id, usado: false },
+        { usado: true, usadoEn: new Date() },
+      );
+
+      await this.auditService.log('registro_padre_con_hijo', {
+        usuarioId: auditContext?.usuarioId ?? null,
+        ip: auditContext?.ip ?? null,
+        detalles: `${padreDto.email} | alumno=${hijoDto.email} | escuelaId=${hijoDto.idEscuela}`,
+      });
+
+      const [padreResult, hijoResult] = await Promise.all([
+        personaRepo.findOne({
+          where: { id: personaPadreGuardada.id },
+          relations: ['padre'],
+          select: [
+            'id',
+            'nombre',
+            'apellidoPaterno',
+            'apellidoMaterno',
+            'correo',
+            'telefono',
+            'fechaNacimiento',
+            'genero',
+          ],
+        }),
+        personaRepo.findOne({
+          where: { id: personaHijoGuardada.id },
+          relations: ['alumno', 'alumno.escuela'],
+          select: [
+            'id',
+            'nombre',
+            'apellidoPaterno',
+            'apellidoMaterno',
+            'correo',
+            'telefono',
+            'fechaNacimiento',
+            'genero',
+          ],
+        }),
+      ]);
+
+      if (!padreResult || !hijoResult) {
+        throw new BadRequestException('Error interno: no se pudo obtener el resultado del registro');
+      }
+
+      // Nota: password no está seleccionado, pero lo dejamos por claridad/seguridad.
+      const { password: _padrePw, ...padreSinPassword } = padreResult as any;
+      const { password: _hijoPw, ...hijoSinPassword } = hijoResult as any;
+
+      return {
+        message: 'Padre e hijo registrados exitosamente',
+        description: 'Los usuarios han sido creados y vinculados correctamente',
+        data: {
+          padre: padreSinPassword,
+          hijo: hijoSinPassword,
+        },
+      };
+    });
+  }
+
+  /**
    * Registrar un alumno
    */
   async registrarAlumno(registroDto: RegistroAlumnoDto, auditContext?: AuditContext) {
     this.logger.log(`Intento de registro de alumno: ${registroDto.email}`);
-    
-    // Verificar que el email no esté en uso
-    const personaExistente = await this.personaRepository.findOne({
-      where: { correo: registroDto.email },
-      select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
+
+    const resultado = await this.dataSource.transaction(async (manager) => {
+      const personaRepo = manager.getRepository(Persona);
+      const alumnoRepo = manager.getRepository(Alumno);
+      const escuelaRepo = manager.getRepository(Escuela);
+      const grupoRepo = manager.getRepository(Grupo);
+      const alumnoVinculacionRepo = manager.getRepository(AlumnoVinculacionPadre);
+
+      const personaExistente = await personaRepo.findOne({
+        where: { correo: registroDto.email },
+        select: ['id'],
+      });
+      if (personaExistente) {
+        throw new ConflictException('El email ya está registrado');
+      }
+
+      const escuela = await escuelaRepo.findOne({ where: { id: registroDto.idEscuela } });
+      if (!escuela) {
+        throw new NotFoundException(`No se encontró la escuela con ID ${registroDto.idEscuela}`);
+      }
+
+      let grupoId: number | null = null;
+      let gradoFinal = registroDto.grado ? parseInt(registroDto.grado.toString()) : 1;
+      let grupoNombre: string | null = registroDto.grupo?.trim() || null;
+
+      if (registroDto.grupoId != null) {
+        const g = await grupoRepo.findOne({ where: { id: registroDto.grupoId, escuelaId: registroDto.idEscuela, activo: true } });
+        if (!g) {
+          throw new NotFoundException(`No existe el grupo con ID ${registroDto.grupoId} en esta escuela`);
+        }
+        grupoId = g.id;
+        gradoFinal = Number(g.grado);
+        grupoNombre = g.nombre;
+      } else if (registroDto.grado != null && registroDto.grupo != null && registroDto.grupo.trim() !== '') {
+        const grupoNorm = registroDto.grupo.trim().toUpperCase();
+        const grupos = await grupoRepo.find({ where: { escuelaId: registroDto.idEscuela!, grado: registroDto.grado, activo: true } });
+        const g = grupos.find((x) => x.nombre.trim().toUpperCase() === grupoNorm);
+        if (!g) {
+          throw new BadRequestException(`No existe un grupo con grado ${registroDto.grado} y nombre "${registroDto.grupo}" en esta escuela. El director debe crearlo primero.`);
+        }
+        grupoId = g.id;
+        gradoFinal = Number(g.grado);
+        grupoNombre = g.nombre;
+      }
+
+      const saltRounds = 10;
+      const hashedPassword = await bcrypt.hash(registroDto.password, saltRounds);
+
+      const persona = personaRepo.create({
+        nombre: registroDto.nombre,
+        apellidoPaterno: registroDto.apellidoPaterno,
+        apellidoMaterno: registroDto.apellidoMaterno?.trim() || null,
+        correo: registroDto.email,
+        password: hashedPassword,
+        telefono: registroDto.telefono,
+        fechaNacimiento: registroDto.fechaNacimiento ? new Date(registroDto.fechaNacimiento) : null,
+        tipoPersona: 'alumno',
+        activo: true,
+      });
+      const personaGuardada = await personaRepo.save(persona);
+
+      const alumno = alumnoRepo.create({
+        personaId: personaGuardada.id,
+        escuelaId: registroDto.idEscuela,
+        grado: gradoFinal,
+        grupo: grupoNombre,
+        grupoId,
+        cicloEscolar: registroDto.cicloEscolar || null,
+        padreId: null,
+      });
+      const alumnoGuardado = await alumnoRepo.save(alumno);
+
+      // Crear código de vinculación para padre/tutor (una sola vez por alumno al registrarse)
+      await this.crearCodigoVinculacionParaAlumnoTransactional(alumnoGuardado.id, alumnoVinculacionRepo);
+
+      const res = await personaRepo.findOne({
+        where: { id: personaGuardada.id },
+        relations: ['alumno', 'alumno.escuela'],
+        select: ['id', 'nombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
+      });
+      const { password, ...sinPassword } = res;
+      return { personaGuardada, resultadoSinPassword: sinPassword };
     });
 
-    if (personaExistente) {
-      this.logger.warn(`Registro fallido: Email ya registrado - ${registroDto.email}`);
-      throw new ConflictException('El email ya está registrado');
-    }
-
-    // Hashear contraseña
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(registroDto.password, saltRounds);
-
-    // Crear la persona
-    const persona = this.personaRepository.create({
-      nombre: registroDto.nombre,
-      segundoNombre: registroDto.segundoNombre?.trim() || null,
-      apellidoPaterno: registroDto.apellidoPaterno,
-      apellidoMaterno: registroDto.apellidoMaterno?.trim() || null,
-      correo: registroDto.email,
-      password: hashedPassword,
-      telefono: registroDto.telefono,
-      fechaNacimiento: registroDto.fechaNacimiento
-        ? new Date(registroDto.fechaNacimiento)
-        : null,
-      tipoPersona: 'alumno',
-      activo: true,
-    });
-
-    const personaGuardada = await this.personaRepository.save(persona);
-
-    // Verificar que la escuela existe
-    const escuela = await this.escuelaRepository.findOne({
-      where: { id: registroDto.idEscuela },
-    });
-
-    if (!escuela) {
-      this.logger.warn(`Registro fallido: Escuela no encontrada - ID: ${registroDto.idEscuela}`);
-      throw new NotFoundException(`No se encontró la escuela con ID ${registroDto.idEscuela}`);
-    }
-
-    // Crear el alumno (sin padre)
-    const alumno = this.alumnoRepository.create({
-      personaId: personaGuardada.id,
-      escuelaId: registroDto.idEscuela,
-      grado: registroDto.grado ? parseInt(registroDto.grado.toString()) : 1,
-      grupo: registroDto.grupo,
-      cicloEscolar: registroDto.cicloEscolar || null,
-      padreId: null,
-    });
-
-    await this.alumnoRepository.save(alumno);
-
-    this.logger.log(`Alumno creado exitosamente: ${personaGuardada.nombre} ${personaGuardada.apellidoPaterno} - ID: ${personaGuardada.id} - Grado: ${alumno.grado}`);
-
+    this.logger.log(`Alumno creado exitosamente: ${resultado.personaGuardada.nombre} - ID: ${resultado.personaGuardada.id}`);
     await this.auditService.log('registro_alumno', {
       usuarioId: auditContext?.usuarioId ?? null,
       ip: auditContext?.ip ?? null,
-      detalles: `${personaGuardada.correo} | escuelaId: ${registroDto.idEscuela}`,
+      detalles: `${resultado.personaGuardada.correo} | escuelaId: ${registroDto.idEscuela}`,
     });
-
-    const resultado = await this.personaRepository.findOne({
-      where: { id: personaGuardada.id },
-      relations: ['alumno', 'alumno.escuela'],
-      select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
-    });
-
-    const { password, ...resultadoSinPassword } = resultado;
 
     return {
       message: 'Alumno registrado exitosamente',
       description: 'El alumno ha sido creado correctamente. Puede iniciar sesión con su email y contraseña.',
-      data: resultadoSinPassword,
+      data: resultado.resultadoSinPassword,
     };
+  }
+
+  /**
+   * Crea un código de vinculación para un alumno dentro de una transacción existente.
+   */
+  private async crearCodigoVinculacionParaAlumnoTransactional(
+    alumnoId: number,
+    repo: Repository<AlumnoVinculacionPadre>,
+  ): Promise<AlumnoVinculacionPadre> {
+    const codigo = this.generarCodigoVinculacion();
+    const ahora = new Date();
+    const expiraEn = new Date(ahora.getTime() + 100 * 24 * 60 * 60 * 1000); // 100 días
+
+    const entidad = repo.create({
+      alumnoId,
+      codigo,
+      usado: false,
+      usadoEn: null,
+      expiraEn,
+    });
+
+    try {
+      return await repo.save(entidad);
+    } catch (e) {
+      // En el caso extremadamente raro de colisión de código, reintentamos una vez
+      const entidadRetry = repo.create({
+        alumnoId,
+        codigo: this.generarCodigoVinculacion(),
+        usado: false,
+        usadoEn: null,
+        expiraEn,
+      });
+      return await repo.save(entidadRetry);
+    }
+  }
+
+  /**
+   * Genera un código aleatorio, no predecible, para vinculación padre–alumno.
+   */
+  private generarCodigoVinculacion(): string {
+    // 16 bytes -> 32 caracteres hex (suficiente y no predecible)
+    // Se usa require en vez de import para evitar problemas en entornos donde crypto no está tipeado.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { randomBytes } = require('crypto') as typeof import('crypto');
+    return randomBytes(16).toString('hex');
   }
 
   /**
@@ -236,83 +513,62 @@ export class PersonasService {
    */
   async registrarMaestro(registroDto: RegistroMaestroDto, auditContext?: AuditContext) {
     this.logger.log(`Intento de registro de maestro: ${registroDto.email}`);
-    
-    // Verificar que el email no esté en uso
-    const personaExistente = await this.personaRepository.findOne({
-      where: { correo: registroDto.email },
-      select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
+
+    const resultado = await this.dataSource.transaction(async (manager) => {
+      const personaRepo = manager.getRepository(Persona);
+      const maestroRepo = manager.getRepository(Maestro);
+      const escuelaRepo = manager.getRepository(Escuela);
+
+      const personaExistente = await personaRepo.findOne({ where: { correo: registroDto.email }, select: ['id'] });
+      if (personaExistente) throw new ConflictException('El email ya está registrado');
+
+      const escuela = await escuelaRepo.findOne({ where: { id: registroDto.idEscuela } });
+      if (!escuela) throw new NotFoundException(`No se encontró la escuela con ID ${registroDto.idEscuela}`);
+
+      const saltRounds = 10;
+      const hashedPassword = await bcrypt.hash(registroDto.password, saltRounds);
+
+      const persona = personaRepo.create({
+        nombre: registroDto.nombre,
+        apellidoPaterno: registroDto.apellidoPaterno,
+        apellidoMaterno: registroDto.apellidoMaterno?.trim() || null,
+        correo: registroDto.email,
+        password: hashedPassword,
+        telefono: registroDto.telefono,
+        fechaNacimiento: registroDto.fechaNacimiento ? new Date(registroDto.fechaNacimiento) : null,
+        tipoPersona: 'maestro',
+        activo: true,
+      });
+      const personaGuardada = await personaRepo.save(persona);
+
+      const maestro = maestroRepo.create({
+        personaId: personaGuardada.id,
+        escuelaId: registroDto.idEscuela,
+        especialidad: registroDto.especialidad,
+        fechaContratacion: registroDto.fechaIngreso ? new Date(registroDto.fechaIngreso) : null,
+      });
+      await maestroRepo.save(maestro);
+
+      const res = await personaRepo.findOne({
+        where: { id: personaGuardada.id },
+        relations: ['maestro', 'maestro.escuela'],
+        select: ['id', 'nombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
+      });
+      const { password, ...sinPassword } = res;
+      return { personaGuardada, resultadoSinPassword: sinPassword };
     });
 
-    if (personaExistente) {
-      this.logger.warn(`Registro fallido: Email ya registrado - ${registroDto.email}`);
-      throw new ConflictException('El email ya está registrado');
-    }
-
-    // Hashear contraseña
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(registroDto.password, saltRounds);
-
-    // Crear la persona
-    const persona = this.personaRepository.create({
-      nombre: registroDto.nombre,
-      segundoNombre: registroDto.segundoNombre?.trim() || null,
-      apellidoPaterno: registroDto.apellidoPaterno,
-      apellidoMaterno: registroDto.apellidoMaterno?.trim() || null,
-      correo: registroDto.email,
-      password: hashedPassword,
-      telefono: registroDto.telefono,
-      fechaNacimiento: registroDto.fechaNacimiento
-        ? new Date(registroDto.fechaNacimiento)
-        : null,
-      tipoPersona: 'maestro',
-      activo: true,
-    });
-
-    const personaGuardada = await this.personaRepository.save(persona);
-
-    // Verificar que la escuela existe
-    const escuela = await this.escuelaRepository.findOne({
-      where: { id: registroDto.idEscuela },
-    });
-
-    if (!escuela) {
-      this.logger.warn(`Registro fallido: Escuela no encontrada - ID: ${registroDto.idEscuela}`);
-      throw new NotFoundException(`No se encontró la escuela con ID ${registroDto.idEscuela}`);
-    }
-
-    // Crear el maestro
-    const maestro = this.maestroRepository.create({
-      personaId: personaGuardada.id,
-      escuelaId: registroDto.idEscuela,
-      especialidad: registroDto.especialidad,
-      fechaContratacion: registroDto.fechaIngreso
-        ? new Date(registroDto.fechaIngreso)
-        : null,
-    });
-
-    await this.maestroRepository.save(maestro);
-
-    this.logger.log(`Maestro creado exitosamente: ${personaGuardada.nombre} ${personaGuardada.apellidoPaterno} - ID: ${personaGuardada.id} - Especialidad: ${maestro.especialidad || 'N/A'}`);
-
+    this.logger.log(`Maestro creado exitosamente: ${resultado.personaGuardada.nombre} - ID: ${resultado.personaGuardada.id}`);
     await this.auditService.log('registro_maestro', {
       usuarioId: auditContext?.usuarioId ?? null,
       ip: auditContext?.ip ?? null,
-      detalles: `${personaGuardada.correo} | escuelaId: ${registroDto.idEscuela}`,
+      detalles: `${resultado.personaGuardada.correo} | escuelaId: ${registroDto.idEscuela}`,
     });
 
-    // Retornar la persona con el maestro
-    const resultado = await this.personaRepository.findOne({
-      where: { id: personaGuardada.id },
-      relations: ['maestro', 'maestro.escuela'],
-      select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
-    });
-
-    const { password, ...resultadoSinPassword } = resultado;
-    
     return {
       message: 'Maestro registrado exitosamente',
       description: 'El maestro/profesor ha sido creado correctamente. Puede iniciar sesión con su email y contraseña.',
-      data: resultadoSinPassword,
+      data: resultado.resultadoSinPassword,
     };
   }
 
@@ -328,7 +584,6 @@ export class PersonasService {
       .select([
         'persona.id',
         'persona.nombre',
-        'persona.segundoNombre',
         'persona.apellidoPaterno',
         'persona.apellidoMaterno',
         'persona.correo',
@@ -356,93 +611,68 @@ export class PersonasService {
    */
   async registrarDirector(registroDto: RegistroDirectorDto, auditContext?: AuditContext) {
     this.logger.log(`Intento de registro de director: ${registroDto.email}`);
-    
-    // Verificar que el email no esté en uso
-    const personaExistente = await this.personaRepository.findOne({
-      where: { correo: registroDto.email },
-      select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
-    });
 
-    if (personaExistente) {
-      this.logger.warn(`Registro fallido: Email ya registrado - ${registroDto.email}`);
-      throw new ConflictException('El email ya está registrado');
-    }
-
-    // Verificar que la escuela existe
-    const escuela = await this.escuelaRepository.findOne({
-      where: { id: registroDto.idEscuela },
-    });
-
-    if (!escuela) {
-      this.logger.warn(`Registro fallido: Escuela no encontrada - ID: ${registroDto.idEscuela}`);
-      throw new NotFoundException(`No se encontró la escuela con ID ${registroDto.idEscuela}`);
-    }
-
-    // Verificar que la escuela no tenga ya 3 directores (máximo por escuela)
     const MAX_DIRECTORES_POR_ESCUELA = 3;
-    const cantidadDirectores = await this.directorRepository.count({
-      where: { escuelaId: registroDto.idEscuela },
+
+    const resultado = await this.dataSource.transaction(async (manager) => {
+      const personaRepo = manager.getRepository(Persona);
+      const directorRepo = manager.getRepository(Director);
+      const escuelaRepo = manager.getRepository(Escuela);
+
+      const personaExistente = await personaRepo.findOne({ where: { correo: registroDto.email }, select: ['id'] });
+      if (personaExistente) throw new ConflictException('El email ya está registrado');
+
+      const escuela = await escuelaRepo.findOne({ where: { id: registroDto.idEscuela } });
+      if (!escuela) throw new NotFoundException(`No se encontró la escuela con ID ${registroDto.idEscuela}`);
+
+      const cantidadDirectores = await directorRepo.count({ where: { escuelaId: registroDto.idEscuela } });
+      if (cantidadDirectores >= MAX_DIRECTORES_POR_ESCUELA) {
+        throw new ConflictException(`Esta escuela ya tiene el máximo de ${MAX_DIRECTORES_POR_ESCUELA} directores asignados`);
+      }
+
+      const saltRounds = 10;
+      const hashedPassword = await bcrypt.hash(registroDto.password, saltRounds);
+
+      const persona = personaRepo.create({
+        nombre: registroDto.nombre,
+        apellidoPaterno: registroDto.apellidoPaterno,
+        apellidoMaterno: registroDto.apellidoMaterno?.trim() || null,
+        correo: registroDto.email,
+        password: hashedPassword,
+        telefono: registroDto.telefono,
+        fechaNacimiento: registroDto.fechaNacimiento ? new Date(registroDto.fechaNacimiento) : null,
+        tipoPersona: 'director',
+        activo: true,
+      });
+      const personaGuardada = await personaRepo.save(persona);
+
+      const director = directorRepo.create({
+        personaId: personaGuardada.id,
+        escuelaId: registroDto.idEscuela,
+        fechaNombramiento: registroDto.fechaNombramiento ? new Date(registroDto.fechaNombramiento) : new Date(),
+      });
+      await directorRepo.save(director);
+
+      const res = await personaRepo.findOne({
+        where: { id: personaGuardada.id },
+        relations: ['director', 'director.escuela'],
+        select: ['id', 'nombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
+      });
+      const { password, ...sinPassword } = res;
+      return { personaGuardada, resultadoSinPassword: sinPassword };
     });
 
-    if (cantidadDirectores >= MAX_DIRECTORES_POR_ESCUELA) {
-      this.logger.warn(`Registro fallido: La escuela ya tiene ${MAX_DIRECTORES_POR_ESCUELA} directores asignados`);
-      throw new ConflictException(`Esta escuela ya tiene el máximo de ${MAX_DIRECTORES_POR_ESCUELA} directores asignados`);
-    }
-
-    // Hashear contraseña
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(registroDto.password, saltRounds);
-
-    // Crear la persona
-    const persona = this.personaRepository.create({
-      nombre: registroDto.nombre,
-      segundoNombre: registroDto.segundoNombre?.trim() || null,
-      apellidoPaterno: registroDto.apellidoPaterno,
-      apellidoMaterno: registroDto.apellidoMaterno?.trim() || null,
-      correo: registroDto.email,
-      password: hashedPassword,
-      telefono: registroDto.telefono,
-      fechaNacimiento: registroDto.fechaNacimiento
-        ? new Date(registroDto.fechaNacimiento)
-        : null,
-      tipoPersona: 'director',
-      activo: true,
-    });
-
-    const personaGuardada = await this.personaRepository.save(persona);
-
-    // Crear el director
-    const director = this.directorRepository.create({
-      personaId: personaGuardada.id,
-      escuelaId: registroDto.idEscuela,
-      fechaNombramiento: registroDto.fechaNombramiento
-        ? new Date(registroDto.fechaNombramiento)
-        : new Date(),
-    });
-
-    await this.directorRepository.save(director);
-
-    this.logger.log(`Director creado exitosamente: ${personaGuardada.nombre} ${personaGuardada.apellidoPaterno} - ID: ${personaGuardada.id} - Escuela ID: ${registroDto.idEscuela}`);
-
+    this.logger.log(`Director creado exitosamente: ${resultado.personaGuardada.nombre} - ID: ${resultado.personaGuardada.id}`);
     await this.auditService.log('registro_director', {
       usuarioId: auditContext?.usuarioId ?? null,
       ip: auditContext?.ip ?? null,
-      detalles: `${personaGuardada.correo} | escuelaId: ${registroDto.idEscuela}`,
+      detalles: `${resultado.personaGuardada.correo} | escuelaId: ${registroDto.idEscuela}`,
     });
 
-    // Retornar la persona con el director
-    const resultado = await this.personaRepository.findOne({
-      where: { id: personaGuardada.id },
-      relations: ['director', 'director.escuela'],
-      select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
-    });
-
-    const { password, ...resultadoSinPassword } = resultado;
-    
     return {
       message: 'Director registrado exitosamente',
       description: 'El director ha sido creado correctamente. Puede iniciar sesión con su email y contraseña.',
-      data: resultadoSinPassword,
+      data: resultado.resultadoSinPassword,
     };
   }
 
@@ -471,12 +701,15 @@ export class PersonasService {
     data: Array<{
       id: number;
       nombre: string;
-      apellido: string;
+      apellidoPaterno: string;
+      apellidoMaterno: string | null;
       correo: string | null;
       telefono: string | null;
       fechaNacimiento: string | null;
+      genero: string | null;
       tipoPersona: string;
       activo: boolean;
+      ultimaConexion: string | null;
       rolId?: number;
       escuela?: { id: number; nombre: string; nivel: string };
     }>;
@@ -501,60 +734,11 @@ export class PersonasService {
         { tipoPersona: 'padre' },
       ],
       relations: ['administrador', 'director', 'director.escuela', 'maestro', 'maestro.escuela', 'alumno', 'alumno.escuela', 'padre'],
-      select: ['id', 'nombre', 'apellido', 'correo', 'telefono', 'fechaNacimiento', 'tipoPersona', 'activo'],
+      select: ['id', 'nombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'tipoPersona', 'activo', 'ultimaConexion'],
       order: { tipoPersona: 'ASC', apellidoPaterno: 'ASC', nombre: 'ASC' },
     });
 
-    const data = personas.map((p) => {
-      const base = {
-        id: p.id,
-        nombre: p.nombre,
-        segundoNombre: p.segundoNombre ?? null,
-        apellidoPaterno: p.apellidoPaterno,
-        apellidoMaterno: p.apellidoMaterno ?? null,
-        apellido: [p.apellidoPaterno, p.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
-        correo: p.correo ?? null,
-        telefono: p.telefono ?? null,
-        fechaNacimiento: p.fechaNacimiento ? (p.fechaNacimiento instanceof Date ? p.fechaNacimiento.toISOString().split('T')[0] : String(p.fechaNacimiento).split('T')[0]) : null,
-        tipoPersona: p.tipoPersona ?? 'desconocido',
-        activo: p.activo ?? true,
-      };
-      let rolId: number | undefined;
-      let escuela: { id: number; nombre: string; nivel: string } | undefined;
-      if (p.administrador) {
-        rolId = p.administrador.id;
-      } else if (p.director) {
-        rolId = p.director.id;
-        if (p.director.escuela) {
-          escuela = {
-            id: p.director.escuela.id,
-            nombre: p.director.escuela.nombre,
-            nivel: p.director.escuela.nivel ?? '',
-          };
-        }
-      } else if (p.maestro) {
-        rolId = p.maestro.id;
-        if (p.maestro.escuela) {
-          escuela = {
-            id: p.maestro.escuela.id,
-            nombre: p.maestro.escuela.nombre,
-            nivel: p.maestro.escuela.nivel ?? '',
-          };
-        }
-      } else if (p.alumno) {
-        rolId = p.alumno.id;
-        if (p.alumno.escuela) {
-          escuela = {
-            id: p.alumno.escuela.id,
-            nombre: p.alumno.escuela.nombre,
-            nivel: p.alumno.escuela.nivel ?? '',
-          };
-        }
-      } else if (p.padre) {
-        rolId = p.padre.id;
-      }
-      return { ...base, ...(rolId !== undefined && { rolId }), ...(escuela && { escuela }) };
-    });
+    const data = personas.map(mapPersonaToUsuarioListItem);
 
     this.logger.log(`Listado de todos los usuarios: ${data.length} total. Admin=${totalAdministrador}, Director=${totalDirector}, Maestro=${totalMaestro}, Alumno=${totalAlumno}, Padre=${totalPadre}`);
 
@@ -593,13 +777,13 @@ export class PersonasService {
   ) {
     const persona = await this.personaRepository.findOne({
       where: { id },
-      select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'apellido', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'tipoPersona', 'activo', 'password'],
+      select: ['id', 'nombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'tipoPersona', 'activo', 'password'],
     });
     if (!persona) {
       throw new NotFoundException(`No se encontró el usuario con ID ${id}`);
     }
     const tipo = persona.tipoPersona?.toLowerCase();
-    if (!tipo || !PersonasService.TIPOS_USUARIO.includes(tipo as any)) {
+    if (!tipo || !PersonasService.TIPOS_USUARIO.includes(tipo as (typeof PersonasService.TIPOS_USUARIO)[number])) {
       throw new NotFoundException(`No se encontró el usuario con ID ${id}`);
     }
 
@@ -619,7 +803,6 @@ export class PersonasService {
     }
 
     if (dto.nombre != null) persona.nombre = dto.nombre.trim();
-    if (dto.segundoNombre != null) persona.segundoNombre = dto.segundoNombre.trim() || null;
     if (dto.apellidoPaterno != null) persona.apellidoPaterno = dto.apellidoPaterno.trim();
     if (dto.apellidoMaterno != null) persona.apellidoMaterno = dto.apellidoMaterno.trim() || null;
     if (dto.apellido != null) persona.apellidoPaterno = dto.apellido.trim(); // compatibilidad
@@ -648,12 +831,70 @@ export class PersonasService {
     const resultado = await this.personaRepository.findOne({
       where: { id },
       relations: ['administrador', 'director', 'director.escuela', 'maestro', 'maestro.escuela', 'alumno', 'alumno.escuela', 'padre'],
-      select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'tipoPersona', 'activo'],
+      select: ['id', 'nombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'tipoPersona', 'activo'],
     });
     return {
       message: 'Usuario actualizado correctamente',
       data: resultado,
     };
+  }
+
+  /**
+   * Actualizar alumno: datos de persona + grupo (si se envía grupoId).
+   * Director: solo alumnos de su escuela. Admin: cualquier alumno.
+   */
+  async actualizarAlumno(
+    alumnoId: number,
+    dto: ActualizarUsuarioDto,
+    escuelaIdRestriccion: number | undefined,
+    auditContext?: AuditContext,
+  ) {
+    const { data: alumnoData } = await this.obtenerAlumnoPorId(alumnoId, escuelaIdRestriccion);
+    const { grupoId, ...dtoPersona } = dto;
+
+    const resultado = await this.actualizarUsuarioPorId(alumnoData.personaId, dtoPersona as ActualizarUsuarioDto, auditContext);
+
+    if (grupoId !== undefined) {
+      const alumno = await this.alumnoRepository.findOne({
+        where: { id: alumnoId },
+        relations: ['persona'],
+      });
+      if (!alumno) return resultado;
+      const escuelaId = Number(alumno.escuelaId);
+      if (escuelaIdRestriccion != null && Number(escuelaIdRestriccion) !== escuelaId) {
+        throw new ForbiddenException('No puedes modificar alumnos de otra escuela');
+      }
+
+      if (grupoId == null) {
+        alumno.grupoId = null;
+        alumno.grupo = null;
+      } else {
+        const grupo = await this.grupoRepository.findOne({ where: { id: grupoId } });
+        if (!grupo) throw new NotFoundException('Grupo no encontrado');
+        if (Number(grupo.escuelaId) !== escuelaId) {
+          throw new ForbiddenException('El grupo no pertenece a la escuela del alumno');
+        }
+        alumno.grupoId = grupo.id;
+        alumno.grado = Number(grupo.grado);
+        alumno.grupo = grupo.nombre;
+      }
+      await this.alumnoRepository.save(alumno);
+
+      await this.auditService.log('actualizar_alumno_grupo', {
+        usuarioId: auditContext?.usuarioId ?? null,
+        ip: auditContext?.ip ?? null,
+        detalles: `alumnoId=${alumnoId} nuevoGrupoId=${grupoId ?? 'null'}`,
+      });
+
+      const resultadoActualizado = await this.personaRepository.findOne({
+        where: { id: alumnoData.personaId },
+        relations: ['administrador', 'director', 'director.escuela', 'maestro', 'maestro.escuela', 'alumno', 'alumno.escuela', 'padre'],
+        select: ['id', 'nombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'tipoPersona', 'activo'],
+      });
+      return { ...resultado, data: resultadoActualizado };
+    }
+
+    return resultado;
   }
 
   /**
@@ -665,13 +906,13 @@ export class PersonasService {
     const persona = await this.personaRepository.findOne({
       where: { id },
       relations: ['administrador', 'director', 'maestro', 'alumno', 'padre'],
-      select: ['id', 'nombre', 'apellido', 'correo', 'tipoPersona'],
+      select: ['id', 'nombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'tipoPersona'],
     });
     if (!persona) {
       throw new NotFoundException(`No se encontró el usuario con ID ${id}`);
     }
     const tipo = persona.tipoPersona?.toLowerCase();
-    if (!tipo || !PersonasService.TIPOS_USUARIO.includes(tipo as any)) {
+    if (!tipo || !PersonasService.TIPOS_USUARIO.includes(tipo as (typeof PersonasService.TIPOS_USUARIO)[number])) {
       throw new NotFoundException(`No se encontró el usuario con ID ${id}`);
     }
 
@@ -765,7 +1006,8 @@ export class PersonasService {
   /** Campos permitidos para buscar alumnos (evita inyección) */
   private static readonly CAMPOS_BUSCAR_ALUMNO = [
     'nombre',
-    'apellido',
+    'apellidoPaterno',
+    'apellidoMaterno',
     'correo',
     'telefono',
     'grado',
@@ -777,7 +1019,7 @@ export class PersonasService {
   /**
    * Buscar alumnos por un solo campo. Búsqueda global: sin paginación.
    * Admin: todos los que coincidan. Director: solo los de su escuela (escuelaIdFiltro).
-   * @param campo - nombre, apellido, correo, telefono, grado, grupo, cicloEscolar, escuelaId
+   * @param campo - nombre, apellidoPaterno, apellidoMaterno, correo, telefono, grado, grupo, cicloEscolar, escuelaId
    * @param valor - valor a buscar (texto con LIKE %valor% o número exacto según el campo)
    */
   async buscarAlumnos(campo: string, valor: string, escuelaIdFiltro?: number) {
@@ -786,7 +1028,7 @@ export class PersonasService {
       throw new BadRequestException('El nombre del campo de búsqueda no es válido.');
     }
     const campoNormalizado = campoTrim.toLowerCase();
-    if (!PersonasService.CAMPOS_BUSCAR_ALUMNO.includes(campoNormalizado as any)) {
+    if (!PersonasService.CAMPOS_BUSCAR_ALUMNO.includes(campoNormalizado as (typeof PersonasService.CAMPOS_BUSCAR_ALUMNO)[number])) {
       throw new BadRequestException(
         `Campo de búsqueda no permitido. Use uno de: ${PersonasService.CAMPOS_BUSCAR_ALUMNO.join(', ')}`,
       );
@@ -811,7 +1053,7 @@ export class PersonasService {
       qb.andWhere('alumno.escuelaId = :escuelaId', { escuelaId: escuelaIdFiltro });
     }
 
-    const camposTextoPersona = ['nombre', 'apellido', 'correo', 'telefono'];
+    const camposTextoPersona = ['nombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono'];
     const camposTextoAlumno = ['grupo', 'cicloEscolar'];
     const camposNumero = ['grado', 'escuelaId'];
 
@@ -866,11 +1108,117 @@ export class PersonasService {
         `El alumno (ID ${alumno.id}) no pertenece a tu escuela (solo puedes ver alumnos de tu centro)`,
       );
     }
+
+    const codigoVinculacionActivo = await this.alumnoVinculacionPadreRepository.findOne({
+      where: {
+        alumnoId: alumno.id,
+        usado: false,
+      },
+      order: { creadoEn: 'DESC' },
+    });
+
     return {
       message: 'Alumno obtenido exitosamente',
       description: 'Alumno encontrado en el sistema',
-      data: this.formatearAlumnoConPadre(alumno),
+      data: {
+        ...this.formatearAlumnoConPadre(alumno),
+        codigoVinculacion: codigoVinculacionActivo?.codigo ?? null,
+        codigoVinculacionExpiraEn: codigoVinculacionActivo?.expiraEn ?? null,
+      },
     };
+  }
+
+  /**
+   * Obtener el código de vinculación activo del alumno.
+   * - Si no existe un registro activo (legacy), lo genera en ese momento.
+   * - :id puede ser id de Alumno o id de Persona (compatibilidad con frontend).
+   */
+  async obtenerCodigoVinculacionAlumno(id: number): Promise<{
+    message: string;
+    description: string;
+    data: {
+      codigo: string;
+      expiraEn: Date | null;
+      usado: boolean;
+    };
+  }> {
+    return await this.dataSource.transaction(async (manager) => {
+      const alumnoRepo = manager.getRepository(Alumno);
+      const alumnoVinculacionRepo = manager.getRepository(AlumnoVinculacionPadre);
+
+      let alumno = await alumnoRepo.findOne({
+        where: { id },
+        select: ['id', 'personaId', 'escuelaId'],
+      });
+
+      // Compatibilidad: el frontend podría mandar id de persona en vez de id de alumno.
+      if (!alumno) {
+        alumno = await alumnoRepo.findOne({
+          where: { personaId: id },
+          select: ['id', 'personaId', 'escuelaId'],
+        });
+      }
+
+      if (!alumno) {
+        throw new NotFoundException(`No se encontró el alumno (ID alumno o persona: ${id})`);
+      }
+
+      const ahora = new Date();
+      const codigoActivo = await alumnoVinculacionRepo.findOne({
+        where: { alumnoId: alumno.id, usado: false },
+        order: { creadoEn: 'DESC' },
+      });
+
+      const esVigente =
+        !!codigoActivo &&
+        (!codigoActivo.expiraEn || codigoActivo.expiraEn.getTime() >= ahora.getTime());
+
+      const vinculoFinal = esVigente
+        ? codigoActivo!
+        : await this.crearCodigoVinculacionParaAlumnoTransactional(alumno.id, alumnoVinculacionRepo);
+
+      return {
+        message: 'Código de vinculación obtenido correctamente',
+        description: 'El código de vinculación del alumno fue validado',
+        data: {
+          codigo: vinculoFinal.codigo,
+          expiraEn: vinculoFinal.expiraEn,
+          usado: vinculoFinal.usado,
+        },
+      };
+    });
+  }
+
+  /**
+   * Obtener el código de vinculación para un Padre/Tutor.
+   * Nota: si el padre tiene múltiples alumnos, se devuelve el más "reciente" (por id) que esté activo.
+   */
+  async obtenerCodigoVinculacionParaPadre(padreId: number): Promise<{
+    message: string;
+    description: string;
+    data: {
+      codigo: string;
+      expiraEn: Date | null;
+      usado: boolean;
+    };
+  }> {
+    // No usamos transacción aquí porque delegamos en `obtenerCodigoVinculacionAlumno`.
+    const padre = await this.padreRepository.findOne({
+      where: { id: padreId },
+      relations: ['alumnos'],
+    });
+
+    if (!padre) {
+      throw new NotFoundException(`No se encontró el padre con ID ${padreId}`);
+    }
+
+    const alumnos = (padre.alumnos ?? []).filter((a) => a && a.activo);
+    if (alumnos.length === 0) {
+      throw new NotFoundException('El padre no tiene alumnos activos asociados');
+    }
+
+    const alumnoSeleccionado = alumnos.sort((a, b) => Number(b.id) - Number(a.id))[0];
+    return await this.obtenerCodigoVinculacionAlumno(Number(alumnoSeleccionado.id));
   }
 
   /**
@@ -938,9 +1286,11 @@ export class PersonasService {
           ? {
               id: alumno.padre.persona.id,
               nombre: alumno.padre.persona.nombre,
-              apellido: alumno.padre.persona.apellido,
+              apellidoPaterno: alumno.padre.persona.apellidoPaterno,
+              apellidoMaterno: alumno.padre.persona.apellidoMaterno ?? null,
               correo: alumno.padre.persona.correo,
               telefono: alumno.padre.persona.telefono,
+              genero: alumno.padre.persona.genero ?? null,
             }
           : null,
       },
@@ -1025,6 +1375,82 @@ export class PersonasService {
     };
   }
 
+  /**
+   * Vincular un alumno a un padre mediante un código de un solo uso.
+   * El padre se obtiene del usuario autenticado.
+   */
+  async vincularAlumnoConPadrePorCodigo(padreId: number, codigo: string) {
+    const ahora = new Date();
+
+    const vinculo = await this.alumnoVinculacionPadreRepository.findOne({
+      where: { codigo, usado: false },
+      order: { creadoEn: 'DESC' },
+    });
+
+    if (!vinculo) {
+      throw new BadRequestException('Código inválido o ya utilizado');
+    }
+
+    if (vinculo.expiraEn && vinculo.expiraEn.getTime() < ahora.getTime()) {
+      throw new BadRequestException('El código ha expirado, solicita uno nuevo en la escuela');
+    }
+
+    const alumno = await this.alumnoRepository.findOne({
+      where: { id: vinculo.alumnoId },
+    });
+    if (!alumno) {
+      throw new NotFoundException('El alumno asociado a este código ya no existe');
+    }
+
+    // Vincular padre–alumno (one-to-many por el campo padreId existente)
+    alumno.padreId = padreId;
+    await this.alumnoRepository.save(alumno);
+
+    vinculo.usado = true;
+    vinculo.usadoEn = ahora;
+    await this.alumnoVinculacionPadreRepository.save(vinculo);
+
+    return {
+      message: 'Alumno vinculado correctamente al padre',
+      description: 'El código ha sido validado y ya no podrá volver a utilizarse.',
+      data: {
+        alumnoId: alumno.id,
+        padreId,
+      },
+    };
+  }
+
+  /**
+   * Desvincular un alumno del padre/tutor.
+   * Solo el tutor que tiene vinculado al alumno puede desvincularlo.
+   */
+  async desvincularAlumnoDelPadre(padreId: number, alumnoId: number) {
+    const alumno = await this.alumnoRepository.findOne({
+      where: { id: alumnoId },
+    });
+
+    if (!alumno) {
+      throw new NotFoundException('Alumno no encontrado');
+    }
+
+    if (alumno.padreId !== padreId) {
+      throw new ForbiddenException(
+        'Solo puedes desvincular alumnos que están vinculados a tu cuenta',
+      );
+    }
+
+    alumno.padreId = null;
+    await this.alumnoRepository.save(alumno);
+
+    return {
+      message: 'Alumno desvinculado correctamente',
+      description: 'El alumno ya no está asociado a tu cuenta como tutor.',
+      data: {
+        alumnoId: alumno.id,
+      },
+    };
+  }
+
   private formatearAlumnoConPadre(alumno: any) {
     return {
       id: alumno.id,
@@ -1033,17 +1459,17 @@ export class PersonasService {
       padreId: alumno.padreId ?? null,
       grado: alumno.grado,
       grupo: alumno.grupo,
+      grupoId: alumno.grupoId ?? null,
       cicloEscolar: alumno.cicloEscolar,
       persona: alumno.persona
         ? {
             id: alumno.persona.id,
             nombre: alumno.persona.nombre,
-            segundoNombre: alumno.persona.segundoNombre ?? null,
             apellidoPaterno: alumno.persona.apellidoPaterno,
             apellidoMaterno: alumno.persona.apellidoMaterno ?? null,
-            apellido: [alumno.persona.apellidoPaterno, alumno.persona.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
             correo: alumno.persona.correo,
             telefono: alumno.persona.telefono,
+            genero: alumno.persona.genero ?? null,
           }
         : null,
       escuela: alumno.escuela
@@ -1057,12 +1483,11 @@ export class PersonasService {
               ? {
                   id: alumno.padre.persona.id,
                   nombre: alumno.padre.persona.nombre,
-                  segundoNombre: alumno.padre.persona.segundoNombre ?? null,
                   apellidoPaterno: alumno.padre.persona.apellidoPaterno,
                   apellidoMaterno: alumno.padre.persona.apellidoMaterno ?? null,
-                  apellido: [alumno.padre.persona.apellidoPaterno, alumno.padre.persona.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
                   correo: alumno.padre.persona.correo,
                   telefono: alumno.padre.persona.telefono,
+                  genero: alumno.padre.persona.genero ?? null,
                 }
               : null,
           }
@@ -1077,17 +1502,17 @@ export class PersonasService {
       escuelaId: alumno.escuelaId,
       grado: alumno.grado,
       grupo: alumno.grupo,
+      grupoId: alumno.grupoId ?? null,
       cicloEscolar: alumno.cicloEscolar,
       persona: alumno.persona
         ? {
             id: alumno.persona.id,
             nombre: alumno.persona.nombre,
-            segundoNombre: alumno.persona.segundoNombre ?? null,
             apellidoPaterno: alumno.persona.apellidoPaterno,
             apellidoMaterno: alumno.persona.apellidoMaterno ?? null,
-            apellido: [alumno.persona.apellidoPaterno, alumno.persona.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
             correo: alumno.persona.correo,
             telefono: alumno.persona.telefono,
+            genero: alumno.persona.genero ?? null,
           }
         : null,
       escuela: alumno.escuela
@@ -1108,12 +1533,11 @@ export class PersonasService {
         ? {
             id: padre.persona.id,
             nombre: padre.persona.nombre,
-            segundoNombre: padre.persona.segundoNombre ?? null,
             apellidoPaterno: padre.persona.apellidoPaterno,
             apellidoMaterno: padre.persona.apellidoMaterno ?? null,
-            apellido: [padre.persona.apellidoPaterno, padre.persona.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
             correo: padre.persona.correo,
             telefono: padre.persona.telefono,
+            genero: padre.persona.genero ?? null,
           }
         : null,
       cantidadHijos: (padre.alumnos || []).length,
@@ -1133,12 +1557,11 @@ export class PersonasService {
         ? {
             id: maestro.persona.id,
             nombre: maestro.persona.nombre,
-            segundoNombre: maestro.persona.segundoNombre ?? null,
             apellidoPaterno: maestro.persona.apellidoPaterno,
             apellidoMaterno: maestro.persona.apellidoMaterno ?? null,
-            apellido: [maestro.persona.apellidoPaterno, maestro.persona.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
             correo: maestro.persona.correo,
             telefono: maestro.persona.telefono,
+            genero: maestro.persona.genero ?? null,
           }
         : null,
       escuela: maestro.escuela

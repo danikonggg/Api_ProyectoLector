@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -14,6 +14,10 @@ import { LibrosModule } from './libros/libros.module';
 import { AuditModule } from './audit/audit.module';
 import { AdminModule } from './admin/admin.module';
 import { DirectorModule } from './director/director.module';
+import { MateriasModule } from './materias/materias.module';
+import { LicenciasModule } from './licencias/licencias.module';
+import { GroqModule } from './groq/groq.module';
+import { AuditHttpInterceptor } from './audit/interceptors/audit-http.interceptor';
 import { TypeOrmLoggerService } from './common/database/typeorm-logger.service';
 import type { LoggerOptions } from 'typeorm';
 
@@ -77,9 +81,12 @@ import type { LoggerOptions } from 'typeorm';
     EscuelasModule,
     MaestrosModule,
     LibrosModule,
+    MateriasModule,
     AuditModule,
     AdminModule,
     DirectorModule,
+    LicenciasModule,
+    GroqModule,
   ],
   controllers: [AppController],
   providers: [
@@ -87,6 +94,10 @@ import type { LoggerOptions } from 'typeorm';
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: AuditHttpInterceptor,
     },
   ],
 })

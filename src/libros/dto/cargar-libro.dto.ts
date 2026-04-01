@@ -46,4 +46,28 @@ export class CargarLibroDto {
   @MaxLength(255, { message: 'La descripción no puede superar 255 caracteres' })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   descripcion?: string;
+
+  @ApiProperty({
+    example: 'Editorial Santillana',
+    description: 'Nombre de la editorial del libro',
+    maxLength: 150,
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(150, { message: 'La editorial no puede superar 150 caracteres' })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  editorial?: string;
+
+  @ApiProperty({
+    example: 'Gabriel García Márquez',
+    description: 'Nombre del autor del libro',
+    maxLength: 150,
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(150, { message: 'El autor no puede superar 150 caracteres' })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  autor?: string;
 }

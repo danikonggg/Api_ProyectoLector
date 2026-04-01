@@ -105,6 +105,14 @@ async function bootstrap() {
   const port = process.env.PORT || 3000;
   await app.listen(port);
 
+  const shutdown = async (signal: string) => {
+    logger.log(`${signal} recibido. Cerrando...`);
+    await app.close();
+    process.exit(0);
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+
   logger.log(`🚀 Aplicación corriendo en: http://localhost:${port}`);
   if (process.env.NODE_ENV !== 'production') {
     logger.log(`📚 Swagger disponible en: http://localhost:${port}/api`);

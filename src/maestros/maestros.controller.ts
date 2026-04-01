@@ -32,10 +32,12 @@ import {
 import { Request } from 'express';
 import { MaestrosService } from './maestros.service';
 import { EscuelasService } from '../escuelas/escuelas.service';
+import { getAuditContext } from '../common/utils/audit.utils';
 import { AsignarAlumnoDto } from './dto/asignar-alumno.dto';
 import { AsignarLibroAlumnoDto } from '../escuelas/dto/asignar-libro-alumno.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { MaestroGuard } from '../auth/guards/maestro.guard';
+import { RequestUser } from '../common/interfaces/request-user.interface';
 
 @Controller('maestros')
 @UseGuards(JwtAuthGuard, MaestroGuard)
@@ -45,6 +47,45 @@ export class MaestrosController {
     private readonly maestrosService: MaestrosService,
     private readonly escuelasService: EscuelasService,
   ) {}
+
+  /**
+   * GET /maestros/alumnos-de-mi-escuela
+   * Listar alumnos de la escuela del maestro (todos, para el director o vistas amplias).
+   */
+  @Get('alumnos-de-mi-escuela')
+  @ApiTags('Solo Maestro')
+  @ApiOperation({ summary: 'Alumnos de mi escuela (todos)' })
+  @ApiResponse({ status: 200, description: 'Alumnos de la escuela del maestro' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'No es maestro' })
+  async alumnosDeMiEscuela(@Req() req: Request) {
+    const user = req.user as RequestUser;
+    const escuelaId = user.maestro?.escuelaId ?? user.maestro?.escuela?.id;
+    if (!escuelaId) {
+      throw new ForbiddenException('No se encontró la escuela del maestro');
+    }
+    return this.escuelasService.listarAlumnosDeEscuela(escuelaId);
+  }
+
+  /**
+   * GET /maestros/alumnos-de-mis-grupos
+   * Listar alumnos que pertenecen a los grupos asignados al maestro.
+   * Útil para asignar libros o ver solo "mis" alumnos.
+   */
+  @Get('alumnos-de-mis-grupos')
+  @ApiTags('Solo Maestro')
+  @ApiOperation({ summary: 'Alumnos de mis grupos (solo grupos asignados)' })
+  @ApiResponse({ status: 200, description: 'Alumnos de los grupos del maestro' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 403, description: 'No es maestro' })
+  async alumnosDeMisGrupos(@Req() req: Request) {
+    const user = req.user as RequestUser;
+    const maestroId = user.maestro?.id;
+    if (!maestroId) {
+      throw new ForbiddenException('No se encontró el maestro');
+    }
+    return this.maestrosService.obtenerMisAlumnos(maestroId);
+  }
 
   /**
    * GET /maestros/mis-alumnos
@@ -57,7 +98,7 @@ export class MaestrosController {
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'No es maestro' })
   async obtenerMisAlumnos(@Req() req: Request) {
-    const user = req.user as any;
+    const user = req.user as RequestUser;
     return this.maestrosService.obtenerMisAlumnos(user.maestro.id);
   }
 
@@ -77,7 +118,7 @@ export class MaestrosController {
     @Req() req: Request,
     @Param('id', ParseIntPipe) id: number,
   ) {
-    const user = req.user as any;
+    const user = req.user as RequestUser;
     return this.maestrosService.obtenerAlumnoPorId(user.maestro.id, id);
   }
 
@@ -97,8 +138,8 @@ export class MaestrosController {
   @ApiResponse({ status: 404, description: 'Alumno o materia no encontrados' })
   @ApiResponse({ status: 409, description: 'Alumno ya asignado en esta materia' })
   async asignarAlumno(@Req() req: Request, @Body() dto: AsignarAlumnoDto) {
-    const user = req.user as any;
-    return this.maestrosService.asignarAlumno(user.maestro.id, dto);
+    const user = req.user as RequestUser;
+    return this.maestrosService.asignarAlumno(user.maestro.id, dto, getAuditContext(req));
   }
 
   /**
@@ -115,7 +156,7 @@ export class MaestrosController {
     @Req() req: Request,
     @Query('alumnoId') alumnoIdStr: string,
   ) {
-    const user = req.user as any;
+    const user = req.user as RequestUser;
     const escuelaId = user.maestro?.escuelaId ?? user.maestro?.escuela?.id;
     if (!escuelaId) throw new ForbiddenException('No se encontró la escuela del maestro');
     const alumnoId = parseInt(alumnoIdStr, 10);
@@ -138,15 +179,23 @@ export class MaestrosController {
   @ApiResponse({ status: 404, description: 'Alumno o libro no encontrados' })
   @ApiResponse({ status: 409, description: 'Libro ya asignado al alumno' })
   async asignarLibro(@Req() req: Request, @Body() dto: AsignarLibroAlumnoDto) {
-    const user = req.user as any;
+    const user = req.user as RequestUser;
     const escuelaId = user.maestro?.escuelaId ?? user.maestro?.escuela?.id;
+    const maestroId = user.maestro?.id;
     if (!escuelaId) throw new ForbiddenException('No se encontró la escuela del maestro');
+    if (maestroId) {
+      const pertenece = await this.maestrosService.alumnoPerteneceAGruposDelMaestro(maestroId, dto.alumnoId);
+      if (!pertenece) {
+        throw new ForbiddenException('Solo puedes asignar libros a alumnos de tus grupos');
+      }
+    }
     return this.escuelasService.asignarLibroAlAlumno(
       escuelaId,
       dto.alumnoId,
       dto.libroId,
       'maestro',
       user.maestro.id,
+      getAuditContext(req),
     );
   }
 
@@ -167,8 +216,15 @@ export class MaestrosController {
   async desasignarLibro(
     @Param('alumnoId', ParseIntPipe) alumnoId: number,
     @Param('libroId', ParseIntPipe) libroId: number,
+    @Req() req: Request,
   ) {
-    return this.escuelasService.desasignarLibroAlAlumno(alumnoId, libroId);
+    const user = req.user as RequestUser;
+    const maestroId = user?.maestro?.id;
+    if (!maestroId) throw new ForbiddenException('No se encontró el maestro');
+    return this.escuelasService.desasignarLibroAlAlumno(alumnoId, libroId, {
+      maestroId,
+      auditContext: getAuditContext(req),
+    });
   }
 
   /**
@@ -190,11 +246,12 @@ export class MaestrosController {
     @Param('alumnoId', ParseIntPipe) alumnoId: number,
     @Param('materiaId', ParseIntPipe) materiaId: number,
   ) {
-    const user = req.user as any;
+    const user = req.user as RequestUser;
     return this.maestrosService.desasignarAlumno(
       user.maestro.id,
       alumnoId,
       materiaId,
+      getAuditContext(req),
     );
   }
 }

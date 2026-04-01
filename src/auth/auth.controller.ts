@@ -66,6 +66,7 @@ export class AuthController {
    */
   @Post('registro-admin')
   @UseGuards(JwtAuthGuard, AdminGuard)
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @ApiBearerAuth('JWT-auth')
   @HttpCode(HttpStatus.CREATED)
   @ApiTags('Solo Administrador')

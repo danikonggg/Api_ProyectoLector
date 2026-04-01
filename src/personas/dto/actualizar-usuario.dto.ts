@@ -11,6 +11,9 @@ import {
   IsDateString,
   MinLength,
   MaxLength,
+  IsInt,
+  IsPositive,
+  ValidateIf,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
@@ -23,13 +26,6 @@ export class ActualizarUsuarioDto {
   @MaxLength(NAME_MAX_LENGTH, { message: `El nombre no puede superar ${NAME_MAX_LENGTH} caracteres` })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   nombre?: string;
-
-  @ApiPropertyOptional({ example: 'Carlos', description: 'Segundo nombre', maxLength: NAME_MAX_LENGTH })
-  @IsOptional()
-  @IsString()
-  @MaxLength(NAME_MAX_LENGTH, { message: `El segundo nombre no puede superar ${NAME_MAX_LENGTH} caracteres` })
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
-  segundoNombre?: string;
 
   @ApiPropertyOptional({ example: 'Pérez', description: 'Apellido paterno', maxLength: NAME_MAX_LENGTH })
   @IsOptional()
@@ -86,4 +82,24 @@ export class ActualizarUsuarioDto {
   @IsOptional()
   @IsBoolean()
   activo?: boolean;
+
+  /** Se acepta pero se ignora: el rol no se puede cambiar por esta vía. */
+  @IsOptional()
+  @IsString()
+  tipoPersona?: string;
+
+  /**
+   * ID del grupo (solo al actualizar alumno). null quita al alumno del grupo.
+   * Director: solo alumnos de su escuela. Admin: cualquier alumno.
+   */
+  @ApiPropertyOptional({
+    example: 2,
+    description: 'ID del grupo. null para quitar del grupo. Solo aplica al actualizar alumno.',
+    nullable: true,
+  })
+  @IsOptional()
+  @ValidateIf((_, v) => v != null && v !== '')
+  @IsInt()
+  @IsPositive()
+  grupoId?: number | null;
 }

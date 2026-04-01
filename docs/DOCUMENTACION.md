@@ -96,9 +96,10 @@ Respuesta 200:
   "token_type": "Bearer",
   "expires_in": "24h",
   "user": {
-    "idPersona": 1,
+    "id": 1,
     "nombre": "Juan",
-    "apellido": "Pérez",
+    "apellidoPaterno": "Pérez",
+    "apellidoMaterno": "García",
     "email": "usuario@example.com",
     "tipoPersona": "administrador"
   }
@@ -150,7 +151,7 @@ Todas las rutas con método, body mínimo y rol. `?` = opcional. `*` = ver nota 
 | POST | `/personas/registro-alumno` | `{ "nombre", "apellidoPaterno", "apellidoMaterno", "email", "password", "idEscuela"* }` + opc. |
 | POST | `/personas/registro-maestro` | `{ "nombre", "apellidoPaterno", "apellidoMaterno", "email", "password", "idEscuela"* }` + opc. |
 | POST | `/personas/registro-director` | `{ "nombre", "apellidoPaterno", "apellidoMaterno", "email", "password", "idEscuela" }` + opc. |
-| PUT | `/personas/padres/:id` | `{ "nombre"?, "apellido"?, "email"?, "password"?, "telefono"? }` |
+| PUT | `/personas/padres/:id` | `{ "nombre"?, "apellidoPaterno"?, "apellidoMaterno"?, "correo"?, "password"?, "telefono"? }` |
 | GET | `/personas/admins` | — |
 | GET | `/personas/alumnos` | Query: `?escuelaId=&page=&limit=` |
 | GET | `/personas/alumnos/buscar` | Query: `campo`, `valor` |
@@ -159,7 +160,7 @@ Todas las rutas con método, body mínimo y rol. `?` = opcional. `*` = ver nota 
 | GET | `/personas/padres` | — |
 | GET | `/personas/padres/:id` | — |
 | GET | `/personas/padres/:id/alumnos` | — |
-| PATCH | `/personas/maestros/:id` | `{ "nombre"?, "apellido"?, "correo"?, "telefono"?, "fechaNacimiento"?, "genero"?, "password"?, "activo"? }` (actualiza datos de persona del maestro) |
+| PATCH | `/personas/maestros/:id` | `{ "nombre"?, "apellidoPaterno"?, "apellidoMaterno"?, "correo"?, "telefono"?, "fechaNacimiento"?, "genero"?, "password"?, "activo"? }` (actualiza datos de persona del maestro) |
 | DELETE | `/personas/maestros/:id` | — (elimina maestro y su persona, admin: cualquier escuela; director: solo de su escuela) |
 
 *Director: puede omitir `idEscuela` (se usa su escuela).
@@ -225,7 +226,7 @@ Todas las rutas con método, body mínimo y rol. `?` = opcional. `*` = ver nota 
 |--------|------|------|
 | GET | `/admin/dashboard` | — |
 | GET | `/admin/usuarios` | — |
-| PATCH | `/admin/usuarios/:id` | `{ "nombre"?, "apellido"?, "correo"?, "telefono"?, "fechaNacimiento"?, "genero"?, "password"?, "activo"? }` |
+| PATCH | `/admin/usuarios/:id` | `{ "nombre"?, "apellidoPaterno"?, "apellidoMaterno"?, "correo"?, "telefono"?, "fechaNacimiento"?, "genero"?, "password"?, "activo"? }` |
 | DELETE | `/admin/usuarios/:id` | — |
 
 ### Auditoría (solo admin)
@@ -257,7 +258,7 @@ Todas las rutas con método, body mínimo y rol. `?` = opcional. `*` = ver nota 
 
 - **GET /admin/dashboard**: `data`: `{ escuelasActivas, totalEstudiantes, totalProfesores, librosDisponibles }`.
 - **GET /admin/usuarios**: Lista de usuarios y totales por rol (administrador, director, maestro, alumno, padre).
-- **PATCH /admin/usuarios/:id**: Actualizar usuario por ID (cualquier rol). Body opcional: `nombre`, `apellido`, `correo`, `telefono`, `fechaNacimiento`, `genero`, `password`, `activo`. No cambia el rol. Ver [Editar y eliminar maestro](#editar-y-eliminar-maestro).
+- **PATCH /admin/usuarios/:id**: Actualizar usuario por ID (cualquier rol). Body opcional: `nombre`, `apellidoPaterno`, `apellidoMaterno`, `correo`, `telefono`, `fechaNacimiento`, `genero`, `password`, `activo`. No cambia el rol. Ver [Editar y eliminar maestro](#editar-y-eliminar-maestro).
 - **DELETE /admin/usuarios/:id**: Eliminar usuario por ID (cualquier rol). Ver [Editar y eliminar maestro](#editar-y-eliminar-maestro).
 
 ### Director
@@ -376,8 +377,9 @@ En la API, un maestro es un **usuario** (persona con rol maestro) vinculado a un
 
 | Campo | Tipo | Descripción |
 |-------|------|-------------|
-| `nombre` | string | Nombre (máx. según `NAME_MAX_LENGTH`) |
-| `apellido` | string | Apellido (en BD la persona tiene un solo apellido) |
+| `nombre` | string | Nombre único (máx. según `NAME_MAX_LENGTH`) |
+| `apellidoPaterno` | string | Apellido paterno |
+| `apellidoMaterno` | string | Apellido materno (puede ser vacío) |
 | `correo` | string | Correo electrónico (debe ser único si se cambia) |
 | `telefono` | string | Teléfono (máx. según `PHONE_MAX_LENGTH`) |
 | `fechaNacimiento` | string | Fecha en formato `YYYY-MM-DD` |
@@ -396,7 +398,8 @@ Content-Type: application/json
 
 {
   "nombre": "Ana",
-  "apellido": "Rodríguez Fernández",
+  "apellidoPaterno": "Rodríguez",
+  "apellidoMaterno": "Fernández",
   "correo": "ana.rodriguez@escuela.edu",
   "telefono": "5559876543",
   "activo": true
@@ -466,7 +469,14 @@ Sin canje, el libro no aparece en la escuela. Director puede ver pendientes en `
 
 **GET /audit** — Solo administrador. Query: `page`, `limit`. Lista logs de acciones sensibles.
 
-Acciones registradas: `login`, `login_fallido`, `registro_admin`, `registro_padre`, `registro_alumno`, `registro_maestro`, `registro_director`, `escuela_crear`, `escuela_actualizar`, `escuela_eliminar`, `libro_cargar`, `libro_eliminar`.
+Acciones registradas:
+- Auth: `login`, `login_fallido`, `registro_admin`, `registro_padre`, `registro_alumno`, `registro_maestro`, `registro_director`
+- Personas: `actualizar_usuario`, `eliminar_usuario`
+- Escuelas: `escuela_crear`, `escuela_actualizar`, `escuela_eliminar`
+- Libros: `libro_cargar`, `libro_eliminar`, `libro_activo_global`
+- Director: `director_grupo_crear`, `director_grupo_actualizar`, `director_grupo_eliminar`, `director_maestro_asignar_grupo`, `director_maestro_desasignar_grupo`, `director_asignar_libro`, `director_desasignar_libro`
+- Maestro: `maestro_asignar_alumno`, `maestro_desasignar_alumno`, `maestro_asignar_libro`, `maestro_desasignar_libro`
+- Licencias: `licencia_canjear`
 
 Migración: `migrations/add_audit_log.sql`.
 

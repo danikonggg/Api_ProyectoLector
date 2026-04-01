@@ -33,6 +33,12 @@ export class Libro {
   @Column({ name: 'grado', type: 'bigint' })
   grado: number;
 
+  @Column({ name: 'editorial', type: 'varchar', length: 150, nullable: true })
+  editorial: string | null;
+
+  @Column({ name: 'autor', type: 'varchar', length: 150, nullable: true })
+  autor: string | null;
+
   @Column({ name: 'descripcion', type: 'varchar', length: 255, nullable: true })
   descripcion: string | null;
 
@@ -48,6 +54,14 @@ export class Libro {
 
   @Column({ name: 'ruta_pdf', type: 'varchar', length: 512, nullable: true })
   rutaPdf: string | null;
+
+  /** Mensaje de error si estado = error (para debugging/reintento) */
+  @Column({ name: 'mensaje_error', type: 'varchar', length: 512, nullable: true })
+  mensajeError: string | null;
+
+  /** ID del job BullMQ si se procesa de forma asíncrona */
+  @Column({ name: 'job_id', type: 'varchar', length: 100, nullable: true })
+  jobId: string | null;
 
   @ManyToOne(() => Materia, { nullable: true })
   @JoinColumn({ name: 'materia_id' })

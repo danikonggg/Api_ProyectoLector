@@ -24,7 +24,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     const message =
       exception instanceof HttpException
-        ? (exception.getResponse() as any)?.message || exception.message
+        ? (exception.getResponse() as { message?: string | string[] })?.message || exception.message
         : 'Error interno del servidor';
 
     const isProd = process.env.NODE_ENV === 'production';

@@ -18,6 +18,7 @@ import {
 import { Persona } from './persona.entity';
 import { Escuela } from './escuela.entity';
 import { Padre } from './padre.entity';
+import { Grupo } from '../../escuelas/entities/grupo.entity';
 
 @Entity('Alumno')
 export class Alumno {
@@ -38,6 +39,10 @@ export class Alumno {
 
   @Column({ name: 'grupo', type: 'varchar', length: 10, nullable: true })
   grupo: string;
+
+  /** FK a Grupo (integridad referencial). Si null, se usa grado+grupo por compatibilidad. */
+  @Column({ name: 'grupo_id', type: 'bigint', nullable: true })
+  grupoId: number | null;
 
   @Column({ name: 'ciclo_escolar', type: 'varchar', length: 20, nullable: true })
   cicloEscolar: string;
@@ -60,4 +65,9 @@ export class Alumno {
   @ManyToOne(() => Padre, (padre) => padre.alumnos, { nullable: true })
   @JoinColumn({ name: 'padre_id' })
   padre: Padre;
+
+  // Relación muchos-a-uno con Grupo
+  @ManyToOne(() => Grupo, { nullable: true })
+  @JoinColumn({ name: 'grupo_id' })
+  grupoEntidad: Grupo;
 }

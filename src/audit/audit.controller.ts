@@ -56,4 +56,39 @@ export class AuditController {
     const limitNum = limit ? parseInt(limit, 10) : undefined;
     return await this.auditService.findAll(pageNum, limitNum);
   }
+
+  /**
+   * GET /audit/conexiones/metricas
+   * Métricas de horas: conectados últimas 24h, 48h, 7d, 30d vs sin conexión.
+   * Debe ir antes que conexiones para que la ruta sea correcta.
+   */
+  @Get('conexiones/metricas')
+  @ApiTags('Solo Administrador')
+  @ApiOperation({
+    summary: 'Métricas de conexión por horas',
+    description: 'Conectados últimas 24h, 48h, 7 días, 30 días. Sin conexión: nunca, más de 7 días, más de 30 días. Por rol.',
+  })
+  @ApiResponse({ status: 200, description: 'Métricas por rol y totales' })
+  async metricasConexiones() {
+    return await this.auditService.getMetricasConexiones();
+  }
+
+  /**
+   * GET /audit/conexiones
+   * Últimas conexiones (solo eventos login). Paginado.
+   */
+  @Get('conexiones')
+  @ApiTags('Solo Administrador')
+  @ApiOperation({ summary: 'Últimas conexiones (logins)' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiResponse({ status: 200, description: 'Lista de logins recientes' })
+  async ultimasConexiones(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const pageNum = page ? parseInt(page, 10) : undefined;
+    const limitNum = limit ? parseInt(limit, 10) : undefined;
+    return await this.auditService.findUltimasConexiones(pageNum, limitNum);
+  }
 }

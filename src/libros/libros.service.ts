@@ -2,7 +2,8 @@
  * ============================================
  * SERVICIO: LibrosService
  * ============================================
- * Carga de libros por admin: PDF → extracción → segmentos → BD.
+ * Carga de libros por admin: PDF → extracción → segmentación con unidades → BD.
+ * Pipeline rediseñado: validación robusta, detección de capítulos, estados finos.
  */
 
 import {
@@ -20,14 +21,14 @@ import { Segmento } from './entities/segmento.entity';
 import { Materia } from '../personas/entities/materia.entity';
 import { EscuelaLibro } from '../escuelas/entities/escuela-libro.entity';
 import { EscuelaLibroPendiente } from '../escuelas/entities/escuela-libro-pendiente.entity';
-import { LibrosPdfService } from './libros-pdf.service';
+import { LibroProcesamientoService } from './libro-procesamiento.service';
+import { LibroUploadValidationService } from './libro-upload-validation.service';
+import { LibrosPdfImagenesService } from './libros-pdf-imagenes.service';
 import { PdfStorageService } from './pdf-storage.service';
-import { PreguntasSegmentoService } from './preguntas-segmento.service';
-import type { SegmentoDto } from './libros-pdf.service';
 import { CargarLibroDto } from './dto/cargar-libro.dto';
-import { PDF } from './constants/pdf.constants';
 import { v4 as uuidv4 } from 'uuid';
 import { AuditService } from '../audit/audit.service';
+import { LIBRO_ESTADO } from './constants/libro-estado.constants';
 
 export interface AuditContext {
   usuarioId?: number | null;
@@ -51,24 +52,26 @@ export class LibrosService {
     private readonly escuelaLibroRepository: Repository<EscuelaLibro>,
     @InjectRepository(EscuelaLibroPendiente)
     private readonly escuelaLibroPendienteRepository: Repository<EscuelaLibroPendiente>,
-    private readonly librosPdfService: LibrosPdfService,
+    private readonly libroProcesamientoService: LibroProcesamientoService,
+    private readonly uploadValidation: LibroUploadValidationService,
+    private readonly librosPdfImagenesService: LibrosPdfImagenesService,
     private readonly pdfStorageService: PdfStorageService,
     private readonly auditService: AuditService,
-    private readonly preguntasSegmentoService: PreguntasSegmentoService,
   ) {}
 
   /**
-   * Cargar libro: PDF + metadatos. Extrae texto, limpia, segmenta, persiste.
+   * Cargar libro: validación robusta → extracción → segmentación con unidades reales → persistir.
    */
   async cargar(
     buffer: Buffer,
     dto: CargarLibroDto,
     auditContext?: AuditContext,
   ): Promise<{ message: string; description?: string; data: Libro }> {
-    this.logger.log(`Intento de cargar libro: titulo="${dto?.titulo ?? '?'}", grado=${dto?.grado ?? '?'}, materiaId=${dto?.materiaId ?? 'null'}`);
-    if (!buffer || buffer.length < PDF.MIN_SIZE) {
-      throw new BadRequestException('Archivo PDF inválido o vacío.');
-    }
+    this.logger.log(
+      `Intento de cargar libro: titulo="${dto?.titulo ?? '?'}", grado=${dto?.grado ?? '?'}, materiaId=${dto?.materiaId ?? 'null'}`,
+    );
+
+    await this.uploadValidation.validarBuffer(buffer);
 
     if (dto.materiaId != null) {
       const materia = await this.materiaRepository.findOne({
@@ -82,11 +85,8 @@ export class LibrosService {
     }
 
     const codigo =
-      dto.codigo?.trim() ||
-      `LIB-${Date.now()}-${uuidv4().slice(0, 8)}`;
-    const existente = await this.libroRepository.findOne({
-      where: { codigo },
-    });
+      dto.codigo?.trim() || `LIB-${Date.now()}-${uuidv4().slice(0, 8)}`;
+    const existente = await this.libroRepository.findOne({ where: { codigo } });
     if (existente) {
       throw new ConflictException(
         'Ya existe un libro con ese código. Usa otro o deja codigo vacío para auto-generar.',
@@ -98,93 +98,129 @@ export class LibrosService {
       materiaId: dto.materiaId ?? null,
       codigo,
       grado: dto.grado,
+      autor: dto.autor ?? null,
+      editorial: dto.editorial ?? null,
       descripcion: dto.descripcion ?? null,
-      estado: 'procesando',
+      estado: LIBRO_ESTADO.PROCESANDO,
       numPaginas: null,
     });
     await this.libroRepository.save(libro);
-    this.logger.log(`Libro creado (procesando): id=${libro.id}, titulo="${libro.titulo}", codigo=${codigo}`);
+    this.logger.log(
+      `Libro creado (procesando): id=${libro.id}, titulo="${libro.titulo}", codigo=${codigo}`,
+    );
 
     try {
-      const { numPaginas, segmentos } =
-        await this.librosPdfService.procesarPdf(buffer);
-
-      const unidadEnt = this.unidadRepository.create({
-        libroId: libro.id,
-        nombre: 'Unidad 1',
-        orden: 1,
-      });
-      await this.unidadRepository.save(unidadEnt);
-
-      const entidades = segmentos.map((s: SegmentoDto) =>
-        this.segmentoRepository.create({
-          libroId: libro.id,
-          unidadId: unidadEnt.id,
-          contenido: s.contenido,
-          orden: s.orden,
-          numeroPagina: s.numeroPagina,
-          idExterno: s.idExterno,
-        }),
-      );
-      await this.segmentoRepository.save(entidades);
-
-      libro.estado = 'listo';
-      libro.numPaginas = numPaginas;
-      const rutaPdf = await this.pdfStorageService.guardar(
+      const resultado = await this.libroProcesamientoService.procesar({
         buffer,
-        libro.id,
+        libroId: libro.id,
         codigo,
-      );
-      libro.rutaPdf = rutaPdf;
-      await this.libroRepository.save(libro);
+        usarUnidadesReales: true,
+      });
 
       const saved = await this.libroRepository.findOne({
         where: { id: libro.id },
         relations: ['materia', 'unidades'],
       });
 
-      this.logger.log(`Libro cargado y listo: id=${saved.id}, titulo="${saved.titulo}", segmentos=${segmentos.length}, paginas=${numPaginas}, pdf=${rutaPdf}`);
+      this.logger.log(
+        `Libro cargado: id=${saved.id}, unidades=${resultado.numUnidades}, segmentos=${resultado.numSegmentos}`,
+      );
 
-      try {
-        await this.preguntasSegmentoService.generarPreguntasParaLibro(saved.id);
-      } catch (err) {
-        this.logger.error(
-          `Error generando preguntas para libro ${saved.id}: ${err?.message ?? err}`,
-        );
-      }
+      await this.libroRepository.update(libro.id, { estado: LIBRO_ESTADO.LISTO });
+      const final = await this.libroRepository.findOne({
+        where: { id: libro.id },
+        relations: ['materia', 'unidades'],
+      });
 
       await this.auditService.log('libro_cargar', {
         usuarioId: auditContext?.usuarioId ?? null,
         ip: auditContext?.ip ?? null,
-        detalles: `${saved.titulo} (id: ${saved.id}, codigo: ${codigo})`,
+        detalles: `${final!.titulo} (id: ${final!.id}, codigo: ${codigo})`,
       });
 
       return {
         message: 'Libro cargado y procesado correctamente.',
-        description: `Se extrajeron ${segmentos.length} segmentos de ${numPaginas} páginas. PDF guardado en ${rutaPdf}. Estado: listo.`,
-        data: saved,
+        description: `${resultado.numSegmentos} segmentos en ${resultado.numUnidades} ${resultado.numUnidades === 1 ? 'unidad' : 'unidades'} • ${resultado.numPaginas} páginas • PDF guardado`,
+        data: final!,
       };
     } catch (e) {
-      libro.estado = 'error';
-      await this.libroRepository.save(libro);
-      this.logger.error(`Libro id=${libro.id} falló al procesar PDF. Estado → error. ${e?.message ?? e}`);
+      await this.libroProcesamientoService.marcarError(
+        libro.id,
+        (e as Error)?.message ?? String(e),
+      );
+      this.logger.error(
+        `Libro id=${libro.id} falló: ${(e as Error)?.message ?? e}`,
+      );
       throw e;
     }
   }
 
   /**
-   * Listar todos los libros.
+   * Obtener estado actual del libro (para flujo async o debugging).
    */
-  async listar(): Promise<{ message: string; total: number; data: Libro[] }> {
-    const data = await this.libroRepository.find({
-      order: { id: 'DESC' },
-      relations: ['materia'],
+  async obtenerEstado(
+    id: number,
+  ): Promise<{
+    message: string;
+    data: {
+      id: number;
+      titulo: string;
+      estado: string;
+      mensajeError?: string | null;
+      jobId?: string | null;
+      numPaginas?: number | null;
+    };
+  }> {
+    const libro = await this.libroRepository.findOne({
+      where: { id },
+      select: ['id', 'titulo', 'estado', 'mensajeError', 'jobId', 'numPaginas'],
     });
-    this.logger.log(`GET /libros → ${data.length} libros. IDs: ${data.map((l) => l.id).join(', ') || '(ninguno)'}`);
+    if (!libro) {
+      throw new NotFoundException(`No se encontró el libro con ID ${id}`);
+    }
+    return {
+      message: 'Estado obtenido correctamente.',
+      data: {
+        id: libro.id,
+        titulo: libro.titulo,
+        estado: libro.estado,
+        mensajeError: libro.mensajeError,
+        jobId: libro.jobId,
+        numPaginas: libro.numPaginas,
+      },
+    };
+  }
+
+  /**
+   * Listar libros con paginación.
+   */
+  async listar(page = 1, limit = 50): Promise<{
+    message: string;
+    total: number;
+    data: Libro[];
+    meta?: { page: number; limit: number; totalPages: number };
+  }> {
+    const qb = this.libroRepository
+      .createQueryBuilder('libro')
+      .leftJoinAndSelect('libro.materia', 'materia')
+      .orderBy('libro.id', 'DESC');
+
+    const total = await qb.getCount();
+    const data = await qb
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getMany();
+
+    this.logger.log(`GET /libros → page=${page}, limit=${limit}, total=${total}, returned=${data.length}`);
     return {
       message: 'Libros obtenidos correctamente.',
-      total: data.length,
+      total,
       data,
+      meta: {
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
     };
   }
 
@@ -214,10 +250,11 @@ export class LibrosService {
       }
     }
 
-    const preguntasPorSegmento = await this.preguntasSegmentoService.getPreguntasPorLibro(id);
+    // Preguntas por segmento desactivadas (se agregarán después)
+    const preguntasVacias = { basico: [] as string[], intermedio: [] as string[], avanzado: [] as string[] };
     for (const u of libro.unidades ?? []) {
       for (const seg of u.segmentos ?? []) {
-        (seg as any).preguntas = preguntasPorSegmento[seg.id] ?? { basico: [], intermedio: [], avanzado: [] };
+        (seg as Segmento & { preguntas?: object }).preguntas = preguntasVacias;
       }
     }
 
@@ -234,7 +271,7 @@ export class LibrosService {
   async eliminar(id: number, auditContext?: AuditContext): Promise<{ message: string }> {
     const libro = await this.libroRepository.findOne({
       where: { id },
-      select: ['id', 'titulo', 'rutaPdf'],
+      select: ['id', 'titulo', 'codigo', 'rutaPdf'],
     });
 
     if (!libro) {
@@ -246,6 +283,9 @@ export class LibrosService {
 
     if (libro.rutaPdf) {
       await this.pdfStorageService.eliminarArchivo(libro.rutaPdf);
+    }
+    if (libro.codigo) {
+      await this.librosPdfImagenesService.eliminarImagenesLibro(id, libro.codigo);
     }
 
     await this.libroRepository.delete(id);
@@ -361,6 +401,20 @@ export class LibrosService {
       relations: ['libro'],
     });
     return !!(el && el.libro?.activo !== false);
+  }
+
+  /**
+   * Obtiene id y codigo del libro (para servir imágenes de páginas).
+   */
+  async obtenerLibroBasico(id: number): Promise<{ id: number; codigo: string }> {
+    const libro = await this.libroRepository.findOne({
+      where: { id },
+      select: ['id', 'codigo'],
+    });
+    if (!libro) {
+      throw new NotFoundException(`No se encontró el libro con ID ${id}`);
+    }
+    return { id: libro.id, codigo: libro.codigo };
   }
 
   /**

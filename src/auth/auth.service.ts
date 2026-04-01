@@ -32,7 +32,7 @@ export class AuthService {
     const persona = await this.personaRepository.findOne({
       where: { correo: loginDto.email },
       relations: ['administrador', 'padre', 'alumno', 'alumno.escuela', 'maestro', 'maestro.escuela', 'director', 'director.escuela'],
-      select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'password', 'tipoPersona', 'activo'],
+      select: ['id', 'nombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'password', 'tipoPersona', 'activo'],
     });
 
     if (!persona) {
@@ -126,10 +126,8 @@ export class AuthService {
       user: {
         id: persona.id,
         nombre: persona.nombre,
-        segundoNombre: persona.segundoNombre ?? null,
         apellidoPaterno: persona.apellidoPaterno,
         apellidoMaterno: persona.apellidoMaterno ?? null,
-        apellido: [persona.apellidoPaterno, persona.apellidoMaterno].filter(Boolean).join(' ').trim() || null,
         email: persona.correo,
         tipoPersona: persona.tipoPersona,
       },
@@ -156,7 +154,7 @@ export class AuthService {
     // Solo seleccionar campos que existen en la BD
     const personaExistente = await this.personaRepository.findOne({
       where: { correo: registroDto.email },
-      select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
+      select: ['id', 'nombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
     });
 
     if (personaExistente) {
@@ -171,7 +169,6 @@ export class AuthService {
     // Crear la persona
     const persona = this.personaRepository.create({
       nombre: registroDto.nombre,
-      segundoNombre: registroDto.segundoNombre?.trim() || null,
       apellidoPaterno: registroDto.apellidoPaterno,
       apellidoMaterno: registroDto.apellidoMaterno?.trim() || null,
       correo: registroDto.email,
@@ -223,7 +220,7 @@ export class AuthService {
     const persona = await this.personaRepository.findOne({
       where: { id: userId },
       relations: ['administrador', 'padre', 'alumno', 'maestro', 'director', 'director.escuela'],
-      select: ['id', 'nombre', 'segundoNombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'tipoPersona', 'ultimaConexion'],
+      select: ['id', 'nombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'tipoPersona', 'ultimaConexion'],
     });
 
     if (!persona) {

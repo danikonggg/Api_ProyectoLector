@@ -2,9 +2,7 @@
  * ============================================
  * ESTRATEGIA: JWT Strategy
  * ============================================
- * 
- * Estrategia de Passport para validar tokens JWT.
- * Extrae el token del header Authorization y valida que sea válido.
+ * Valida tokens JWT y verifica que el usuario exista y esté activo.
  */
 
 import { Injectable, UnauthorizedException } from '@nestjs/common';
@@ -18,22 +16,22 @@ import { Persona } from '../../personas/entities/persona.entity';
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
-    private configService: ConfigService,
+    configService: ConfigService,
     @InjectRepository(Persona)
     private personaRepository: Repository<Persona>,
   ) {
+    const secret = configService.get<string>('JWT_SECRET');
+    if (!secret || secret.length < 32) {
+      throw new Error('JWT_SECRET debe tener al menos 32 caracteres. Revisa tu .env');
+    }
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: configService.get<string>('JWT_SECRET', 'tu-secret-key-cambiar-en-produccion'),
+      secretOrKey: secret,
     });
   }
 
-  /**
-   * Valida el payload del token JWT
-   * Este método se ejecuta automáticamente cuando se valida un token
-   */
-  async validate(payload: any) {
+  async validate(payload: { sub: number }) {
     const persona = await this.personaRepository.findOne({
       where: { id: payload.sub },
       relations: ['administrador', 'padre', 'alumno', 'maestro', 'maestro.escuela', 'director', 'director.escuela'],
@@ -41,6 +39,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     if (!persona) {
       throw new UnauthorizedException('Usuario no encontrado');
+    }
+
+    if (!persona.activo) {
+      throw new UnauthorizedException('Usuario inactivo');
     }
 
     return persona;
