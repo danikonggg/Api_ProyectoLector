@@ -1,12 +1,11 @@
 import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBody, ApiBearerAuth } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { GroqService } from './groq.service';
 import { GroqPromptDto } from './dto/groq-prompt.dto';
 
 @Controller('groq-test')
-@UseGuards(JwtAuthGuard, AdminGuard)
+@UseGuards(AdminGuard)
 @ApiBearerAuth('JWT-auth')
 @ApiTags('Solo Administrador')
 export class GroqController {

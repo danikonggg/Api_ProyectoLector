@@ -27,6 +27,8 @@ export interface ProcesarLibroInput {
   libroId: number;
   codigo: string;
   usarUnidadesReales?: boolean; // true = detectar capítulos; false = "Unidad 1"
+  /** Si el PDF ya está en disco (API + cola), no volver a escribir el archivo */
+  rutaPdfPreexistente?: string | null;
 }
 
 export interface ProcesarLibroResult {
@@ -62,7 +64,7 @@ export class LibroProcesamientoService {
    * 3. Transacción: bulk insert unidades + segmentos + actualiza libro
    */
   async procesar(input: ProcesarLibroInput): Promise<ProcesarLibroResult> {
-    const { buffer, libroId, codigo, usarUnidadesReales = true } = input;
+    const { buffer, libroId, codigo, usarUnidadesReales = true, rutaPdfPreexistente } = input;
 
     await this.actualizarEstado(libroId, LIBRO_ESTADO.EXRAYENDO);
     const resultado = usarUnidadesReales
@@ -85,8 +87,9 @@ export class LibroProcesamientoService {
 
     await this.actualizarEstado(libroId, LIBRO_ESTADO.GUARDANDO);
 
-    // Guardar PDF primero (I/O); si falla, no tocamos BD
-    const rutaPdf = await this.pdfStorageService.guardar(buffer, libroId, codigo);
+    const rutaPdf = rutaPdfPreexistente
+      ? rutaPdfPreexistente
+      : await this.pdfStorageService.guardar(buffer, libroId, codigo);
 
     try {
       await this.dataSource.transaction(async (manager: EntityManager) => {
@@ -98,7 +101,9 @@ export class LibroProcesamientoService {
         });
       });
     } catch (e) {
-      await this.pdfStorageService.eliminarArchivo(rutaPdf);
+      if (!rutaPdfPreexistente) {
+        await this.pdfStorageService.eliminarArchivo(rutaPdf);
+      }
       throw e;
     }
 

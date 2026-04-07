@@ -36,6 +36,7 @@ import { RegistroDirectorDto } from './dto/registro-director.dto';
 import { RegistroPadreConHijoDto } from './dto/registro-padre-con-hijo.dto';
 import { ActualizarUsuarioDto } from './dto/actualizar-usuario.dto';
 import { AuditService } from '../audit/audit.service';
+import { JwtPersonaLoaderService } from '../auth/services/jwt-persona-loader.service';
 import { MAX_PAGE_SIZE, MAX_PAGE_NUMBER } from '../common/constants/validation.constants';
 import { mapPersonaToUsuarioListItem } from './mappers/usuario.mapper';
 
@@ -71,6 +72,7 @@ export class PersonasService {
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly auditService: AuditService,
+    private readonly jwtPersonaLoader: JwtPersonaLoaderService,
   ) {}
 
   // Nota: El registro de admin está en AuthService
@@ -820,6 +822,8 @@ export class PersonasService {
 
     await this.personaRepository.save(persona);
 
+    await this.jwtPersonaLoader.invalidate(id);
+
     this.logger.log(`Usuario actualizado: persona ID ${id} (${persona.tipoPersona})`);
 
     await this.auditService.log('actualizar_usuario', {
@@ -941,6 +945,8 @@ export class PersonasService {
 
       await personaRepo.delete({ id });
     });
+
+    await this.jwtPersonaLoader.invalidate(id);
 
     this.logger.log(`Usuario eliminado: persona ID ${id} (${tipo}) - ${persona.correo ?? ''}`);
 

@@ -18,8 +18,8 @@ import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegistroAdminDto } from './dto/registro-admin.dto';
-import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { AdminGuard } from './guards/admin.guard';
+import { Public } from './decorators/public.decorator';
 
 @Controller('auth')
 export class AuthController {
@@ -30,6 +30,7 @@ export class AuthController {
    * Iniciar sesión y obtener token JWT.
    * Límite estricto por IP para evitar fuerza bruta (5 intentos por minuto).
    */
+  @Public()
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 5, ttl: 60000 } })
@@ -65,7 +66,7 @@ export class AuthController {
    * Registrar nuevo administrador (máximo 5). Solo administradores pueden crear otros admins.
    */
   @Post('registro-admin')
-  @UseGuards(JwtAuthGuard, AdminGuard)
+  @UseGuards(AdminGuard)
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @ApiBearerAuth('JWT-auth')
   @HttpCode(HttpStatus.CREATED)
@@ -104,7 +105,6 @@ export class AuthController {
    * Obtener perfil del usuario autenticado
    */
   @Get('profile')
-  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiTags('Cualquier autenticado')
   @ApiOperation({ summary: 'Obtener perfil del usuario autenticado' })

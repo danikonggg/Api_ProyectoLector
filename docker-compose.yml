@@ -1,0 +1,63 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: api_lector
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/api_lector
+      JWT_SECRET: ${JWT_SECRET:-docker-dev-secret-key-min-32-chars-please-change-ok}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      JWT_PERSONA_CACHE_TTL_MS: ${JWT_PERSONA_CACHE_TTL_MS:-30000}
+      LIBROS_IMPORT_WORKER_CONCURRENCY: ${LIBROS_IMPORT_WORKER_CONCURRENCY:-2}
+    volumes:
+      - pdfs_data:/usr/src/app/pdfs
+    depends_on:
+      - redis
+      - postgres
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      NODE_ENV: production
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/api_lector
+      JWT_SECRET: ${JWT_SECRET:-docker-dev-secret-key-min-32-chars-please-change-ok}
+      JWT_PERSONA_CACHE_TTL_MS: ${JWT_PERSONA_CACHE_TTL_MS:-30000}
+      LIBROS_IMPORT_WORKER_CONCURRENCY: ${LIBROS_IMPORT_WORKER_CONCURRENCY:-2}
+      OTEL_SERVICE_NAME: api-lector-worker
+    volumes:
+      - pdfs_data:/usr/src/app/pdfs
+    depends_on:
+      - redis
+      - postgres
+
+volumes:
+  redis_data: {}
+  pg_data: {}
+  pdfs_data: {}

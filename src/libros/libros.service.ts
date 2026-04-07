@@ -12,7 +12,10 @@ import {
   ConflictException,
   BadRequestException,
   Logger,
+  Optional,
 } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import type { Queue } from 'bullmq';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Libro } from './entities/libro.entity';
@@ -29,6 +32,10 @@ import { CargarLibroDto } from './dto/cargar-libro.dto';
 import { v4 as uuidv4 } from 'uuid';
 import { AuditService } from '../audit/audit.service';
 import { LIBRO_ESTADO } from './constants/libro-estado.constants';
+import { RedisService } from '../infra/redis/redis.service';
+import { LIBROS_IMPORT_QUEUE, librosImportJobId } from '../queues/libros-import.constants';
+import type { LibrosImportJobPayload } from '../queues/interfaces/libros-import-job.interface';
+import { injectTraceContextForJob } from '../infra/telemetry/trace-context';
 
 export interface AuditContext {
   usuarioId?: number | null;
@@ -57,6 +64,9 @@ export class LibrosService {
     private readonly librosPdfImagenesService: LibrosPdfImagenesService,
     private readonly pdfStorageService: PdfStorageService,
     private readonly auditService: AuditService,
+    private readonly redisService: RedisService,
+    @Optional() @InjectQueue(LIBROS_IMPORT_QUEUE)
+    private readonly librosImportQueue?: Queue,
   ) {}
 
   /**
@@ -66,7 +76,13 @@ export class LibrosService {
     buffer: Buffer,
     dto: CargarLibroDto,
     auditContext?: AuditContext,
-  ): Promise<{ message: string; description?: string; data: Libro }> {
+  ): Promise<{
+    message: string;
+    description?: string;
+    data: Libro;
+    async?: boolean;
+    jobId?: string;
+  }> {
     this.logger.log(
       `Intento de cargar libro: titulo="${dto?.titulo ?? '?'}", grado=${dto?.grado ?? '?'}, materiaId=${dto?.materiaId ?? 'null'}`,
     );
@@ -109,6 +125,42 @@ export class LibrosService {
       `Libro creado (procesando): id=${libro.id}, titulo="${libro.titulo}", codigo=${codigo}`,
     );
 
+    const useAsync = this.redisService.enabled && this.librosImportQueue != null;
+
+    if (useAsync) {
+      const rutaPdfRelativa = await this.pdfStorageService.guardar(
+        buffer,
+        libro.id,
+        codigo,
+      );
+      const payload: LibrosImportJobPayload = {
+        libroId: libro.id,
+        codigo,
+        rutaPdfRelativa,
+        auditContext,
+        traceContext: injectTraceContextForJob(),
+      };
+      const job = await this.librosImportQueue.add('import', payload, {
+        jobId: librosImportJobId(libro.id),
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: { count: 2000 },
+      });
+      const jobIdStr = job.id != null ? String(job.id) : '';
+      await this.libroRepository.update(libro.id, { jobId: jobIdStr || null });
+      const data = await this.libroRepository.findOne({
+        where: { id: libro.id },
+        relations: ['materia', 'unidades'],
+      });
+      return {
+        message: 'Libro encolado para procesamiento.',
+        description: `Job ${job.id}. Consulta GET /libros/${libro.id}/estado`,
+        jobId: jobIdStr,
+        async: true,
+        data: data!,
+      };
+    }
+
     try {
       const resultado = await this.libroProcesamientoService.procesar({
         buffer,
@@ -117,20 +169,14 @@ export class LibrosService {
         usarUnidadesReales: true,
       });
 
-      const saved = await this.libroRepository.findOne({
+      const final = await this.libroRepository.findOne({
         where: { id: libro.id },
         relations: ['materia', 'unidades'],
       });
 
       this.logger.log(
-        `Libro cargado: id=${saved.id}, unidades=${resultado.numUnidades}, segmentos=${resultado.numSegmentos}`,
+        `Libro cargado: id=${final!.id}, unidades=${resultado.numUnidades}, segmentos=${resultado.numSegmentos}`,
       );
-
-      await this.libroRepository.update(libro.id, { estado: LIBRO_ESTADO.LISTO });
-      const final = await this.libroRepository.findOne({
-        where: { id: libro.id },
-        relations: ['materia', 'unidades'],
-      });
 
       await this.auditService.log('libro_cargar', {
         usuarioId: auditContext?.usuarioId ?? null,

@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
-import * as request from 'supertest';
+import request from 'supertest';
+import { Logger } from 'nestjs-pino';
 import { AppModule } from '../src/app.module';
 
 describe('App (e2e)', () => {
@@ -10,7 +11,8 @@ describe('App (e2e)', () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
-    app = moduleFixture.createNestApplication();
+    app = moduleFixture.createNestApplication({ bufferLogs: true });
+    app.useLogger(app.get(Logger));
     await app.init();
   });
 

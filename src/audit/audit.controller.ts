@@ -7,11 +7,10 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { AuditService } from './audit.service';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
 
 @Controller('audit')
-@UseGuards(JwtAuthGuard, AdminGuard)
+@UseGuards(AdminGuard)
 @ApiBearerAuth('JWT-auth')
 export class AuditController {
   constructor(private readonly auditService: AuditService) {}

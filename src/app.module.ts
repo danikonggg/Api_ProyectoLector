@@ -1,11 +1,17 @@
-import { Module } from '@nestjs/common';
+import {
+  MiddlewareConsumer,
+  Module,
+  NestModule,
+} from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { LoggerModule } from 'nestjs-pino';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { PersonasModule } from './personas/personas.module';
 import { AuthModule } from './auth/auth.module';
 import { EscuelasModule } from './escuelas/escuelas.module';
@@ -18,8 +24,13 @@ import { MateriasModule } from './materias/materias.module';
 import { LicenciasModule } from './licencias/licencias.module';
 import { GroqModule } from './groq/groq.module';
 import { AuditHttpInterceptor } from './audit/interceptors/audit-http.interceptor';
-import { TypeOrmLoggerService } from './common/database/typeorm-logger.service';
-import type { LoggerOptions } from 'typeorm';
+import { createTypeOrmConfig } from './config/typeorm-root.factory';
+import { RedisModule } from './infra/redis/redis.module';
+import { QueuesModule } from './queues/queues.module';
+import { NoopQueuesModule } from './queues/noop-queues.module';
+import { isRedisConfigured } from './config/redis-env';
+import { correlationIdMiddleware } from './common/middleware/correlation-id.middleware';
+import { buildLoggerParams } from './config/pino-logger.config';
 
 @Module({
   imports: [
@@ -28,53 +39,45 @@ import type { LoggerOptions } from 'typeorm';
       envFilePath: '.env',
     }),
 
+    LoggerModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => buildLoggerParams(config),
+    }),
+
     ThrottlerModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => [
-        { ttl: 60000, limit: configService.get<number>('THROTTLE_LIMIT_PER_MIN', 2000) },
-      ],
+      useFactory: (configService: ConfigService) => ({
+        throttlers: [
+          {
+            name: 'default',
+            ttl: 60000,
+            limit: configService.get<number>('THROTTLE_LIMIT_PER_MIN', 2000),
+          },
+        ],
+        getTracker: (req: Record<string, unknown>) => {
+          const u = req['user'] as { id?: number } | undefined;
+          if (u?.id != null) {
+            return `user:${u.id}`;
+          }
+          const rawIp =
+            (Array.isArray(req['ips']) && req['ips'][0]) ||
+            (typeof req['ip'] === 'string' ? req['ip'] : '');
+          return `ip:${rawIp || 'unknown'}`;
+        },
+      }),
       inject: [ConfigService],
     }),
 
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => {
-        const databaseUrl = configService.get('DATABASE_URL');
-        const ssl = databaseUrl ? { rejectUnauthorized: false } : undefined;
-
-        const baseConfig = {
-          type: 'postgres' as const,
-          entities: [__dirname + '/**/*.entity{.ts,.js}'],
-          synchronize: false,
-          logging: (configService.get('NODE_ENV') === 'development'
-            ? configService.get('DB_LOG_QUERIES', 'true') === 'true'
-              ? ['query', 'error']
-              : ['error']
-            : false) as LoggerOptions,
-          logger: new TypeOrmLoggerService(),
-          maxQueryExecutionTime: 2000,
-          ssl,
-          extra: {
-            max: configService.get<number>('DB_POOL_SIZE', 80),
-            idleTimeoutMillis: 30000,
-          },
-        };
-
-        if (databaseUrl && typeof databaseUrl === 'string') {
-          return { ...baseConfig, url: databaseUrl };
-        }
-
-        return {
-          ...baseConfig,
-          host: configService.get<string>('DB_HOST', 'localhost'),
-          port: configService.get<number>('DB_PORT', 5432),
-          username: configService.get<string>('DB_USERNAME', 'postgres'),
-          password: configService.get<string>('DB_PASSWORD', 'postgres'),
-          database: configService.get<string>('DB_DATABASE', 'api_lector'),
-        };
-      },
+      useFactory: (configService: ConfigService) =>
+        createTypeOrmConfig(configService),
       inject: [ConfigService],
     }),
+
+    RedisModule,
+    ...(isRedisConfigured() ? [QueuesModule] : [NoopQueuesModule]),
 
     AuthModule,
     PersonasModule,
@@ -91,14 +94,16 @@ import type { LoggerOptions } from 'typeorm';
   controllers: [AppController],
   providers: [
     AppService,
-    {
-      provide: APP_GUARD,
-      useClass: ThrottlerGuard,
-    },
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
     {
       provide: APP_INTERCEPTOR,
       useClass: AuditHttpInterceptor,
     },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(correlationIdMiddleware).forRoutes('*');
+  }
+}

@@ -39,7 +39,6 @@ import {
   ApiConsumes,
   ApiBody,
 } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { AdminOrDirectorGuard } from '../auth/guards/admin-or-director.guard';
 import { AdminOrDirectorOrAlumnoGuard } from '../auth/guards/admin-or-director-or-alumno.guard';
@@ -54,7 +53,6 @@ import type { Request as ExpressRequest } from 'express';
 const PDF_MAX_SIZE = 50 * 1024 * 1024; // 50 MB
 
 @Controller('libros')
-@UseGuards(JwtAuthGuard)
 @ApiBearerAuth('JWT-auth')
 export class LibrosController {
   constructor(
@@ -167,7 +165,6 @@ export class LibrosController {
    * Sirve la imagen PNG de una página generada por POST probar-paginas-imagen.
    */
   @Get('probar-paginas-imagen/:sessionId/:numero')
-  @UseGuards(JwtAuthGuard)
   @ApiTags('Prueba - Imágenes por página')
   @ApiOperation({ summary: '[PRUEBA] Obtener imagen de una página' })
   @ApiParam({ name: 'sessionId', description: 'ID de sesión retornado por POST probar-paginas-imagen' })

@@ -14,6 +14,7 @@ import {
   PrimaryGeneratedColumn,
   OneToOne,
 } from 'typeorm';
+import { Exclude } from 'class-transformer';
 import { Administrador } from './administrador.entity';
 import { Padre } from './padre.entity';
 import { Alumno } from './alumno.entity';
@@ -48,6 +49,7 @@ export class Persona {
 
   // Campos adicionales para autenticación
   // NOTA: Estos campos deben agregarse a la base de datos ejecutando el script migrations/add_auth_fields.sql
+  @Exclude()
   @Column({ name: 'password', type: 'varchar', length: 255, nullable: true, select: false })
   password: string;
 

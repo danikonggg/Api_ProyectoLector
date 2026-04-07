@@ -17,14 +17,13 @@ import {
   ApiParam,
 } from '@nestjs/swagger';
 import type { Request as ExpressRequest } from 'express';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { AdminService } from './admin.service';
 import { PersonasService } from '../personas/personas.service';
 import { ActualizarUsuarioDto } from '../personas/dto/actualizar-usuario.dto';
 
 @Controller('admin')
-@UseGuards(JwtAuthGuard, AdminGuard)
+@UseGuards(AdminGuard)
 @ApiBearerAuth('JWT-auth')
 export class AdminController {
   constructor(

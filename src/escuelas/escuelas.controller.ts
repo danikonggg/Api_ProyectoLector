@@ -51,7 +51,6 @@ import { ActualizarProgresoLibroDto } from './dto/actualizar-progreso-libro.dto'
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UploadedFile } from '@nestjs/common';
 import * as multer from 'multer';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Public } from '../auth/decorators/public.decorator';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { AdminOrDirectorGuard } from '../auth/guards/admin-or-director.guard';
@@ -76,7 +75,6 @@ function directorSoloSuEscuela(user: ReqUser | undefined, escuelaId: number): vo
 }
 
 @Controller('escuelas')
-@UseGuards(JwtAuthGuard)
 @ApiBearerAuth('JWT-auth')
 export class EscuelasController {
   constructor(

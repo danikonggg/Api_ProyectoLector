@@ -6,6 +6,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { JwtPersonaLoaderService } from './services/jwt-persona-loader.service';
 import { Persona } from '../personas/entities/persona.entity';
 import { Administrador } from '../personas/entities/administrador.entity';
 
@@ -25,7 +27,7 @@ import { Administrador } from '../personas/entities/administrador.entity';
     TypeOrmModule.forFeature([Persona, Administrador]),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
-  exports: [AuthService],
+  providers: [AuthService, JwtStrategy, JwtAuthGuard, JwtPersonaLoaderService],
+  exports: [AuthService, JwtModule, JwtAuthGuard, JwtPersonaLoaderService],
 })
 export class AuthModule {}

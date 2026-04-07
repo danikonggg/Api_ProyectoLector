@@ -30,7 +30,6 @@ import { CrearLicenciasDto } from './dto/crear-licencias.dto';
 import { CanjearLicenciaDto } from './dto/canjear-licencia.dto';
 import { ArchivarVencidasDto } from './dto/archivar-vencidas.dto';
 import { EliminarLicenciasDisponiblesDto } from './dto/eliminar-licencias-disponibles.dto';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { AdminOrDirectorGuard } from '../auth/guards/admin-or-director.guard';
 import { AlumnoGuard } from '../auth/guards/alumno.guard';
@@ -43,7 +42,6 @@ type ReqUser = {
 };
 
 @Controller('licencias')
-@UseGuards(JwtAuthGuard)
 @ApiBearerAuth('JWT-auth')
 export class LicenciasController {
   constructor(private readonly licenciasService: LicenciasService) {}

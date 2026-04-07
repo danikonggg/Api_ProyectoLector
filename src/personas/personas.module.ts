@@ -9,6 +9,7 @@
 
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AuthModule } from '../auth/auth.module';
 import { PersonasService } from './personas.service';
 import { PersonasController } from './personas.controller';
 import { CargaMasivaService } from './carga-masiva.service';
@@ -25,6 +26,7 @@ import { AlumnoVinculacionPadre } from './entities/alumno-vinculacion-padre.enti
 
 @Module({
   imports: [
+    AuthModule,
     TypeOrmModule.forFeature([
       Persona,
       Administrador,

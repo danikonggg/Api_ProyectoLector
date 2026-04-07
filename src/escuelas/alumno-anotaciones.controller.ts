@@ -18,7 +18,6 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { AlumnoGuard } from '../auth/guards/alumno.guard';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { EscuelasService } from './escuelas.service';
 import { CrearAnotacionDto } from './dto/crear-anotacion.dto';
 
@@ -27,7 +26,7 @@ type ReqUser = {
 };
 
 @Controller('alumno/anotaciones')
-@UseGuards(JwtAuthGuard, AlumnoGuard)
+@UseGuards(AlumnoGuard)
 @ApiBearerAuth('JWT-auth')
 @ApiTags('Solo Alumno')
 export class AlumnoAnotacionesController {

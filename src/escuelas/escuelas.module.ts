@@ -24,6 +24,7 @@ import { MaestroGrupo } from './entities/maestro-grupo.entity';
 import { Anotacion } from './entities/anotacion.entity';
 import { PersonasModule } from '../personas/personas.module';
 import { LicenciasModule } from '../licencias/licencias.module';
+import { ListarLibrosAsignadosAlumnoUseCase } from './application/listar-libros-asignados-alumno.use-case';
 
 @Module({
   imports: [
@@ -43,7 +44,7 @@ import { LicenciasModule } from '../licencias/licencias.module';
     ]),
   ],
   controllers: [EscuelasController, AlumnoAnotacionesController],
-  providers: [EscuelasService],
+  providers: [EscuelasService, ListarLibrosAsignadosAlumnoUseCase],
   exports: [EscuelasService], // Exportar para que otros módulos puedan usar el servicio
 })
 export class EscuelasModule {}

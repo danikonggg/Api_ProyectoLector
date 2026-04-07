@@ -1,6 +1,5 @@
 import { Controller, Get, Post, Patch, Delete, Body, Param, ParseIntPipe, Query, UseGuards, Request, ForbiddenException, BadRequestException, HttpCode, HttpStatus, UseInterceptors } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiConsumes, ApiBody, ApiParam } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { DirectorGuard } from '../auth/guards/director.guard';
 import { DirectorService } from './director.service';
 import { EscuelasService } from '../escuelas/escuelas.service';
@@ -25,7 +24,7 @@ function getEscuelaId(req: ExpressRequest & { user?: { director?: { escuelaId?: 
 }
 
 @Controller('director')
-@UseGuards(JwtAuthGuard, DirectorGuard)
+@UseGuards(DirectorGuard)
 @ApiBearerAuth('JWT-auth')
 export class DirectorController {
   constructor(

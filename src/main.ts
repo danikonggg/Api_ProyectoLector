@@ -1,23 +1,27 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { ValidationPipe } from '@nestjs/common';
+import { Logger } from 'nestjs-pino';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import helmet from 'helmet';
 import express from 'express';
 import { AppModule } from './app.module';
-import type { Request, Response, NextFunction } from 'express';
 import { validateEnv } from './config/env.validation';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
+import { initOpenTelemetry } from './infra/telemetry/otel-init';
+import './infra/telemetry/prometheus-metrics';
 
 /** Límite de tamaño del body para evitar payloads enormes (DoS) */
 const BODY_LIMIT = '1mb';
 
 async function bootstrap() {
+  await initOpenTelemetry();
   validateEnv();
 
-  const logger = new Logger('Bootstrap');
   const app = await NestFactory.create(AppModule, {
     bodyParser: false,
+    bufferLogs: true,
   });
+  app.useLogger(app.get(Logger));
 
   app.use(
     helmet({
@@ -28,15 +32,6 @@ async function bootstrap() {
   app.use(express.urlencoded({ extended: true, limit: BODY_LIMIT }));
 
   app.useGlobalFilters(new AllExceptionsFilter());
-
-  app.use((req: Request, res: Response, next: NextFunction) => {
-    const start = Date.now();
-    res.on('finish', () => {
-      const ms = Date.now() - start;
-      logger.log(`HTTP ${req.method} ${req.url} ${res.statusCode} ${ms}ms`);
-    });
-    next();
-  });
 
   app.useGlobalPipes(
     new ValidationPipe({
@@ -62,6 +57,8 @@ async function bootstrap() {
       'Accept-Language',
       'Origin',
       'X-Requested-With',
+      'x-request-id',
+      'x-correlation-id',
     ],
     exposedHeaders: ['Content-Length', 'Content-Type'],
     credentials: true,
@@ -105,19 +102,20 @@ async function bootstrap() {
   const port = process.env.PORT || 3000;
   await app.listen(port);
 
+  const nestLogger = app.get(Logger);
   const shutdown = async (signal: string) => {
-    logger.log(`${signal} recibido. Cerrando...`);
+    nestLogger.log(`${signal} recibido. Cerrando...`);
     await app.close();
     process.exit(0);
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
-  logger.log(`🚀 Aplicación corriendo en: http://localhost:${port}`);
+  nestLogger.log(`🚀 Aplicación corriendo en: http://localhost:${port}`);
   if (process.env.NODE_ENV !== 'production') {
-    logger.log(`📚 Swagger disponible en: http://localhost:${port}/api`);
+    nestLogger.log(`📚 Swagger disponible en: http://localhost:${port}/api`);
   }
-  logger.log(`🏥 Health check: http://localhost:${port}/health`);
+  nestLogger.log(`🏥 Health check: http://localhost:${port}/health`);
 }
 
 bootstrap().catch((err) => {

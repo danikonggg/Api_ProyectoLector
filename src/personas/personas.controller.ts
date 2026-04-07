@@ -46,7 +46,6 @@ import { RegistroDirectorDto } from './dto/registro-director.dto';
 import { ActualizarUsuarioDto } from './dto/actualizar-usuario.dto';
 import { VincularAlumnoDto } from './dto/vincular-alumno.dto';
 import { DesvincularAlumnoDto } from './dto/desvincular-alumno.dto';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { AdminOrDirectorGuard } from '../auth/guards/admin-or-director.guard';
 import { getAuditContext } from '../common/utils/audit.utils';
@@ -65,7 +64,7 @@ export class PersonasController {
    * Registrar un padre/tutor (solo administradores)
    */
   @Post('registro-padre')
-  @UseGuards(JwtAuthGuard, AdminGuard)
+  @UseGuards(AdminGuard)
   @ApiBearerAuth('JWT-auth')
   @HttpCode(HttpStatus.CREATED)
   @ApiTags('Solo Administrador')
@@ -99,7 +98,7 @@ export class PersonasController {
    * Solo administradores.
    */
   @Post('registro-padre-con-hijo')
-  @UseGuards(JwtAuthGuard, AdminGuard)
+  @UseGuards(AdminGuard)
   @ApiBearerAuth('JWT-auth')
   @HttpCode(HttpStatus.CREATED)
   @ApiTags('Solo Administrador')
@@ -121,7 +120,6 @@ export class PersonasController {
    * Debe ser llamado por un usuario cuyo tipoPersona sea "padre".
    */
   @Post('padres/vincular-alumno')
-  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiTags('Padre')
   @HttpCode(HttpStatus.OK)
@@ -146,7 +144,6 @@ export class PersonasController {
    * Solo el tutor puede desvincular alumnos que tenga vinculados.
    */
   @Post('padres/desvincular-alumno')
-  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiTags('Padre')
   @HttpCode(HttpStatus.OK)
@@ -173,7 +170,7 @@ export class PersonasController {
    * - Los directores solo pueden registrar en su propia escuela
    */
   @Post('registro-alumno')
-  @UseGuards(JwtAuthGuard, AdminOrDirectorGuard)
+  @UseGuards(AdminOrDirectorGuard)
   @ApiBearerAuth('JWT-auth')
   @HttpCode(HttpStatus.CREATED)
   @ApiTags('Admin o Director')
@@ -230,7 +227,7 @@ export class PersonasController {
    * - Los directores solo pueden registrar en su propia escuela
    */
   @Post('registro-maestro')
-  @UseGuards(JwtAuthGuard, AdminOrDirectorGuard)
+  @UseGuards(AdminOrDirectorGuard)
   @ApiBearerAuth('JWT-auth')
   @HttpCode(HttpStatus.CREATED)
   @ApiTags('Admin o Director')
@@ -283,7 +280,7 @@ export class PersonasController {
    * Obtener todos los administradores (solo administradores)
    */
   @Get('admins')
-  @UseGuards(JwtAuthGuard, AdminGuard)
+  @UseGuards(AdminGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiTags('Solo Administrador')
   @ApiOperation({ summary: 'Listar todos los administradores (requiere admin)' })
@@ -315,7 +312,7 @@ export class PersonasController {
    * Obtener la cantidad de administradores registrados (solo admin)
    */
   @Get('admins/cantidad')
-  @UseGuards(JwtAuthGuard, AdminGuard)
+  @UseGuards(AdminGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiTags('Solo Administrador')
   @ApiOperation({ summary: 'Obtener cantidad de administradores (requiere admin)' })
@@ -337,7 +334,7 @@ export class PersonasController {
    * Registrar un director/encargado de escuela (solo administradores)
    */
   @Post('registro-director')
-  @UseGuards(JwtAuthGuard, AdminGuard)
+  @UseGuards(AdminGuard)
   @ApiBearerAuth('JWT-auth')
   @HttpCode(HttpStatus.CREATED)
   @ApiTags('Solo Administrador')
@@ -373,7 +370,7 @@ export class PersonasController {
    * Incluye persona, escuela y padre (si tiene) para ver de quién es hijo.
    */
   @Get('alumnos')
-  @UseGuards(JwtAuthGuard, AdminOrDirectorGuard)
+  @UseGuards(AdminOrDirectorGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiTags('Admin o Director')
   @ApiOperation({ summary: 'Listar alumnos (admin: todos, director: solo su escuela)' })
@@ -404,7 +401,7 @@ export class PersonasController {
    * Admin: todos los alumnos que coincidan. Director: solo los de su escuela.
    */
   @Get('alumnos/buscar')
-  @UseGuards(JwtAuthGuard, AdminOrDirectorGuard)
+  @UseGuards(AdminOrDirectorGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiTags('Admin o Director')
   @ApiOperation({
@@ -437,7 +434,6 @@ export class PersonasController {
    * Compatibilidad con Frontend: devuelve el código del alumno autenticado.
    */
   @Get('alumnos/codigo-vinculacion')
-  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiTags('Alumno')
   @ApiOperation({ summary: 'Obtener el código de vinculación del alumno (propio, sin id en URL)' })
@@ -467,7 +463,6 @@ export class PersonasController {
    * - Valida que el :id corresponda al alumno autenticado (por alumno.id o por alumno.personaId, para compatibilidad).
    */
   @Get('alumnos/:id/codigo-vinculacion')
-  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiTags('Alumno')
   @ApiOperation({ summary: 'Obtener el código de vinculación del alumno (propio)' })
@@ -500,7 +495,7 @@ export class PersonasController {
    * Ruta más específica debe ir antes que alumnos/:id
    */
   @Get('alumnos/:id/padre')
-  @UseGuards(JwtAuthGuard, AdminOrDirectorGuard)
+  @UseGuards(AdminOrDirectorGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiTags('Admin o Director')
   @ApiOperation({ summary: 'Ver de quién es hijo un alumno (padre/tutor)' })
@@ -524,7 +519,7 @@ export class PersonasController {
    * Obtener alumno por ID con su padre
    */
   @Get('alumnos/:id')
-  @UseGuards(JwtAuthGuard, AdminOrDirectorGuard)
+  @UseGuards(AdminOrDirectorGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiTags('Admin o Director')
   @ApiOperation({ summary: 'Obtener alumno por ID (con padre si tiene)' })
@@ -550,7 +545,7 @@ export class PersonasController {
    * El :id es el ID del registro alumno (no el de persona).
    */
   @Patch('alumnos/:id')
-  @UseGuards(JwtAuthGuard, AdminOrDirectorGuard)
+  @UseGuards(AdminOrDirectorGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiTags('Admin o Director')
   @ApiOperation({
@@ -579,7 +574,7 @@ export class PersonasController {
    * El :id es el ID del registro alumno (no el de persona).
    */
   @Delete('alumnos/:id')
-  @UseGuards(JwtAuthGuard, AdminOrDirectorGuard)
+  @UseGuards(AdminOrDirectorGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiTags('Admin o Director')
   @ApiOperation({ summary: 'Eliminar alumno (admin o director; director solo de su escuela)' })
@@ -605,7 +600,7 @@ export class PersonasController {
    * El :id es el ID del registro maestro (no el de persona).
    */
   @Patch('maestros/:id')
-  @UseGuards(JwtAuthGuard, AdminOrDirectorGuard)
+  @UseGuards(AdminOrDirectorGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiTags('Admin o Director')
   @ApiOperation({ summary: 'Actualizar maestro (admin o director; director solo de su escuela)' })
@@ -632,7 +627,7 @@ export class PersonasController {
    * El :id es el ID del registro maestro (no el de persona).
    */
   @Delete('maestros/:id')
-  @UseGuards(JwtAuthGuard, AdminOrDirectorGuard)
+  @UseGuards(AdminOrDirectorGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiTags('Admin o Director')
   @ApiOperation({ summary: 'Eliminar maestro (admin o director; director solo de su escuela)' })
@@ -657,7 +652,7 @@ export class PersonasController {
    * Listar todos los padres/tutores del sistema
    */
   @Get('padres')
-  @UseGuards(JwtAuthGuard, AdminGuard)
+  @UseGuards(AdminGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiTags('Solo Administrador')
   @ApiOperation({ summary: 'Listar todos los padres/tutores' })
@@ -679,7 +674,6 @@ export class PersonasController {
    * Ruta más específica debe ir antes que padres/:id
    */
   @Get('padres/:id/alumnos')
-  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiTags('Padre o Administrador')
   @ApiOperation({ summary: 'Ver los hijos/alumnos de un padre (propio o admin)' })
@@ -710,7 +704,6 @@ export class PersonasController {
    * Obtener padre por ID con sus alumnos (de quién es padre)
    */
   @Get('padres/:id')
-  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiTags('Padre o Administrador')
   @ApiOperation({ summary: 'Obtener padre por ID con sus hijos/alumnos (propio o admin)' })

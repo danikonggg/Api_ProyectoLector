@@ -35,12 +35,11 @@ import { EscuelasService } from '../escuelas/escuelas.service';
 import { getAuditContext } from '../common/utils/audit.utils';
 import { AsignarAlumnoDto } from './dto/asignar-alumno.dto';
 import { AsignarLibroAlumnoDto } from '../escuelas/dto/asignar-libro-alumno.dto';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { MaestroGuard } from '../auth/guards/maestro.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 
 @Controller('maestros')
-@UseGuards(JwtAuthGuard, MaestroGuard)
+@UseGuards(MaestroGuard)
 @ApiBearerAuth('JWT-auth')
 export class MaestrosController {
   constructor(

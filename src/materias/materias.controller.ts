@@ -24,14 +24,12 @@ import {
   ApiBearerAuth,
   ApiParam,
 } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { MateriasService } from './materias.service';
 import { CreateMateriaDto } from './dto/create-materia.dto';
 import { UpdateMateriaDto } from './dto/update-materia.dto';
 
 @Controller('materias')
-@UseGuards(JwtAuthGuard)
 @ApiBearerAuth('JWT-auth')
 export class MateriasController {
   constructor(private readonly materiasService: MateriasService) {}

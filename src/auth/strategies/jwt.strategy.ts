@@ -1,24 +1,26 @@
 /**
- * ============================================
- * ESTRATEGIA: JWT Strategy
- * ============================================
- * Valida tokens JWT y verifica que el usuario exista y esté activo.
+ * JWT: valida firma y delega la carga de Persona a JwtPersonaLoaderService
+ * (una relación por rol, sin maestro+director+alumno+padre+admin a la vez).
  */
 
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Persona } from '../../personas/entities/persona.entity';
+import type { Persona } from '../../personas/entities/persona.entity';
+import { JwtPersonaLoaderService } from '../services/jwt-persona-loader.service';
+
+export type AccessTokenPayload = {
+  sub: number;
+  email?: string;
+  tipoPersona?: string;
+};
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     configService: ConfigService,
-    @InjectRepository(Persona)
-    private personaRepository: Repository<Persona>,
+    private readonly jwtPersonaLoader: JwtPersonaLoaderService,
   ) {
     const secret = configService.get<string>('JWT_SECRET');
     if (!secret || secret.length < 32) {
@@ -31,20 +33,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(payload: { sub: number }) {
-    const persona = await this.personaRepository.findOne({
-      where: { id: payload.sub },
-      relations: ['administrador', 'padre', 'alumno', 'maestro', 'maestro.escuela', 'director', 'director.escuela'],
-    });
-
-    if (!persona) {
-      throw new UnauthorizedException('Usuario no encontrado');
+  async validate(payload: AccessTokenPayload): Promise<Persona> {
+    if (payload?.sub == null) {
+      throw new UnauthorizedException('Token inválido');
     }
 
-    if (!persona.activo) {
-      throw new UnauthorizedException('Usuario inactivo');
-    }
-
-    return persona;
+    return this.jwtPersonaLoader.loadPrincipal(Number(payload.sub));
   }
 }

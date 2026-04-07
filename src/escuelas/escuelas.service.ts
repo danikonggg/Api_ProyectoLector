@@ -34,6 +34,7 @@ import { CrearEscuelaDto } from './dto/crear-escuela.dto';
 import { ActualizarEscuelaDto } from './dto/actualizar-escuela.dto';
 import { AuditService } from '../audit/audit.service';
 import { CrearAnotacionDto } from './dto/crear-anotacion.dto';
+import { ListarLibrosAsignadosAlumnoUseCase } from './application/listar-libros-asignados-alumno.use-case';
 
 export interface AuditContext {
   usuarioId?: number | null;
@@ -78,6 +79,7 @@ export class EscuelasService {
     private readonly dataSource: DataSource,
     private readonly auditService: AuditService,
     private readonly licenciasService: LicenciasService,
+    private readonly listarLibrosAsignadosAlumnoUseCase: ListarLibrosAsignadosAlumnoUseCase,
   ) {}
 
   /**
@@ -935,27 +937,7 @@ export class EscuelasService {
    * El alumno solo ve libros que maestro/director le asignó, con su progreso.
    */
   async listarLibrosAsignadosAlAlumno(alumnoId: number) {
-    const asignaciones = await this.alumnoLibroRepository.find({
-      where: { alumnoId },
-      relations: ['libro', 'libro.materia', 'ultimoSegmento'],
-      order: { fechaAsignacion: 'DESC' },
-    });
-
-    const data = asignaciones.map((a) => ({
-      ...a.libro,
-      alumnoLibroId: a.id,
-      progreso: a.porcentaje,
-      ultimoSegmentoId: a.ultimoSegmentoId,
-      ultimaLectura: a.ultimaLectura,
-      fechaAsignacion: a.fechaAsignacion,
-    }));
-
-    return {
-      message: 'Libros asignados obtenidos correctamente.',
-      description: `Tienes ${data.length} libro(s) asignado(s).`,
-      total: data.length,
-      data,
-    };
+    return this.listarLibrosAsignadosAlumnoUseCase.execute(alumnoId);
   }
 
   /**
