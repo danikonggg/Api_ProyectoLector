@@ -42,9 +42,7 @@ export class AuditService {
    * Obtiene los logs de auditoría con paginación (solo admin)
    */
   async findAll(page?: number, limit?: number) {
-    const qb = this.auditRepository
-      .createQueryBuilder('audit')
-      .orderBy('audit.fecha', 'DESC');
+    const qb = this.auditRepository.createQueryBuilder('audit').orderBy('audit.fecha', 'DESC');
 
     const total = await qb.getCount();
 
@@ -121,11 +119,56 @@ export class AuditService {
     });
 
     const porRol = {
-      administrador: { conectados24h: 0, conectados48h: 0, conectados7d: 0, conectados30d: 0, sinConexionNunca: 0, sinConexionMas7d: 0, sinConexionMas30d: 0, total: 0 },
-      director: { conectados24h: 0, conectados48h: 0, conectados7d: 0, conectados30d: 0, sinConexionNunca: 0, sinConexionMas7d: 0, sinConexionMas30d: 0, total: 0 },
-      maestro: { conectados24h: 0, conectados48h: 0, conectados7d: 0, conectados30d: 0, sinConexionNunca: 0, sinConexionMas7d: 0, sinConexionMas30d: 0, total: 0 },
-      alumno: { conectados24h: 0, conectados48h: 0, conectados7d: 0, conectados30d: 0, sinConexionNunca: 0, sinConexionMas7d: 0, sinConexionMas30d: 0, total: 0 },
-      padre: { conectados24h: 0, conectados48h: 0, conectados7d: 0, conectados30d: 0, sinConexionNunca: 0, sinConexionMas7d: 0, sinConexionMas30d: 0, total: 0 },
+      administrador: {
+        conectados24h: 0,
+        conectados48h: 0,
+        conectados7d: 0,
+        conectados30d: 0,
+        sinConexionNunca: 0,
+        sinConexionMas7d: 0,
+        sinConexionMas30d: 0,
+        total: 0,
+      },
+      director: {
+        conectados24h: 0,
+        conectados48h: 0,
+        conectados7d: 0,
+        conectados30d: 0,
+        sinConexionNunca: 0,
+        sinConexionMas7d: 0,
+        sinConexionMas30d: 0,
+        total: 0,
+      },
+      maestro: {
+        conectados24h: 0,
+        conectados48h: 0,
+        conectados7d: 0,
+        conectados30d: 0,
+        sinConexionNunca: 0,
+        sinConexionMas7d: 0,
+        sinConexionMas30d: 0,
+        total: 0,
+      },
+      alumno: {
+        conectados24h: 0,
+        conectados48h: 0,
+        conectados7d: 0,
+        conectados30d: 0,
+        sinConexionNunca: 0,
+        sinConexionMas7d: 0,
+        sinConexionMas30d: 0,
+        total: 0,
+      },
+      padre: {
+        conectados24h: 0,
+        conectados48h: 0,
+        conectados7d: 0,
+        conectados30d: 0,
+        sinConexionNunca: 0,
+        sinConexionMas7d: 0,
+        sinConexionMas30d: 0,
+        total: 0,
+      },
     };
 
     for (const p of personas) {

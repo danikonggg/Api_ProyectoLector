@@ -1,33 +1,30 @@
 /**
- * k6 — Simular muchos alumnos pidiendo "mis libros" (y opcionalmente el detalle de un libro)
+ * k6 — Carga sobre rutas de alumno (misma cuenta, muchas peticiones en paralelo).
  *
- * Flujo:
- *   1) setup(): un solo POST /auth/login (evita el límite 5 login/min por IP de Nest).
- *   2) N usuarios virtuales en paralelo: GET /escuelas/mis-libros con JWT de alumno.
- *   3) Si defines LIBRO_ID: además GET /libros/:id (misma sesión, "abrir" ese libro).
+ * Qué mide: si el servidor aguanta N requests concurrentes a esos endpoints.
+ * No son “1000 alumnos distintos”: es 1 login y N VUs con el mismo JWT (estrés del API).
  *
- * Requisitos: cuenta real con rol alumno y libros asignados (o al menos token válido).
+ * Flujo por iteración:
+ *   1) setup(): un solo POST /auth/login (evita rate limit de login por IP).
+ *   2) Cada VU: GET /escuelas/mis-libros
+ *   3) Si K6_LIBRO_ID: GET /libros/:id (como abrir ese libro; el alumno debe tenerlo asignado).
  *
- * Uso:
- *   k6 run load-test-k6-alumno-mis-libros.js
+ * Cómo correr (recomendado):
+ *   ./scripts/load-test-alumno.sh
+ *   (pide K6_ALUMNO_EMAIL y K6_ALUMNO_PASSWORD en el entorno)
  *
- * Con variables (recomendado):
- *   K6_ALUMNO_EMAIL=alumno@test.com K6_ALUMNO_PASSWORD=secret k6 run load-test-k6-alumno-mis-libros.js
- *
- * Opcional — probar también detalle de un libro (todos piden el mismo id):
- *   K6_LIBRO_ID=42 k6 run load-test-k6-alumno-mis-libros.js
- *
- * Ajustar picos:
- *   K6_VUS=500 k6 run load-test-k6-alumno-mis-libros.js
+ * Manual:
+ *   K6_ALUMNO_EMAIL=... K6_ALUMNO_PASSWORD=... k6 run load-test-k6-alumno-mis-libros.js
+ *   K6_LIBRO_ID=1 K6_VUS=100 ... k6 run load-test-k6-alumno-mis-libros.js
  */
 
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 
 const BASE_URL = __ENV.K6_BASE_URL || 'http://localhost:3000';
-const ALUMNO_EMAIL = __ENV.K6_ALUMNO_EMAIL || 'daniel@gmail.com';
-const ALUMNO_PASSWORD = __ENV.K6_ALUMNO_PASSWORD || 'dani123';
-const VUS = Number(__ENV.K6_VUS || 500);
+const ALUMNO_EMAIL = __ENV.K6_ALUMNO_EMAIL || '';
+const ALUMNO_PASSWORD = __ENV.K6_ALUMNO_PASSWORD || '';
+const VUS = Number(__ENV.K6_VUS || 50);
 const LIBRO_ID = __ENV.K6_LIBRO_ID ? String(__ENV.K6_LIBRO_ID).trim() : '';
 const REQUEST_TIMEOUT = '120s';
 
@@ -43,13 +40,19 @@ export const options = {
     },
   },
   thresholds: {
-    'checks{check:mis-libros 200}': ['rate>=0.95'],
+    checks: ['rate>=0.95'],
     http_req_duration: ['p(95)<120000'],
     http_req_failed: ['rate<0.1'],
   },
 };
 
 export function setup() {
+  if (!ALUMNO_EMAIL || !ALUMNO_PASSWORD) {
+    throw new Error(
+      '[setup] Define K6_ALUMNO_EMAIL y K6_ALUMNO_PASSWORD (o usa ./scripts/load-test-alumno.sh)',
+    );
+  }
+
   const res = http.post(
     `${BASE_URL}/auth/login`,
     JSON.stringify({ email: ALUMNO_EMAIL, password: ALUMNO_PASSWORD }),

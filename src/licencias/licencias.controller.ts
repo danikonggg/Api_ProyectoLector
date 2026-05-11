@@ -23,7 +23,14 @@ import {
   BadRequestException,
   StreamableFile,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+  ApiParam,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { LicenciasService } from './licencias.service';
 import { getAuditContext } from '../common/utils/audit.utils';
 import { CrearLicenciasDto } from './dto/crear-licencias.dto';
@@ -77,7 +84,11 @@ export class LicenciasController {
   @ApiOperation({ summary: 'Listar licencias (filtros: escuelaId, libroId, estado)' })
   @ApiQuery({ name: 'escuelaId', required: false, type: Number })
   @ApiQuery({ name: 'libroId', required: false, type: Number })
-  @ApiQuery({ name: 'estado', required: false, enum: ['disponible', 'usada', 'vencida'] })
+  @ApiQuery({
+    name: 'estado',
+    required: false,
+    enum: ['disponible', 'usada', 'vencida', 'desactivada', 'baja'],
+  })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiResponse({ status: 200, description: 'Lista de licencias' })
@@ -88,8 +99,10 @@ export class LicenciasController {
     @Query('page') pageStr?: string,
     @Query('limit') limitStr?: string,
   ) {
-    const escuelaId = escuelaIdStr && !isNaN(parseInt(escuelaIdStr, 10)) ? parseInt(escuelaIdStr, 10) : undefined;
-    const libroId = libroIdStr && !isNaN(parseInt(libroIdStr, 10)) ? parseInt(libroIdStr, 10) : undefined;
+    const escuelaId =
+      escuelaIdStr && !isNaN(parseInt(escuelaIdStr, 10)) ? parseInt(escuelaIdStr, 10) : undefined;
+    const libroId =
+      libroIdStr && !isNaN(parseInt(libroIdStr, 10)) ? parseInt(libroIdStr, 10) : undefined;
     const page = pageStr && !isNaN(parseInt(pageStr, 10)) ? parseInt(pageStr, 10) : undefined;
     const limit = limitStr && !isNaN(parseInt(limitStr, 10)) ? parseInt(limitStr, 10) : undefined;
     return await this.licenciasService.listar(escuelaId, libroId, estado, page, limit);
@@ -105,7 +118,11 @@ export class LicenciasController {
   @ApiOperation({ summary: 'Licencias de una escuela' })
   @ApiParam({ name: 'id', description: 'ID de la escuela' })
   @ApiQuery({ name: 'libroId', required: false, type: Number })
-  @ApiQuery({ name: 'estado', required: false, enum: ['disponible', 'usada', 'vencida'] })
+  @ApiQuery({
+    name: 'estado',
+    required: false,
+    enum: ['disponible', 'usada', 'vencida', 'desactivada', 'baja'],
+  })
   @ApiResponse({ status: 200, description: 'Licencias de la escuela' })
   async listarPorEscuela(
     @Param('id', ParseIntPipe) id: number,
@@ -161,28 +178,24 @@ export class LicenciasController {
   @ApiOperation({ summary: 'Exportar licencias a PDF' })
   @ApiQuery({ name: 'escuelaId', required: true, type: Number })
   @ApiQuery({ name: 'libroId', required: false, type: Number })
-  @ApiQuery({ name: 'estado', required: false, enum: ['disponible', 'usada', 'vencida'] })
+  @ApiQuery({
+    name: 'estado',
+    required: false,
+    enum: ['disponible', 'usada', 'vencida', 'desactivada', 'baja'],
+  })
   @ApiResponse({ status: 200, description: 'PDF de licencias' })
   async exportarPdf(
     @Query('escuelaId', ParseIntPipe) escuelaId: number,
     @Query('libroId') libroIdStr?: string,
     @Query('estado') estado?: string,
   ) {
-    const estadoOk =
-      estado == null ||
-      ['disponible', 'usada', 'vencida'].includes(String(estado));
+    const estadoOk = estado == null || ['disponible', 'usada', 'vencida'].includes(String(estado));
     if (!estadoOk) {
-      throw new BadRequestException(
-        'estado inválido. Usa: disponible | usada | vencida',
-      );
+      throw new BadRequestException('estado inválido. Usa: disponible | usada | vencida');
     }
 
     const libroId = libroIdStr ? parseInt(libroIdStr, 10) : undefined;
-    const buffer = await this.licenciasService.exportarLicenciasAPdf(
-      escuelaId,
-      libroId,
-      estado,
-    );
+    const buffer = await this.licenciasService.exportarLicenciasAPdf(escuelaId, libroId, estado);
 
     return new StreamableFile(buffer, {
       type: 'application/pdf',
@@ -276,10 +289,7 @@ export class LicenciasController {
   @ApiParam({ name: 'id', description: 'ID de la licencia' })
   @ApiResponse({ status: 200, description: 'Licencia actualizada' })
   @ApiResponse({ status: 404, description: 'Licencia no encontrada' })
-  async setActiva(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() body: { activa: boolean },
-  ) {
+  async setActiva(@Param('id', ParseIntPipe) id: number, @Body() body: { activa: boolean }) {
     if (typeof body.activa !== 'boolean') {
       throw new ForbiddenException('El body debe incluir "activa" (boolean).');
     }

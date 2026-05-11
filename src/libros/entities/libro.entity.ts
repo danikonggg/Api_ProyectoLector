@@ -5,14 +5,7 @@
  * Libro cargado por admin. PDF → extracción texto → segmentos.
  */
 
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  ManyToOne,
-  JoinColumn,
-  OneToMany,
-} from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
 import { Materia } from '../../personas/entities/materia.entity';
 import { Unidad } from './unidad.entity';
 

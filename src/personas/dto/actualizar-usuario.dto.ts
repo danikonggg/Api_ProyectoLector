@@ -17,27 +17,46 @@ import {
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { EMAIL_MAX_LENGTH, NAME_MAX_LENGTH, PHONE_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '../../common/constants/validation.constants';
+import {
+  EMAIL_MAX_LENGTH,
+  NAME_MAX_LENGTH,
+  PHONE_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+} from '../../common/constants/validation.constants';
 
 export class ActualizarUsuarioDto {
   @ApiPropertyOptional({ example: 'Juan', description: 'Nombre', maxLength: NAME_MAX_LENGTH })
   @IsOptional()
   @IsString()
-  @MaxLength(NAME_MAX_LENGTH, { message: `El nombre no puede superar ${NAME_MAX_LENGTH} caracteres` })
+  @MaxLength(NAME_MAX_LENGTH, {
+    message: `El nombre no puede superar ${NAME_MAX_LENGTH} caracteres`,
+  })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   nombre?: string;
 
-  @ApiPropertyOptional({ example: 'Pérez', description: 'Apellido paterno', maxLength: NAME_MAX_LENGTH })
+  @ApiPropertyOptional({
+    example: 'Pérez',
+    description: 'Apellido paterno',
+    maxLength: NAME_MAX_LENGTH,
+  })
   @IsOptional()
   @IsString()
-  @MaxLength(NAME_MAX_LENGTH, { message: `El apellido paterno no puede superar ${NAME_MAX_LENGTH} caracteres` })
+  @MaxLength(NAME_MAX_LENGTH, {
+    message: `El apellido paterno no puede superar ${NAME_MAX_LENGTH} caracteres`,
+  })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   apellidoPaterno?: string;
 
-  @ApiPropertyOptional({ example: 'García', description: 'Apellido materno', maxLength: NAME_MAX_LENGTH })
+  @ApiPropertyOptional({
+    example: 'García',
+    description: 'Apellido materno',
+    maxLength: NAME_MAX_LENGTH,
+  })
   @IsOptional()
   @IsString()
-  @MaxLength(NAME_MAX_LENGTH, { message: `El apellido materno no puede superar ${NAME_MAX_LENGTH} caracteres` })
+  @MaxLength(NAME_MAX_LENGTH, {
+    message: `El apellido materno no puede superar ${NAME_MAX_LENGTH} caracteres`,
+  })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   apellidoMaterno?: string;
 
@@ -45,17 +64,29 @@ export class ActualizarUsuarioDto {
   @IsOptional()
   apellido?: string;
 
-  @ApiPropertyOptional({ example: 'juan@example.com', description: 'Correo electrónico', maxLength: EMAIL_MAX_LENGTH })
+  @ApiPropertyOptional({
+    example: 'juan@example.com',
+    description: 'Correo electrónico',
+    maxLength: EMAIL_MAX_LENGTH,
+  })
   @IsOptional()
   @IsEmail({}, { message: 'El correo debe tener un formato válido (ej: usuario@dominio.com)' })
-  @MaxLength(EMAIL_MAX_LENGTH, { message: `El correo no puede superar ${EMAIL_MAX_LENGTH} caracteres` })
+  @MaxLength(EMAIL_MAX_LENGTH, {
+    message: `El correo no puede superar ${EMAIL_MAX_LENGTH} caracteres`,
+  })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim().toLowerCase() : value))
   correo?: string;
 
-  @ApiPropertyOptional({ example: '5551234567', description: 'Teléfono', maxLength: PHONE_MAX_LENGTH })
+  @ApiPropertyOptional({
+    example: '5551234567',
+    description: 'Teléfono',
+    maxLength: PHONE_MAX_LENGTH,
+  })
   @IsOptional()
   @IsString()
-  @MaxLength(PHONE_MAX_LENGTH, { message: `El teléfono no puede superar ${PHONE_MAX_LENGTH} caracteres` })
+  @MaxLength(PHONE_MAX_LENGTH, {
+    message: `El teléfono no puede superar ${PHONE_MAX_LENGTH} caracteres`,
+  })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   telefono?: string;
 
@@ -71,11 +102,17 @@ export class ActualizarUsuarioDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   genero?: string;
 
-  @ApiPropertyOptional({ example: 'nuevaPassword123', description: 'Nueva contraseña (mín. 6). Si no se envía o se envía vacío, se mantiene la actual.' })
+  @ApiPropertyOptional({
+    example: 'nuevaPassword123',
+    description:
+      'Nueva contraseña (mín. 6). Si no se envía o se envía vacío, se mantiene la actual.',
+  })
   @IsOptional()
   @Transform(({ value }) => (value === '' ? undefined : value))
   @IsString()
-  @MinLength(PASSWORD_MIN_LENGTH, { message: `La contraseña debe tener al menos ${PASSWORD_MIN_LENGTH} caracteres` })
+  @MinLength(PASSWORD_MIN_LENGTH, {
+    message: `La contraseña debe tener al menos ${PASSWORD_MIN_LENGTH} caracteres`,
+  })
   password?: string;
 
   @ApiPropertyOptional({ example: true, description: 'Usuario activo o no' })

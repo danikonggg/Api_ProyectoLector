@@ -9,17 +9,13 @@ import {
   ParseIntPipe,
   Request,
 } from '@nestjs/common';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiBearerAuth,
-  ApiParam,
-} from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import type { Request as ExpressRequest } from 'express';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { AdminService } from './admin.service';
-import { PersonasService } from '../personas/personas.service';
+import { ConsultaPersonasService } from '../personas/services/consulta-personas.service';
+import { GestionPersonasService } from '../personas/services/gestion-personas.service';
+import { EscuelasService } from '../escuelas/escuelas.service';
 import { ActualizarUsuarioDto } from '../personas/dto/actualizar-usuario.dto';
 
 @Controller('admin')
@@ -28,7 +24,9 @@ import { ActualizarUsuarioDto } from '../personas/dto/actualizar-usuario.dto';
 export class AdminController {
   constructor(
     private readonly adminService: AdminService,
-    private readonly personasService: PersonasService,
+    private readonly consultaPersonasService: ConsultaPersonasService,
+    private readonly gestionPersonasService: GestionPersonasService,
+    private readonly escuelasService: EscuelasService,
   ) {}
 
   /**
@@ -104,7 +102,7 @@ export class AdminController {
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'Solo administradores' })
   async getUsuarios() {
-    return await this.personasService.obtenerTodosUsuariosConTotales();
+    return await this.consultaPersonasService.obtenerTodosUsuariosConTotales();
   }
 
   /**
@@ -127,10 +125,10 @@ export class AdminController {
   async actualizarUsuario(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: ActualizarUsuarioDto,
-    @Request() req: ExpressRequest & { user?: { id: number }; ip?: string },
+    @Request() req: ExpressRequest & { user?: { administrador?: { id: number } }; ip?: string },
   ) {
-    return await this.personasService.actualizarUsuarioPorId(id, dto, {
-      usuarioId: req.user?.id ?? null,
+    return await this.gestionPersonasService.actualizarUsuarioPorId(id, dto, {
+      usuarioId: req.user?.administrador?.id ?? null,
       ip: req.ip ?? null,
     });
   }
@@ -144,7 +142,8 @@ export class AdminController {
   @ApiParam({ name: 'id', description: 'ID de la persona (usuario)' })
   @ApiOperation({
     summary: 'Eliminar usuario por ID',
-    description: 'Elimina el usuario del sistema (administrador, director, maestro, alumno o padre).',
+    description:
+      'Elimina el usuario del sistema (administrador, director, maestro, alumno o padre).',
   })
   @ApiResponse({ status: 200, description: 'Usuario eliminado' })
   @ApiResponse({ status: 404, description: 'Usuario no encontrado' })
@@ -152,10 +151,10 @@ export class AdminController {
   @ApiResponse({ status: 403, description: 'Solo administradores' })
   async eliminarUsuario(
     @Param('id', ParseIntPipe) id: number,
-    @Request() req: ExpressRequest & { user?: { id: number }; ip?: string },
+    @Request() req: ExpressRequest & { user?: { administrador?: { id: number } }; ip?: string },
   ) {
-    return await this.personasService.eliminarUsuarioPorId(id, {
-      usuarioId: req.user?.id ?? null,
+    return await this.gestionPersonasService.eliminarUsuarioPorId(id, {
+      usuarioId: req.user?.administrador?.id ?? null,
       ip: req.ip ?? null,
     });
   }

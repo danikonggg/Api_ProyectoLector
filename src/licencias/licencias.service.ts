@@ -23,6 +23,7 @@ import { Alumno } from '../personas/entities/alumno.entity';
 import { EscuelaLibro } from '../escuelas/entities/escuela-libro.entity';
 import { AlumnoLibro } from '../escuelas/entities/alumno-libro.entity';
 import PDFDocument from 'pdfkit';
+import { ListarLibrosDisponiblesUseCase } from './application/listar-libros-disponibles.use-case';
 
 // Clave con 16 dígitos + guiones: DDDD-DDDD-DDDD-DDDD
 const DIGITOS = '0123456789';
@@ -57,17 +58,13 @@ export class LicenciasService {
     @InjectRepository(AlumnoLibro)
     private readonly alumnoLibroRepo: Repository<AlumnoLibro>,
     private readonly auditService: AuditService,
+    private readonly listarLibrosDisponiblesUseCase: ListarLibrosDisponiblesUseCase,
   ) {}
 
   /**
    * Generar lote de licencias. Crea Escuela_Libro si no existe.
    */
-  async generar(
-    escuelaId: number,
-    libroId: number,
-    cantidad: number,
-    fechaVencimiento: string,
-  ) {
+  async generar(escuelaId: number, libroId: number, cantidad: number, fechaVencimiento: string) {
     const escuela = await this.escuelaRepo.findOne({ where: { id: escuelaId } });
     if (!escuela) throw new NotFoundException(`No se encontró la escuela con ID ${escuelaId}`);
 
@@ -98,7 +95,10 @@ export class LicenciasService {
         if (!existe) break;
         clavesUsadas.add(clave);
         intentos++;
-        if (intentos > 100) throw new BadRequestException('No se pudo generar claves únicas. Intenta con menos cantidad.');
+        if (intentos > 100)
+          throw new BadRequestException(
+            'No se pudo generar claves únicas. Intenta con menos cantidad.',
+          );
       } while (true);
       clavesUsadas.add(clave);
 
@@ -164,79 +164,117 @@ export class LicenciasService {
     auditContext?: { usuarioId?: number | null; ip?: string | null },
   ) {
     const claveNorm = clave.trim().replace(/\s+/g, '');
-    const lic = await this.licenciaRepo
-      .createQueryBuilder('lic')
-      .leftJoinAndSelect('lic.libro', 'libro')
-      .leftJoinAndSelect('lic.escuela', 'escuela')
-      .where('UPPER(REPLACE(lic.clave, \' \', \'\')) = UPPER(:clave)', { clave: claveNorm })
-      .getOne();
-    if (!lic) {
-      throw new NotFoundException('Licencia no encontrada. Verifica la clave.');
-    }
+    const resultado = await this.licenciaRepo.manager.transaction(async (manager) => {
+      const licRepo = manager.getRepository(LicenciaLibro);
+      const alumnoRepo = manager.getRepository(Alumno);
+      const alumnoLibroRepo = manager.getRepository(AlumnoLibro);
 
-    if (lic.alumnoId != null) {
-      throw new ConflictException('Esta licencia ya fue canjeada por otro alumno.');
-    }
-    if (!lic.activa) {
-      throw new BadRequestException('Esta licencia está desactivada.');
-    }
+      const lic = await licRepo
+        .createQueryBuilder('lic')
+        .leftJoinAndSelect('lic.libro', 'libro')
+        .leftJoinAndSelect('lic.escuela', 'escuela')
+        .where("UPPER(REPLACE(lic.clave, ' ', '')) = UPPER(:clave)", {
+          clave: claveNorm,
+        })
+        .getOne();
+      if (!lic) {
+        throw new NotFoundException('Licencia no encontrada. Verifica la clave.');
+      }
 
-    const hoy = new Date();
-    hoy.setHours(0, 0, 0, 0);
-    const ven = new Date(lic.fechaVencimiento);
-    ven.setHours(0, 0, 0, 0);
-    if (ven < hoy) {
-      throw new BadRequestException('Esta licencia ha vencido.');
-    }
+      if (lic.alumnoId != null) {
+        throw new ConflictException('Esta licencia ya fue canjeada por otro alumno.');
+      }
+      if (!lic.activa) {
+        throw new BadRequestException('Esta licencia está desactivada.');
+      }
 
-    const alumno = await this.alumnoRepo.findOne({
-      where: { id: alumnoId },
-      relations: ['persona'],
+      const hoy = new Date();
+      hoy.setHours(0, 0, 0, 0);
+      const ven = new Date(lic.fechaVencimiento);
+      ven.setHours(0, 0, 0, 0);
+      if (ven < hoy) {
+        throw new BadRequestException('Esta licencia ha vencido.');
+      }
+
+      const alumno = await alumnoRepo.findOne({
+        where: { id: alumnoId },
+        relations: ['persona'],
+      });
+      if (!alumno) {
+        throw new NotFoundException(`No se encontró el alumno con ID ${alumnoId}`);
+      }
+      if (Number(alumno.escuelaId) !== Number(lic.escuelaId)) {
+        throw new BadRequestException('Esta licencia no corresponde a tu escuela.');
+      }
+
+      const asignacionExistente = await alumnoLibroRepo.findOne({
+        where: { alumnoId, libroId: lic.libroId },
+      });
+      if (asignacionExistente) {
+        const tieneAccesoVigente = await this.accesoLibroActivoSegunLicencia(alumnoId, lic.libroId);
+        if (tieneAccesoVigente) {
+          throw new ConflictException('El alumno ya tiene asignado este libro.');
+        }
+      }
+
+      const claim = await licRepo
+        .createQueryBuilder()
+        .update(LicenciaLibro)
+        .set({
+          alumnoId,
+          fechaAsignacion: new Date(),
+        })
+        .where('id = :id', { id: lic.id })
+        .andWhere('alumnoId IS NULL')
+        .andWhere('activa = true')
+        .andWhere('fechaVencimiento >= CURRENT_DATE')
+        .execute();
+
+      if ((claim.affected ?? 0) !== 1) {
+        throw new ConflictException('Esta licencia ya fue canjeada por otro alumno.');
+      }
+
+      if (asignacionExistente) {
+        asignacionExistente.asignadoPorTipo = asignadoPorTipo;
+        asignacionExistente.asignadoPorId = asignadoPorId;
+        await alumnoLibroRepo.save(asignacionExistente);
+      } else {
+        const asignacion = alumnoLibroRepo.create({
+          alumnoId,
+          libroId: lic.libroId,
+          porcentaje: 0,
+          ultimoSegmentoId: null,
+          ultimaLectura: null,
+          fechaAsignacion: new Date(),
+          asignadoPorTipo,
+          asignadoPorId,
+        });
+        await alumnoLibroRepo.save(asignacion);
+      }
+
+      return {
+        libroId: lic.libroId,
+        titulo: lic.libro?.titulo,
+        clave: lic.clave,
+      };
     });
-    if (!alumno) throw new NotFoundException(`No se encontró el alumno con ID ${alumnoId}`);
-    if (Number(alumno.escuelaId) !== Number(lic.escuelaId)) {
-      throw new BadRequestException('Esta licencia no corresponde a tu escuela.');
-    }
 
-    const yaTiene = await this.alumnoLibroRepo.findOne({
-      where: { alumnoId, libroId: lic.libroId },
-    });
-    if (yaTiene) {
-      throw new ConflictException('El alumno ya tiene asignado este libro.');
-    }
-
-    lic.alumnoId = alumnoId;
-    lic.fechaAsignacion = new Date();
-    await this.licenciaRepo.save(lic);
-
-    const asignacion = this.alumnoLibroRepo.create({
-      alumnoId,
-      libroId: lic.libroId,
-      porcentaje: 0,
-      ultimoSegmentoId: null,
-      ultimaLectura: null,
-      fechaAsignacion: new Date(),
-      asignadoPorTipo,
-      asignadoPorId,
-    });
-    await this.alumnoLibroRepo.save(asignacion);
-
-    this.logger.log(`Licencia ${lic.clave} canjeada por alumno ${alumnoId}`);
+    this.logger.log(`Licencia ${resultado.clave} canjeada por alumno ${alumnoId}`);
 
     if (auditContext) {
       await this.auditService.log('licencia_canjear', {
         usuarioId: auditContext?.usuarioId ?? null,
         ip: auditContext?.ip ?? null,
-        detalles: `alumnoId=${alumnoId} libroId=${lic.libroId} canjeadoPor=${asignadoPorTipo}:${asignadoPorId}`,
+        detalles: `alumnoId=${alumnoId} libroId=${resultado.libroId} canjeadoPor=${asignadoPorTipo}:${asignadoPorId}`,
       });
     }
 
     return {
       message: 'Licencia canjeada correctamente.',
-      description: `El alumno ya puede ver el libro "${lic.libro?.titulo}" en "Mis libros".`,
+      description: `El alumno ya puede ver el libro "${resultado.titulo}" en "Mis libros".`,
       data: {
-        libroId: lic.libroId,
-        titulo: lic.libro?.titulo,
+        libroId: resultado.libroId,
+        titulo: resultado.titulo,
         alumnoId,
       },
     };
@@ -316,7 +354,24 @@ export class LicenciasService {
   }
 
   /**
-   * Listar licencias (admin). Filtros: escuelaId, libroId, estado (disponible|usada|vencida)
+   * Acceso al libro si existe al menos una licencia **activa** (activa=true), **no vencida**,
+   * asignada a ese alumno para ese libro. Así, una licencia revocada no bloquea una nueva
+   * licencia del mismo libro (pueden coexistir filas viejas revocadas y una nueva vigente).
+   */
+  async accesoLibroActivoSegunLicencia(alumnoId: number, libroId: number): Promise<boolean> {
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+    const lic = await this.licenciaRepo.findOne({
+      where: { alumnoId, libroId, activa: true },
+    });
+    if (!lic) return false;
+    const ven = new Date(lic.fechaVencimiento);
+    ven.setHours(0, 0, 0, 0);
+    return ven >= hoy;
+  }
+
+  /**
+   * Listar licencias (admin). Filtros: escuelaId, libroId, estado (disponible|usada|vencida|desactivada)
    */
   async listar(
     escuelaId?: number,
@@ -353,6 +408,8 @@ export class LicenciasService {
       qb.andWhere('lic.fechaVencimiento >= :hoy', { hoy: hoy.toISOString().slice(0, 10) });
     } else if (estado === 'vencida') {
       qb.andWhere('lic.fechaVencimiento < :hoy', { hoy: hoy.toISOString().slice(0, 10) });
+    } else if (estado === 'desactivada' || estado === 'baja') {
+      qb.andWhere('lic.activa = false');
     }
 
     const total = await qb.getCount();
@@ -369,41 +426,49 @@ export class LicenciasService {
     }
 
     const licencias = await qb.getMany();
-    const data = licencias.map((l) => ({
-      id: l.id,
-      clave: l.clave,
-      libroId: l.libroId,
-      titulo: l.libro?.titulo,
-      escuelaId: l.escuelaId,
-      nombreEscuela: l.escuela?.nombre,
-      alumnoId: l.alumnoId,
-      alumno: l.alumno?.persona
-        ? `${l.alumno.persona.nombre} ${l.alumno.persona.apellidoPaterno || ''}`
-        : null,
-      fechaVencimiento: l.fechaVencimiento,
-      activa: l.activa,
-      estado:
-        l.alumnoId != null
-          ? 'usada'
-          : new Date(l.fechaVencimiento) < hoy
-            ? 'vencida'
-            : 'disponible',
-      fechaAsignacion: l.fechaAsignacion,
-      createdAt: l.createdAt,
-    }));
+    const data = licencias.map((l) => {
+      let estadoEtiqueta: string;
+      if (!l.activa) {
+        estadoEtiqueta = 'desactivada';
+      } else if (l.alumnoId != null) {
+        estadoEtiqueta = new Date(l.fechaVencimiento) < hoy ? 'vencida' : 'usada';
+      } else if (new Date(l.fechaVencimiento) < hoy) {
+        estadoEtiqueta = 'vencida';
+      } else {
+        estadoEtiqueta = 'disponible';
+      }
+      return {
+        id: l.id,
+        clave: l.clave,
+        libroId: l.libroId,
+        titulo: l.libro?.titulo,
+        escuelaId: l.escuelaId,
+        nombreEscuela: l.escuela?.nombre,
+        alumnoId: l.alumnoId,
+        alumno: l.alumno?.persona
+          ? `${l.alumno.persona.nombre} ${l.alumno.persona.apellidoPaterno || ''}`
+          : null,
+        fechaVencimiento: l.fechaVencimiento,
+        activa: l.activa,
+        estado: estadoEtiqueta,
+        fechaAsignacion: l.fechaAsignacion,
+        createdAt: l.createdAt,
+      };
+    });
 
     return {
       message: 'Licencias obtenidas correctamente.',
       total,
       data,
-      ...(pageSafe != null && limitSafe != null && {
-        meta: {
-          page: pageSafe,
-          limit: limitSafe,
-          total,
-          totalPages: Math.ceil(total / limitSafe),
-        },
-      }),
+      ...(pageSafe != null &&
+        limitSafe != null && {
+          meta: {
+            page: pageSafe,
+            limit: limitSafe,
+            total,
+            totalPages: Math.ceil(total / limitSafe),
+          },
+        }),
     };
   }
 
@@ -516,7 +581,6 @@ export class LicenciasService {
    */
   async archivarLicenciasVencidas(escuelaId?: number, libroId?: number) {
     const archivadasYEliminadas = await this.licenciaRepo.manager.transaction(async (manager) => {
-      const whereClauses: string[] = [];
       const params: any[] = [];
 
       // Se compara contra fecha (date) en DB.
@@ -535,9 +599,7 @@ export class LicenciasService {
       }
 
       const repo = manager.getRepository(LicenciaLibro);
-      let qb = repo
-        .createQueryBuilder('lic')
-        .where('lic.fechaVencimiento < CURRENT_DATE');
+      let qb = repo.createQueryBuilder('lic').where('lic.fechaVencimiento < CURRENT_DATE');
 
       if (escuelaId != null) qb = qb.andWhere('lic.escuelaId = :escuelaId', { escuelaId });
       if (libroId != null) qb = qb.andWhere('lic.libroId = :libroId', { libroId });
@@ -620,9 +682,7 @@ export class LicenciasService {
 
     const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 30 });
     const buffers: Buffer[] = [];
-    doc.on('data', (chunk) =>
-      buffers.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
-    );
+    doc.on('data', (chunk) => buffers.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
 
     const pageWidth = doc.page.width;
     const pageHeight = doc.page.height;
@@ -673,10 +733,7 @@ export class LicenciasService {
 
     const drawTableHeader = () => {
       const y = doc.y;
-      doc
-        .rect(marginX, y, usableWidth, headerH)
-        .fill('#f3f4f6')
-        .stroke('#e5e7eb');
+      doc.rect(marginX, y, usableWidth, headerH).fill('#f3f4f6').stroke('#e5e7eb');
       doc.fillColor('#111827').fontSize(9).font('Helvetica-Bold');
 
       const xIdx = marginX + 4;
@@ -684,9 +741,7 @@ export class LicenciasService {
       const xLibro = xClave + col.clave;
       const xEstado = xLibro + col.libro;
       const xAlumno = incluirAlumno ? xEstado + col.estado : null;
-      const xVenc = incluirAlumno
-        ? xAlumno! + col.alumno
-        : xEstado + col.estado;
+      const xVenc = incluirAlumno ? xAlumno! + col.alumno : xEstado + col.estado;
 
       doc.text('Idx', xIdx, y + 6, { width: col.idx, align: 'left' });
       doc.text('Clave', xClave, y + 6, { width: col.clave, align: 'left' });
@@ -715,9 +770,7 @@ export class LicenciasService {
       const xLibro = xClave + col.clave;
       const xEstado = xLibro + col.libro;
       const xAlumno = incluirAlumno ? xEstado + col.estado : null;
-      const xVenc = incluirAlumno
-        ? xAlumno! + col.alumno
-        : xEstado + col.estado;
+      const xVenc = incluirAlumno ? xAlumno! + col.alumno : xEstado + col.estado;
 
       doc
         .fontSize(8)
@@ -725,22 +778,22 @@ export class LicenciasService {
         .text(String(lineIdx), xIdx, y + 5, { width: col.idx, align: 'left' });
 
       doc.text(trunc(String(l.clave), 22), xClave, y + 5, { width: col.clave, align: 'left' });
-      doc.text(trunc(String(l.titulo ?? l.libroId), 26), xLibro, y + 5, { width: col.libro, align: 'left' });
+      doc.text(trunc(String(l.titulo ?? l.libroId), 26), xLibro, y + 5, {
+        width: col.libro,
+        align: 'left',
+      });
 
       const bg = estadoColorBg(l.estado);
       doc.rect(xEstado, y, col.estado, rowH).fill(bg);
       doc.fillColor(estadoColorText());
-      doc
-        .fontSize(8)
-        .text(String(l.estado).toUpperCase(), xEstado + 4, y + 6, {
-          width: col.estado - 8,
-          align: 'left',
-        });
+      doc.fontSize(8).text(String(l.estado).toUpperCase(), xEstado + 4, y + 6, {
+        width: col.estado - 8,
+        align: 'left',
+      });
       doc.fillColor('#111827');
 
       if (incluirAlumno) {
-        const alumnoTxt =
-          l.alumno ?? (l.alumnoId != null ? String(l.alumnoId) : '—');
+        const alumnoTxt = l.alumno ?? (l.alumnoId != null ? String(l.alumnoId) : '—');
         doc.text(trunc(String(alumnoTxt), 24), xAlumno!, y + 5, {
           width: col.alumno,
           align: 'left',
@@ -752,7 +805,11 @@ export class LicenciasService {
     };
 
     // --- Resumen/Encabezado ---
-    doc.fontSize(18).fillColor('#111827').font('Helvetica-Bold').text('Licencias por escuela', { align: 'left' });
+    doc
+      .fontSize(18)
+      .fillColor('#111827')
+      .font('Helvetica-Bold')
+      .text('Licencias por escuela', { align: 'left' });
     doc.moveDown(0.2);
 
     doc.fontSize(10).fillColor('#374151').font('Helvetica');
@@ -772,7 +829,14 @@ export class LicenciasService {
     // Totales por libro (derivados del filtro actual)
     const resumenPorLibro = new Map<
       number,
-      { libroId: number; titulo: string; total: number; disponibles: number; enUso: number; vencidas: number }
+      {
+        libroId: number;
+        titulo: string;
+        total: number;
+        disponibles: number;
+        enUso: number;
+        vencidas: number;
+      }
     >();
 
     for (const l of data) {
@@ -792,9 +856,7 @@ export class LicenciasService {
       resumenPorLibro.set(key, item);
     }
 
-    const porLibroSorted = Array.from(resumenPorLibro.values()).sort(
-      (a, b) => b.total - a.total,
-    );
+    const porLibroSorted = Array.from(resumenPorLibro.values()).sort((a, b) => b.total - a.total);
     const maxLibrosRes = 8;
     const porLibroTxt = porLibroSorted
       .slice(0, maxLibrosRes)
@@ -811,7 +873,10 @@ export class LicenciasService {
       .fillColor('#374151')
       .font('Helvetica')
       .text(
-        porLibroTxt + (porLibroSorted.length > maxLibrosRes ? `\n... (+${porLibroSorted.length - maxLibrosRes} libros)` : ''),
+        porLibroTxt +
+          (porLibroSorted.length > maxLibrosRes
+            ? `\n... (+${porLibroSorted.length - maxLibrosRes} libros)`
+            : ''),
       );
     // Leyenda de estados
     doc.moveDown(0.15);
@@ -826,8 +891,15 @@ export class LicenciasService {
     ];
     legendItems.forEach((it, idx) => {
       const x = marginX + idx * legendGap;
-      doc.fillColor(estadoColorBg(it.estado)).rect(x, legendTop, legendSq, legendSq).fill(estadoColorBg(it.estado));
-      doc.fillColor('#374151').fontSize(8).font('Helvetica').text(it.label, x + legendSq + 4, legendTop - 2);
+      doc
+        .fillColor(estadoColorBg(it.estado))
+        .rect(x, legendTop, legendSq, legendSq)
+        .fill(estadoColorBg(it.estado));
+      doc
+        .fillColor('#374151')
+        .fontSize(8)
+        .font('Helvetica')
+        .text(it.label, x + legendSq + 4, legendTop - 2);
     });
     doc.moveDown(0.25);
 
@@ -851,9 +923,11 @@ export class LicenciasService {
 
     if (data.length > max) {
       doc.moveDown(0.3);
-      doc.fontSize(10).fillColor('#4b5563').font('Helvetica').text(
-        `(Se muestran los primeros ${max} registros; total filtrado=${data.length}).`,
-      );
+      doc
+        .fontSize(10)
+        .fillColor('#4b5563')
+        .font('Helvetica')
+        .text(`(Se muestran los primeros ${max} registros; total filtrado=${data.length}).`);
     }
 
     doc.end();
@@ -868,51 +942,7 @@ export class LicenciasService {
    * Libros disponibles para asignar (con licencias disponibles). Usado por director/maestro.
    */
   async listarLibrosDisponiblesParaAsignar(escuelaId: number, alumnoId: number) {
-    const alumno = await this.alumnoRepo.findOne({ where: { id: alumnoId } });
-    if (!alumno) throw new NotFoundException(`No se encontró el alumno con ID ${alumnoId}`);
-    if (Number(alumno.escuelaId) !== Number(escuelaId)) {
-      throw new BadRequestException('El alumno no pertenece a esta escuela.');
-    }
-
-    const asignaciones = await this.escuelaLibroRepo.find({
-      where: { escuelaId, activo: true },
-      relations: ['libro', 'libro.materia'],
-      order: { fechaInicio: 'DESC' },
-    });
-
-    const hoy = new Date();
-    hoy.setHours(0, 0, 0, 0);
-    const yaAsignados = await this.alumnoLibroRepo.find({
-      where: { alumnoId },
-      select: ['libroId'],
-    });
-    const idsAsignados = new Set(yaAsignados.map((x) => x.libroId));
-
-    const disponibles: Array<{ id: number; titulo: string; codigo: string; grado: number; materia: string | null }> = [];
-
-    for (const a of asignaciones) {
-      if (!a.libro || a.libro.activo === false) continue;
-      if (Number(a.libro.grado) !== Number(alumno.grado)) continue;
-      if (a.grupo != null && (alumno.grupo == null || (alumno.grupo || '').trim().toUpperCase() !== (a.grupo || '').trim().toUpperCase())) continue;
-      if (idsAsignados.has(a.libroId)) continue;
-
-      const hayLicencia = await this.tieneLicenciasDisponibles(escuelaId, a.libroId);
-      if (!hayLicencia) continue;
-
-      disponibles.push({
-        id: a.libro.id,
-        titulo: a.libro.titulo,
-        codigo: a.libro.codigo,
-        grado: a.libro.grado,
-        materia: a.libro.materia?.nombre ?? null,
-      });
-    }
-
-    return {
-      message: 'Libros disponibles para asignar (con licencias disponibles).',
-      total: disponibles.length,
-      data: disponibles,
-    };
+    return this.listarLibrosDisponiblesUseCase.execute(escuelaId, alumnoId);
   }
 
   /**
@@ -981,11 +1011,7 @@ export class LicenciasService {
    * - Sin libroId: todos los libros
    * - Sin cantidad: todas las que coincidan
    */
-  async eliminarLicenciasDisponibles(
-    escuelaId?: number,
-    libroId?: number,
-    cantidad?: number,
-  ) {
+  async eliminarLicenciasDisponibles(escuelaId?: number, libroId?: number, cantidad?: number) {
     const hoy = new Date();
     hoy.setHours(0, 0, 0, 0);
     const hoyStr = hoy.toISOString().slice(0, 10);
@@ -1049,8 +1075,7 @@ export class LicenciasService {
     );
     return {
       message: `Se eliminaron ${licencias.length} licencia(s) correctamente.`,
-      description:
-        'Las licencias se archivaron con motivo "eliminada_admin" para auditoría.',
+      description: 'Las licencias se archivaron con motivo "eliminada_admin" para auditoría.',
       eliminadas: licencias.length,
       data: {
         escuelaId: escuelaId ?? null,

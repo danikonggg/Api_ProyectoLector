@@ -44,7 +44,10 @@ async function bootstrap() {
   const corsOrigins = process.env.CORS_ORIGINS?.trim();
   const origin =
     corsOrigins && process.env.NODE_ENV === 'production'
-      ? corsOrigins.split(',').map((o) => o.trim()).filter(Boolean)
+      ? corsOrigins
+          .split(',')
+          .map((o) => o.trim())
+          .filter(Boolean)
       : true;
 
   app.enableCors({
@@ -68,7 +71,9 @@ async function bootstrap() {
   if (process.env.NODE_ENV !== 'production') {
     const config = new DocumentBuilder()
       .setTitle('API Lector - Sistema Educativo')
-      .setDescription('API REST para sistema educativo con registro de usuarios, roles y autenticación JWT')
+      .setDescription(
+        'API REST para sistema educativo con registro de usuarios, roles y autenticación JWT',
+      )
       .setVersion('1.0')
       .addBearerAuth(
         {
@@ -83,11 +88,20 @@ async function bootstrap() {
       )
       .addTag('Público', 'Sin token: login, health')
       .addTag('Cualquier autenticado', 'Cualquier rol con JWT: perfil')
-      .addTag('Solo Administrador', 'Dashboard, escuelas, libros (cargar/eliminar/PDF), personas (padres, directores, admins), auditoría, otorgar/canjear por :id')
-      .addTag('Solo Director', 'Dashboard y libros de mi escuela (sin enviar id): GET/POST /director/libros, /director/canjear-libro')
+      .addTag(
+        'Solo Administrador',
+        'Dashboard, escuelas, libros (cargar/eliminar/PDF), personas (padres, directores, admins), auditoría, otorgar/canjear por :id',
+      )
+      .addTag(
+        'Solo Director',
+        'Dashboard y libros de mi escuela (sin enviar id): GET/POST /director/libros, /director/canjear-libro',
+      )
       .addTag('Solo Maestro', 'Mis alumnos: listar, ver, asignar, desasignar')
       .addTag('Solo Alumno', 'Libros de mi escuela: GET /escuelas/mis-libros')
-      .addTag('Admin o Director', 'Registro alumno/maestro, listar alumnos/buscar, ver escuela, maestros y alumnos de una escuela')
+      .addTag(
+        'Admin o Director',
+        'Registro alumno/maestro, listar alumnos/buscar, ver escuela, maestros y alumnos de una escuela',
+      )
       .addTag('Admin, Director o Alumno', 'Ver detalle de un libro: GET /libros/:id')
       .build();
 

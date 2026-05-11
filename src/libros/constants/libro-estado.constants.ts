@@ -29,8 +29,6 @@ export const ESTADOS_EN_PROCESO: LibroEstado[] = [
 export const estaEnProceso = (estado: string): boolean =>
   ESTADOS_EN_PROCESO.includes(estado as LibroEstado);
 
-export const estaListo = (estado: string): boolean =>
-  estado === LIBRO_ESTADO.LISTO;
+export const estaListo = (estado: string): boolean => estado === LIBRO_ESTADO.LISTO;
 
-export const estaEnError = (estado: string): boolean =>
-  estado === LIBRO_ESTADO.ERROR;
+export const estaEnError = (estado: string): boolean => estado === LIBRO_ESTADO.ERROR;

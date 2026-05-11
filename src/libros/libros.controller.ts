@@ -25,8 +25,10 @@ import {
   Request,
   HttpCode,
   HttpStatus,
+  Res,
   StreamableFile,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { createReadStream } from 'fs';
 import { FileInterceptor } from '@nestjs/platform-express';
 import * as multer from 'multer';
@@ -39,8 +41,8 @@ import {
   ApiConsumes,
   ApiBody,
 } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { AdminGuard } from '../auth/guards/admin.guard';
-import { AdminOrDirectorGuard } from '../auth/guards/admin-or-director.guard';
 import { AdminOrDirectorOrAlumnoGuard } from '../auth/guards/admin-or-director-or-alumno.guard';
 import { LibrosService } from './libros.service';
 import { LibrosPdfImagenesService } from './libros-pdf-imagenes.service';
@@ -48,6 +50,8 @@ import { EscuelasService } from '../escuelas/escuelas.service';
 import { CargarLibroDto } from './dto/cargar-libro.dto';
 import { getAuditContext } from '../common/utils/audit.utils';
 import { ListarLibrosQueryDto } from './dto/listar-libros-query.dto';
+import { RegistrarPalabraGlosarioDto } from './dto/registrar-palabra-glosario.dto';
+import { GlosarioSegmentoService } from './glosario-segmento.service';
 import type { Request as ExpressRequest } from 'express';
 
 const PDF_MAX_SIZE = 50 * 1024 * 1024; // 50 MB
@@ -59,13 +63,41 @@ export class LibrosController {
     private readonly librosService: LibrosService,
     private readonly librosPdfImagenesService: LibrosPdfImagenesService,
     private readonly escuelasService: EscuelasService,
+    private readonly glosarioSegmentoService: GlosarioSegmentoService,
   ) {}
+
+  /**
+   * POST /libros/glosario/palabra
+   * Cualquier usuario autenticado (JWT): envías solo la palabra; se busca o se usa la ya guardada en `glosario`.
+   */
+  @Post('glosario/palabra')
+  @Throttle({ default: { limit: 30, ttl: 60000 } })
+  @HttpCode(HttpStatus.OK)
+  @ApiTags('Glosario')
+  @ApiOperation({
+    summary: 'Registrar palabra en el glosario global',
+    description:
+      'Requiere sesión (Bearer JWT). Cualquier rol. Normaliza la palabra, obtiene definición desde fuentes web y Groq si aplica, y la guarda en base de datos.',
+  })
+  @ApiBody({ type: RegistrarPalabraGlosarioDto })
+  @ApiResponse({
+    status: 200,
+    description:
+      'palabra normalizada, definicion y origen (cache si ya existía, remoto si se buscó ahora)',
+  })
+  @ApiResponse({ status: 400, description: 'Palabra inválida' })
+  @ApiResponse({ status: 401, description: 'No autenticado' })
+  @ApiResponse({ status: 429, description: 'Demasiadas solicitudes' })
+  async registrarPalabraGlosario(@Body() dto: RegistrarPalabraGlosarioDto) {
+    return this.glosarioSegmentoService.registrarPalabraEnGlosario(dto.palabra);
+  }
 
   /**
    * POST /libros/cargar
    * Subir PDF + metadatos. Backend extrae texto, limpia, segmenta, guarda.
    */
   @Post('cargar')
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.CREATED)
   @ApiTags('Solo Administrador')
@@ -84,14 +116,19 @@ export class LibrosController {
         pdf: { type: 'string', format: 'binary', description: 'Archivo PDF' },
         titulo: { type: 'string', example: 'El principito' },
         grado: { type: 'number', example: 5 },
-        materiaId: { type: 'number', example: 1, description: 'Opcional; solo lectura sin materia' },
+        materiaId: {
+          type: 'number',
+          example: 1,
+          description: 'Opcional; solo lectura sin materia',
+        },
         codigo: { type: 'string', example: 'LECT-2024' },
         descripcion: { type: 'string' },
       },
     },
   })
   @ApiOperation({
-    summary: 'Cargar libro (PDF + metadatos). Requiere admin. Pipeline: validación → extracción → unidades por capítulos.',
+    summary:
+      'Cargar libro (PDF + metadatos). Requiere admin. Pipeline: validación → extracción → unidades por capítulos.',
   })
   @ApiResponse({ status: 201, description: 'Libro procesado y guardado.' })
   @ApiResponse({ status: 400, description: 'PDF inválido o sin texto.' })
@@ -123,6 +160,7 @@ export class LibrosController {
    * No modifica el flujo normal de cargar libros.
    */
   @Post('probar-paginas-imagen')
+  @Throttle({ default: { limit: 8, ttl: 60000 } })
   @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.OK)
   @ApiTags('Prueba - Imágenes por página')
@@ -142,7 +180,8 @@ export class LibrosController {
   })
   @ApiOperation({
     summary: '[PRUEBA] Extraer PDF página por página como imágenes',
-    description: 'Sube un PDF y recibe URLs para cada página en formato imagen. Para probar en el front.',
+    description:
+      'Sube un PDF y recibe URLs para cada página en formato imagen. Para probar en el front.',
   })
   @ApiResponse({ status: 200, description: 'sessionId, numPaginas y array de { numero, url }.' })
   async probarPaginasImagen(
@@ -167,7 +206,10 @@ export class LibrosController {
   @Get('probar-paginas-imagen/:sessionId/:numero')
   @ApiTags('Prueba - Imágenes por página')
   @ApiOperation({ summary: '[PRUEBA] Obtener imagen de una página' })
-  @ApiParam({ name: 'sessionId', description: 'ID de sesión retornado por POST probar-paginas-imagen' })
+  @ApiParam({
+    name: 'sessionId',
+    description: 'ID de sesión retornado por POST probar-paginas-imagen',
+  })
   @ApiParam({ name: 'numero', description: 'Número de página (1, 2, 3...)' })
   @ApiResponse({ status: 200, description: 'Imagen PNG.' })
   @ApiResponse({ status: 404, description: 'Imagen no encontrada.' })
@@ -219,7 +261,9 @@ export class LibrosController {
     const { id: libroId, codigo } = await this.librosService.obtenerLibroBasico(id);
     const ruta = await this.librosPdfImagenesService.rutaImagenPaginaLibro(libroId, codigo, numero);
     if (!ruta) {
-      throw new NotFoundException(`No se encontró la imagen de la página ${numero}. Es posible que el libro se haya cargado sin generar imágenes.`);
+      throw new NotFoundException(
+        `No se encontró la imagen de la página ${numero}. Es posible que el libro se haya cargado sin generar imágenes.`,
+      );
     }
     const stream = createReadStream(ruta);
     return new StreamableFile(stream, { type: 'image/png' });
@@ -238,13 +282,12 @@ export class LibrosController {
   @ApiResponse({ status: 401, description: 'No autenticado.' })
   @ApiResponse({ status: 403, description: 'No es administrador.' })
   @ApiResponse({ status: 404, description: 'Libro o PDF no encontrado.' })
-  async descargarPdf(@Param('id', ParseIntPipe) id: number): Promise<StreamableFile> {
-    const ruta = await this.librosService.rutaPdfAbsoluta(id);
-    if (!ruta) {
+  async descargarPdf(@Param('id', ParseIntPipe) id: number, @Res() res: Response): Promise<void> {
+    const url = await this.librosService.obtenerUrlPdf(id);
+    if (!url) {
       throw new NotFoundException('No se encontró el PDF para este libro.');
     }
-    const stream = createReadStream(ruta);
-    return new StreamableFile(stream, { type: 'application/pdf' });
+    res.redirect(url);
   }
 
   /**
@@ -256,7 +299,8 @@ export class LibrosController {
   @ApiTags('Solo Administrador')
   @ApiOperation({
     summary: 'Ver escuelas de este libro (admin)',
-    description: 'Lista de escuelas que tienen el libro asignado, con activoEnEscuela. Usar con PATCH .../escuelas/:escuelaId/activo para activar o quitar.',
+    description:
+      'Lista de escuelas que tienen el libro asignado, con activoEnEscuela. Usar con PATCH .../escuelas/:escuelaId/activo para activar o quitar.',
   })
   @ApiParam({ name: 'id', type: 'number', description: 'ID del libro' })
   @ApiResponse({ status: 200, description: 'Lista de escuelas con activoEnEscuela.' })
@@ -278,7 +322,11 @@ export class LibrosController {
   @ApiParam({ name: 'id', type: 'number', description: 'ID del libro' })
   @ApiParam({ name: 'escuelaId', type: 'number', description: 'ID de la escuela' })
   @ApiBody({
-    schema: { type: 'object', required: ['activo'], properties: { activo: { type: 'boolean', example: false } } },
+    schema: {
+      type: 'object',
+      required: ['activo'],
+      properties: { activo: { type: 'boolean', example: false } },
+    },
   })
   @ApiResponse({ status: 200, description: 'Libro activado o desactivado para la escuela.' })
   @ApiResponse({ status: 401, description: 'No autenticado.' })
@@ -288,7 +336,6 @@ export class LibrosController {
     @Param('id', ParseIntPipe) id: number,
     @Param('escuelaId', ParseIntPipe) escuelaId: number,
     @Body() body: { activo: boolean },
-    @Request() req: ExpressRequest,
   ) {
     if (typeof body.activo !== 'boolean') {
       throw new BadRequestException('El body debe incluir "activo" (boolean).');
@@ -329,10 +376,7 @@ export class LibrosController {
     @Request() req: { user?: { tipoPersona?: string; alumno?: { id: number; escuelaId: number } } },
   ) {
     if (req.user?.tipoPersona === 'alumno' && req.user?.alumno?.id) {
-      const asignado = await this.escuelasService.libroAsignadoAlAlumno(
-        req.user.alumno.id,
-        id,
-      );
+      const asignado = await this.escuelasService.libroAsignadoAlAlumno(req.user.alumno.id, id);
       if (!asignado) {
         throw new ForbiddenException(
           'Este libro no te ha sido asignado. Pide a tu maestro o director que te lo asigne.',
@@ -352,7 +396,11 @@ export class LibrosController {
   @ApiOperation({ summary: 'Activar/desactivar libro globalmente. Requiere admin.' })
   @ApiParam({ name: 'id', type: 'number' })
   @ApiBody({
-    schema: { type: 'object', required: ['activo'], properties: { activo: { type: 'boolean', example: false } } },
+    schema: {
+      type: 'object',
+      required: ['activo'],
+      properties: { activo: { type: 'boolean', example: false } },
+    },
   })
   @ApiResponse({ status: 200, description: 'Libro activado o desactivado.' })
   @ApiResponse({ status: 401, description: 'No autenticado.' })

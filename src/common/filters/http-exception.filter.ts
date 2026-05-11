@@ -18,9 +18,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const request = ctx.getRequest<Request>();
 
     const status =
-      exception instanceof HttpException
-        ? exception.getStatus()
-        : HttpStatus.INTERNAL_SERVER_ERROR;
+      exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
 
     const message =
       exception instanceof HttpException
@@ -39,9 +37,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     };
 
     if (status >= 500) {
-      this.logger.error(
-        `${request.method} ${request.url} ${status} - ${JSON.stringify(message)}`,
-      );
+      this.logger.error(`${request.method} ${request.url} ${status} - ${JSON.stringify(message)}`);
     }
 
     response.status(status).json(body);

@@ -6,13 +6,7 @@
  * Clave única, vencimiento, asociada a escuela, un solo uso.
  */
 
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  ManyToOne,
-  JoinColumn,
-} from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { Libro } from '../../libros/entities/libro.entity';
 import { Escuela } from '../../personas/entities/escuela.entity';
 import { Alumno } from '../../personas/entities/alumno.entity';

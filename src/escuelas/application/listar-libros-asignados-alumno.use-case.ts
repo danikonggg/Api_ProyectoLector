@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AlumnoLibro } from '../entities/alumno-libro.entity';
+import { LicenciaLibro } from '../../licencias/entities/licencia-libro.entity';
 
 /**
  * Caso de uso: libros asignados a un alumno (hexagonal mínimo — el repositorio se inyecta aquí, no en un god service).
@@ -11,6 +12,8 @@ export class ListarLibrosAsignadosAlumnoUseCase {
   constructor(
     @InjectRepository(AlumnoLibro)
     private readonly alumnoLibroRepository: Repository<AlumnoLibro>,
+    @InjectRepository(LicenciaLibro)
+    private readonly licenciaLibroRepository: Repository<LicenciaLibro>,
   ) {}
 
   async execute(alumnoId: number) {
@@ -20,7 +23,21 @@ export class ListarLibrosAsignadosAlumnoUseCase {
       order: { fechaAsignacion: 'DESC' },
     });
 
-    const data = asignaciones.map((a) => ({
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+    const hoyStr = hoy.toISOString().slice(0, 10);
+    const conLicenciaVigente = await this.licenciaLibroRepository
+      .createQueryBuilder('lic')
+      .where('lic.alumnoId = :alumnoId', { alumnoId })
+      .andWhere('lic.activa = true')
+      .andWhere('lic.fechaVencimiento >= :hoy', { hoy: hoyStr })
+      .select(['lic.libroId'])
+      .getMany();
+    const libroIdsPermitidos = new Set(conLicenciaVigente.map((r) => Number(r.libroId)));
+
+    const visibles = asignaciones.filter((a) => libroIdsPermitidos.has(Number(a.libroId)));
+
+    const data = visibles.map((a) => ({
       ...a.libro,
       alumnoLibroId: a.id,
       progreso: a.porcentaje,

@@ -2,9 +2,9 @@
  * ============================================
  * CONTROLADOR: EscuelasController
  * ============================================
- * 
+ *
  * Controlador que maneja las operaciones CRUD de escuelas.
- * 
+ *
  * Todos los endpoints requieren autenticación y ser administrador:
  * - POST /escuelas - Crear escuela
  * - GET /escuelas - Listar todas las escuelas
@@ -46,8 +46,8 @@ import {
 import { EscuelasService } from './escuelas.service';
 import { CrearEscuelaDto } from './dto/crear-escuela.dto';
 import { ActualizarEscuelaDto } from './dto/actualizar-escuela.dto';
-import { AsignarLibroAlumnoDto } from './dto/asignar-libro-alumno.dto';
 import { ActualizarProgresoLibroDto } from './dto/actualizar-progreso-libro.dto';
+import { ResponderEvaluacionSegmentoDto } from './dto/responder-evaluacion-segmento.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UploadedFile } from '@nestjs/common';
 import * as multer from 'multer';
@@ -58,6 +58,8 @@ import { AlumnoGuard } from '../auth/guards/alumno.guard';
 import { CargaMasivaService } from '../personas/carga-masiva.service';
 import { getAuditContext } from '../common/utils/audit.utils';
 import type { Request as ExpressRequest } from 'express';
+import { EstadisticasEscuelaService } from './services/estadisticas-escuela.service';
+import { ConsultaEscuelaService } from './services/consulta-escuela.service';
 
 type ReqUser = {
   tipoPersona?: string;
@@ -80,6 +82,8 @@ export class EscuelasController {
   constructor(
     private readonly escuelasService: EscuelasService,
     private readonly cargaMasivaService: CargaMasivaService,
+    private readonly estadisticasEscuelaService: EstadisticasEscuelaService,
+    private readonly consultaEscuelaService: ConsultaEscuelaService,
   ) {}
 
   /**
@@ -126,13 +130,17 @@ export class EscuelasController {
   @ApiTags('Público')
   @ApiOperation({
     summary: 'Descargar plantilla Excel para carga masiva',
-    description: 'Devuelve un Excel con columnas: nombre, apellidoPaterno, apellidoMaterno, email, password (opc), grado (opc), grupo (opc)',
+    description:
+      'Devuelve un Excel con columnas: nombre, apellidoPaterno, apellidoMaterno, email, password (opc), grado (opc), grupo (opc)',
   })
   @ApiResponse({ status: 200, description: 'Archivo Excel' })
   async plantillaCargaMasiva(@Res() res: any) {
     const buf = await this.cargaMasivaService.generarPlantillaCargaMasiva();
     res.setHeader('Content-Disposition', 'attachment; filename="plantilla-carga-masiva.xlsx"');
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
     res.send(buf);
   }
 
@@ -167,7 +175,14 @@ export class EscuelasController {
         message: 'Escuelas obtenidas exitosamente',
         total: 5,
         data: [
-          { id: 1, nombre: 'Escuela Primaria Benito Juárez', nivel: 'Primaria', clave: '29DPR0123X', direccion: 'Calle Principal #123', telefono: '5551234567' },
+          {
+            id: 1,
+            nombre: 'Escuela Primaria Benito Juárez',
+            nivel: 'Primaria',
+            clave: '29DPR0123X',
+            direccion: 'Calle Principal #123',
+            telefono: '5551234567',
+          },
         ],
       },
     },
@@ -176,10 +191,7 @@ export class EscuelasController {
   @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Registros por página' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'No es administrador' })
-  async obtenerTodas(
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ) {
+  async obtenerTodas(@Query('page') page?: string, @Query('limit') limit?: string) {
     const pageNum = page ? parseInt(page, 10) : undefined;
     const limitNum = limit ? parseInt(limit, 10) : undefined;
     return await this.escuelasService.obtenerTodas(pageNum, limitNum);
@@ -212,7 +224,7 @@ export class EscuelasController {
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'No es administrador' })
   async obtenerEstadisticasPanel() {
-    return await this.escuelasService.obtenerEstadisticasPanel();
+    return await this.estadisticasEscuelaService.obtenerEstadisticasPanel();
   }
 
   /**
@@ -226,13 +238,10 @@ export class EscuelasController {
   @ApiResponse({ status: 200, description: 'Lista de directores con datos de persona y escuela.' })
   @ApiResponse({ status: 401, description: 'No autenticado.' })
   @ApiResponse({ status: 403, description: 'No es administrador.' })
-  async listarTodosDirectores(
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ) {
+  async listarTodosDirectores(@Query('page') page?: string, @Query('limit') limit?: string) {
     const pageNum = page ? parseInt(page, 10) : undefined;
     const limitNum = limit ? parseInt(limit, 10) : undefined;
-    return await this.escuelasService.listarTodosLosDirectores(pageNum, limitNum);
+    return await this.consultaEscuelaService.listarTodosLosDirectores(pageNum, limitNum);
   }
 
   /**
@@ -244,7 +253,8 @@ export class EscuelasController {
   @ApiTags('Solo Administrador')
   @ApiOperation({
     summary: 'Ver libros que tiene cada escuela (admin)',
-    description: 'Devuelve todas las escuelas y, por cada una, la lista de libros asignados. El mismo libro puede aparecer en varias escuelas.',
+    description:
+      'Devuelve todas las escuelas y, por cada una, la lista de libros asignados. El mismo libro puede aparecer en varias escuelas.',
   })
   @ApiResponse({ status: 200, description: 'Lista de escuelas con su array de libros.' })
   @ApiResponse({ status: 401, description: 'No autenticado.' })
@@ -262,7 +272,10 @@ export class EscuelasController {
   @UseGuards(AlumnoGuard)
   @ApiTags('Solo Alumno')
   @ApiOperation({ summary: 'Mis libros asignados (con progreso)' })
-  @ApiResponse({ status: 200, description: 'Libros que el maestro/director te asignó, con progreso.' })
+  @ApiResponse({
+    status: 200,
+    description: 'Libros que el maestro/director te asignó, con progreso.',
+  })
   @ApiResponse({ status: 401, description: 'No autenticado.' })
   @ApiResponse({ status: 403, description: 'Solo alumnos.' })
   async misLibros(@Request() req: { user?: ReqUser }) {
@@ -299,6 +312,82 @@ export class EscuelasController {
   }
 
   /**
+   * GET /escuelas/mis-libros/:libroId/segmentos/:segmentoId/evaluacion
+   * Obtiene preguntas de evaluacion para el segmento actual.
+   */
+  @Get('mis-libros/:libroId/segmentos/:segmentoId/evaluacion')
+  @UseGuards(AlumnoGuard)
+  @ApiTags('Solo Alumno')
+  @ApiOperation({ summary: 'Obtener evaluacion del segmento actual' })
+  async obtenerEvaluacionSegmento(
+    @Request() req: { user?: ReqUser },
+    @Param('libroId', ParseIntPipe) libroId: number,
+    @Param('segmentoId', ParseIntPipe) segmentoId: number,
+    @Query('nivel') nivel?: string,
+  ) {
+    const alumnoId = req.user?.alumno?.id;
+    if (!alumnoId) {
+      throw new ForbiddenException('No se encontró el alumno.');
+    }
+    return await this.escuelasService.obtenerEvaluacionSegmento(
+      alumnoId,
+      libroId,
+      segmentoId,
+      nivel,
+    );
+  }
+
+  /**
+   * POST /escuelas/mis-libros/:libroId/segmentos/:segmentoId/evaluacion
+   * Registra respuestas y determina si puede avanzar.
+   */
+  @Post('mis-libros/:libroId/segmentos/:segmentoId/evaluacion')
+  @UseGuards(AlumnoGuard)
+  @ApiTags('Solo Alumno')
+  @ApiOperation({ summary: 'Responder evaluacion del segmento' })
+  async responderEvaluacionSegmento(
+    @Request() req: { user?: ReqUser },
+    @Param('libroId', ParseIntPipe) libroId: number,
+    @Param('segmentoId', ParseIntPipe) segmentoId: number,
+    @Body() dto: ResponderEvaluacionSegmentoDto,
+  ) {
+    const alumnoId = req.user?.alumno?.id;
+    if (!alumnoId) {
+      throw new ForbiddenException('No se encontró el alumno.');
+    }
+    return await this.escuelasService.responderEvaluacionSegmento(
+      alumnoId,
+      libroId,
+      segmentoId,
+      dto,
+    );
+  }
+
+  /**
+   * POST /escuelas/mis-libros/:libroId/segmentos/:segmentoId/evaluacion/reintento
+   * Devuelve variacion para reintentar.
+   */
+  @Post('mis-libros/:libroId/segmentos/:segmentoId/evaluacion/reintento')
+  @UseGuards(AlumnoGuard)
+  @ApiTags('Solo Alumno')
+  @ApiOperation({ summary: 'Generar reintento de evaluacion del segmento' })
+  async reintentoEvaluacionSegmento(
+    @Request() req: { user?: ReqUser },
+    @Param('libroId', ParseIntPipe) libroId: number,
+    @Param('segmentoId', ParseIntPipe) segmentoId: number,
+  ) {
+    const alumnoId = req.user?.alumno?.id;
+    if (!alumnoId) {
+      throw new ForbiddenException('No se encontró el alumno.');
+    }
+    return await this.escuelasService.crearReintentoEvaluacionSegmento(
+      alumnoId,
+      libroId,
+      segmentoId,
+    );
+  }
+
+  /**
    * POST /escuelas/:id/carga-masiva
    * Carga masiva de alumnos o maestros desde Excel. Admin: cualquier escuela. Director: solo su escuela.
    */
@@ -325,7 +414,11 @@ export class EscuelasController {
       required: ['file', 'tipo'],
       properties: {
         file: { type: 'string', format: 'binary', description: 'Archivo Excel (.xlsx)' },
-        tipo: { type: 'string', enum: ['alumno', 'maestro'], description: 'Tipo de usuarios a registrar' },
+        tipo: {
+          type: 'string',
+          enum: ['alumno', 'maestro'],
+          description: 'Tipo de usuarios a registrar',
+        },
       },
     },
   })
@@ -367,7 +460,9 @@ export class EscuelasController {
 
     const excelBase64 =
       resultado.credenciales.length > 0
-        ? (await this.cargaMasivaService.generarExcelCredenciales(resultado.credenciales)).toString('base64')
+        ? (await this.cargaMasivaService.generarExcelCredenciales(resultado.credenciales)).toString(
+            'base64',
+          )
         : null;
 
     return {
@@ -389,10 +484,14 @@ export class EscuelasController {
   @ApiTags('Solo Administrador')
   @ApiOperation({
     summary: 'Ver libros de la escuela para asignar/desasignar (admin)',
-    description: 'Devuelve todos los libros asignados a la escuela con activoEnEscuela y activoGlobal. Usar con PATCH .../libros/:libroId/activo para activar o quitar.',
+    description:
+      'Devuelve todos los libros asignados a la escuela con activoEnEscuela y activoGlobal. Usar con PATCH .../libros/:libroId/activo para activar o quitar.',
   })
   @ApiParam({ name: 'id', type: 'number', description: 'ID de la escuela' })
-  @ApiResponse({ status: 200, description: 'Lista de asignaciones con activoEnEscuela y datos del libro.' })
+  @ApiResponse({
+    status: 200,
+    description: 'Lista de asignaciones con activoEnEscuela y datos del libro.',
+  })
   @ApiResponse({ status: 401, description: 'No autenticado.' })
   @ApiResponse({ status: 403, description: 'Solo administradores.' })
   @ApiResponse({ status: 404, description: 'Escuela no encontrada.' })
@@ -409,7 +508,8 @@ export class EscuelasController {
   @ApiTags('Solo Administrador')
   @ApiOperation({
     summary: 'Listar libros activos de la escuela (solo admin)',
-    description: 'Requiere id de escuela en la URL. **Directores:** usar GET /director/libros (tag Director, sin id).',
+    description:
+      'Requiere id de escuela en la URL. **Directores:** usar GET /director/libros (tag Director, sin id).',
   })
   @ApiParam({ name: 'id', type: 'number', description: 'ID de la escuela' })
   @ApiResponse({ status: 200, description: 'Libros activos de la escuela.' })
@@ -431,7 +531,11 @@ export class EscuelasController {
   @ApiParam({ name: 'id', type: 'number', description: 'ID de la escuela' })
   @ApiParam({ name: 'libroId', type: 'number', description: 'ID del libro' })
   @ApiBody({
-    schema: { type: 'object', required: ['activo'], properties: { activo: { type: 'boolean', example: false } } },
+    schema: {
+      type: 'object',
+      required: ['activo'],
+      properties: { activo: { type: 'boolean', example: false } },
+    },
   })
   @ApiResponse({ status: 200, description: 'Libro activado o desactivado para la escuela.' })
   @ApiResponse({ status: 401, description: 'No autenticado.' })
@@ -461,12 +565,9 @@ export class EscuelasController {
   @ApiResponse({ status: 401, description: 'No autenticado.' })
   @ApiResponse({ status: 403, description: 'No autorizado (director solo puede ver su escuela).' })
   @ApiResponse({ status: 404, description: 'Escuela no encontrada.' })
-  async listarMaestros(
-    @Param('id', ParseIntPipe) id: number,
-    @Request() req: { user?: ReqUser },
-  ) {
+  async listarMaestros(@Param('id', ParseIntPipe) id: number, @Request() req: { user?: ReqUser }) {
     directorSoloSuEscuela(req.user, id);
-    return await this.escuelasService.listarMaestrosDeEscuela(id);
+    return await this.consultaEscuelaService.listarMaestrosDeEscuela(id);
   }
 
   /**
@@ -482,12 +583,9 @@ export class EscuelasController {
   @ApiResponse({ status: 401, description: 'No autenticado.' })
   @ApiResponse({ status: 403, description: 'No autorizado (director solo puede ver su escuela).' })
   @ApiResponse({ status: 404, description: 'Escuela no encontrada.' })
-  async listarAlumnos(
-    @Param('id', ParseIntPipe) id: number,
-    @Request() req: { user?: ReqUser },
-  ) {
+  async listarAlumnos(@Param('id', ParseIntPipe) id: number, @Request() req: { user?: ReqUser }) {
     directorSoloSuEscuela(req.user, id);
-    return await this.escuelasService.listarAlumnosDeEscuela(id);
+    return await this.consultaEscuelaService.listarAlumnosDeEscuela(id);
   }
 
   /**
@@ -523,12 +621,9 @@ export class EscuelasController {
   ) {
     const user = req.user;
     if (user?.tipoPersona === 'director' && user?.director) {
-      const escuelaAlumno =
-        await this.escuelasService.obtenerEscuelaIdDeAlumno(alumnoId);
+      const escuelaAlumno = await this.escuelasService.obtenerEscuelaIdDeAlumno(alumnoId);
       if (Number(escuelaAlumno) !== Number(user.director.escuelaId)) {
-        throw new ForbiddenException(
-          'Solo puedes ver los libros de alumnos de tu escuela.',
-        );
+        throw new ForbiddenException('Solo puedes ver los libros de alumnos de tu escuela.');
       }
     }
     return this.escuelasService.listarLibrosAsignadosAlAlumno(alumnoId);
@@ -552,7 +647,7 @@ export class EscuelasController {
     @Request() req: { user?: ReqUser },
   ) {
     directorSoloSuEscuela(req.user, id);
-    return await this.escuelasService.listarDirectoresDeEscuela(id);
+    return await this.consultaEscuelaService.listarDirectoresDeEscuela(id);
   }
 
   /**
@@ -587,10 +682,7 @@ export class EscuelasController {
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'No autorizado (director solo su escuela)' })
   @ApiResponse({ status: 404, description: 'Escuela no encontrada' })
-  async obtenerPorId(
-    @Param('id', ParseIntPipe) id: number,
-    @Request() req: { user?: ReqUser },
-  ) {
+  async obtenerPorId(@Param('id', ParseIntPipe) id: number, @Request() req: { user?: ReqUser }) {
     directorSoloSuEscuela(req.user, id);
     return await this.escuelasService.obtenerPorId(id);
   }
@@ -657,7 +749,10 @@ export class EscuelasController {
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'No es administrador' })
   @ApiResponse({ status: 404, description: 'Escuela no encontrada' })
-  @ApiResponse({ status: 400, description: 'No se puede eliminar porque tiene alumnos o maestros asociados' })
+  @ApiResponse({
+    status: 400,
+    description: 'No se puede eliminar porque tiene alumnos o maestros asociados',
+  })
   async eliminar(@Param('id', ParseIntPipe) id: number, @Request() req: ExpressRequest) {
     return await this.escuelasService.eliminar(id, getAuditContext(req));
   }

@@ -29,8 +29,7 @@ export async function initOpenTelemetry(): Promise<void> {
     return;
   }
 
-  const serviceName =
-    process.env.OTEL_SERVICE_NAME?.trim() || 'api-lector';
+  const serviceName = process.env.OTEL_SERVICE_NAME?.trim() || 'api-lector';
 
   sdk = new NodeSDK({
     resource: resourceFromAttributes({

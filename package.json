@@ -19,10 +19,13 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
+    "test:e2e:ci": "jest --config ./test/jest-e2e.json --testPathPattern='(auth|authorization-roles)\\.e2e-spec' --ci --maxWorkers=2",
     "test:ci": "jest --coverage --ci --maxWorkers=2",
+    "seed:admin": "node scripts/seed-admin.cjs",
     "ngrok": "ngrok http 3000",
     "migration:activo": "node scripts/run-migration-activo.cjs",
-    "migration:grupos": "./scripts/run-migrations.sh"
+    "migration:grupos": "./scripts/run-migrations.sh",
+    "load-test:alumno": "bash scripts/load-test-alumno.sh"
   },
   "dependencies": {
     "@nestjs/bullmq": "^11.0.4",
@@ -108,10 +111,18 @@
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
+    "setupFiles": [
+      "<rootDir>/../test/jest.unit.env.ts"
+    ],
     "collectCoverageFrom": [
-      "src/**/*.ts",
-      "!src/**/*.spec.ts",
-      "!src/main.ts"
+      "auth/auth.service.ts",
+      "auth/services/jwt-persona-loader.service.ts",
+      "common/utils/grupo.utils.ts",
+      "escuelas/application/desasignar-libro-alumno.use-case.ts",
+      "libros/supabase-storage.service.ts",
+      "licencias/application/listar-libros-disponibles.use-case.ts",
+      "queues/libros-import.processor.ts",
+      "!**/*.spec.ts"
     ],
     "coveragePathIgnorePatterns": [
       "/node_modules/"
@@ -119,10 +130,10 @@
     "coverageDirectory": "../coverage",
     "coverageThreshold": {
       "global": {
-        "branches": 30,
-        "functions": 30,
-        "lines": 30,
-        "statements": 30
+        "branches": 50,
+        "functions": 60,
+        "lines": 60,
+        "statements": 60
       }
     },
     "testEnvironment": "node"

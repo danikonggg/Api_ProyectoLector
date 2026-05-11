@@ -5,14 +5,7 @@
  * Agrupación pedagógica de segmentos dentro de un libro.
  */
 
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  ManyToOne,
-  JoinColumn,
-  OneToMany,
-} from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
 import { Libro } from './libro.entity';
 import { Segmento } from './segmento.entity';
 

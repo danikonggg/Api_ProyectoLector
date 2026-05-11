@@ -28,11 +28,32 @@ export class AuthService {
    */
   async login(loginDto: LoginDto, ip?: string) {
     this.logger.log(`Intento de login: ${loginDto.email}`);
-    
+
     const persona = await this.personaRepository.findOne({
       where: { correo: loginDto.email },
-      relations: ['administrador', 'padre', 'alumno', 'alumno.escuela', 'maestro', 'maestro.escuela', 'director', 'director.escuela'],
-      select: ['id', 'nombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'password', 'tipoPersona', 'activo'],
+      relations: [
+        'administrador',
+        'padre',
+        'alumno',
+        'alumno.escuela',
+        'maestro',
+        'maestro.escuela',
+        'director',
+        'director.escuela',
+      ],
+      select: [
+        'id',
+        'nombre',
+        'apellidoPaterno',
+        'apellidoMaterno',
+        'correo',
+        'telefono',
+        'fechaNacimiento',
+        'genero',
+        'password',
+        'tipoPersona',
+        'activo',
+      ],
     });
 
     if (!persona) {
@@ -74,7 +95,11 @@ export class AuthService {
       const d = persona.director;
       if (!d.activo || d.escuela?.estado === 'inactiva' || d.escuela?.estado === 'suspendida') {
         this.logger.warn(`Login fallido: Director de escuela inactiva - ${loginDto.email}`);
-        await this.auditService.log('login_fallido', { usuarioId: persona.id, ip: ip ?? null, detalles: `escuela_inactiva | ${persona.correo}` });
+        await this.auditService.log('login_fallido', {
+          usuarioId: persona.id,
+          ip: ip ?? null,
+          detalles: `escuela_inactiva | ${persona.correo}`,
+        });
         throw new UnauthorizedException(escuelaInactivaMsg);
       }
     }
@@ -82,7 +107,11 @@ export class AuthService {
       const m = persona.maestro;
       if (!m.activo || m.escuela?.estado === 'inactiva' || m.escuela?.estado === 'suspendida') {
         this.logger.warn(`Login fallido: Maestro de escuela inactiva - ${loginDto.email}`);
-        await this.auditService.log('login_fallido', { usuarioId: persona.id, ip: ip ?? null, detalles: `escuela_inactiva | ${persona.correo}` });
+        await this.auditService.log('login_fallido', {
+          usuarioId: persona.id,
+          ip: ip ?? null,
+          detalles: `escuela_inactiva | ${persona.correo}`,
+        });
         throw new UnauthorizedException(escuelaInactivaMsg);
       }
     }
@@ -90,7 +119,11 @@ export class AuthService {
       const a = persona.alumno;
       if (!a.activo || a.escuela?.estado === 'inactiva' || a.escuela?.estado === 'suspendida') {
         this.logger.warn(`Login fallido: Alumno de escuela inactiva - ${loginDto.email}`);
-        await this.auditService.log('login_fallido', { usuarioId: persona.id, ip: ip ?? null, detalles: `escuela_inactiva | ${persona.correo}` });
+        await this.auditService.log('login_fallido', {
+          usuarioId: persona.id,
+          ip: ip ?? null,
+          detalles: `escuela_inactiva | ${persona.correo}`,
+        });
         throw new UnauthorizedException(escuelaInactivaMsg);
       }
     }
@@ -104,7 +137,9 @@ export class AuthService {
 
     const accessToken = this.jwtService.sign(payload);
 
-    this.logger.log(`Login exitoso: ${persona.nombre} ${persona.apellidoPaterno} (${persona.tipoPersona}) - ID: ${persona.id}`);
+    this.logger.log(
+      `Login exitoso: ${persona.nombre} ${persona.apellidoPaterno} (${persona.tipoPersona}) - ID: ${persona.id}`,
+    );
 
     await this.auditService.log('login', {
       usuarioId: persona.id,
@@ -112,14 +147,12 @@ export class AuthService {
       detalles: persona.correo,
     });
 
-    await this.personaRepository.update(
-      { id: persona.id },
-      { ultimaConexion: new Date() },
-    );
+    await this.personaRepository.update({ id: persona.id }, { ultimaConexion: new Date() });
 
     return {
       message: 'Login exitoso',
-      description: 'Usuario autenticado correctamente. Usa el access_token para acceder a endpoints protegidos.',
+      description:
+        'Usuario autenticado correctamente. Usa el access_token para acceder a endpoints protegidos.',
       access_token: accessToken,
       token_type: 'Bearer',
       expires_in: '24h',
@@ -139,12 +172,14 @@ export class AuthService {
    */
   async registrarAdmin(registroDto: RegistroAdminDto, ip?: string) {
     this.logger.log(`Intento de registro de administrador: ${registroDto.email}`);
-    
+
     // Verificar cantidad de administradores
     const cantidadAdmins = await this.administradorRepository.count();
-    
+
     if (cantidadAdmins >= this.MAX_ADMINS) {
-      this.logger.warn(`Registro fallido: Límite de administradores alcanzado (${cantidadAdmins}/${this.MAX_ADMINS})`);
+      this.logger.warn(
+        `Registro fallido: Límite de administradores alcanzado (${cantidadAdmins}/${this.MAX_ADMINS})`,
+      );
       throw new ConflictException(
         `Ya se han registrado los ${this.MAX_ADMINS} administradores permitidos.`,
       );
@@ -154,7 +189,16 @@ export class AuthService {
     // Solo seleccionar campos que existen en la BD
     const personaExistente = await this.personaRepository.findOne({
       where: { correo: registroDto.email },
-      select: ['id', 'nombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero'],
+      select: [
+        'id',
+        'nombre',
+        'apellidoPaterno',
+        'apellidoMaterno',
+        'correo',
+        'telefono',
+        'fechaNacimiento',
+        'genero',
+      ],
     });
 
     if (personaExistente) {
@@ -174,9 +218,7 @@ export class AuthService {
       correo: registroDto.email,
       password: hashedPassword,
       telefono: registroDto.telefono,
-      fechaNacimiento: registroDto.fechaNacimiento
-        ? new Date(registroDto.fechaNacimiento)
-        : null,
+      fechaNacimiento: registroDto.fechaNacimiento ? new Date(registroDto.fechaNacimiento) : null,
       tipoPersona: 'administrador',
       activo: true,
     });
@@ -191,8 +233,12 @@ export class AuthService {
 
     await this.administradorRepository.save(administrador);
 
-    this.logger.log(`Administrador creado exitosamente: ${personaGuardada.nombre} ${personaGuardada.apellidoPaterno} - ID: ${personaGuardada.id}`);
-    this.logger.log(`Total de administradores registrados: ${cantidadAdmins + 1}/${this.MAX_ADMINS}`);
+    this.logger.log(
+      `Administrador creado exitosamente: ${personaGuardada.nombre} ${personaGuardada.apellidoPaterno} - ID: ${personaGuardada.id}`,
+    );
+    this.logger.log(
+      `Total de administradores registrados: ${cantidadAdmins + 1}/${this.MAX_ADMINS}`,
+    );
 
     await this.auditService.log('registro_admin', {
       usuarioId: personaGuardada.id,
@@ -201,7 +247,8 @@ export class AuthService {
     });
 
     // Retornar la persona sin la contraseña
-    const { password, ...result } = personaGuardada;
+    const result = { ...personaGuardada } as Record<string, unknown>;
+    delete result.password;
     return {
       message: 'Administrador registrado exitosamente',
       description: `El administrador ha sido creado correctamente. Puede iniciar sesión con su email y contraseña. Total de administradores: ${cantidadAdmins + 1}/${this.MAX_ADMINS}`,
@@ -220,7 +267,18 @@ export class AuthService {
     const persona = await this.personaRepository.findOne({
       where: { id: userId },
       relations: ['administrador', 'padre', 'alumno', 'maestro', 'director', 'director.escuela'],
-      select: ['id', 'nombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'telefono', 'fechaNacimiento', 'genero', 'tipoPersona', 'ultimaConexion'],
+      select: [
+        'id',
+        'nombre',
+        'apellidoPaterno',
+        'apellidoMaterno',
+        'correo',
+        'telefono',
+        'fechaNacimiento',
+        'genero',
+        'tipoPersona',
+        'ultimaConexion',
+      ],
     });
 
     if (!persona) {

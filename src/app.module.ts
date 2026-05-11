@@ -1,8 +1,4 @@
-import {
-  MiddlewareConsumer,
-  Module,
-  NestModule,
-} from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerGuard } from '@nestjs/throttler';
@@ -23,6 +19,8 @@ import { DirectorModule } from './director/director.module';
 import { MateriasModule } from './materias/materias.module';
 import { LicenciasModule } from './licencias/licencias.module';
 import { GroqModule } from './groq/groq.module';
+import { AlumnoModule } from './alumno/alumno.module';
+import { ProfesorModule } from './profesor/profesor.module';
 import { AuditHttpInterceptor } from './audit/interceptors/audit-http.interceptor';
 import { createTypeOrmConfig } from './config/typeorm-root.factory';
 import { RedisModule } from './infra/redis/redis.module';
@@ -71,8 +69,7 @@ import { buildLoggerParams } from './config/pino-logger.config';
 
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) =>
-        createTypeOrmConfig(configService),
+      useFactory: (configService: ConfigService) => createTypeOrmConfig(configService),
       inject: [ConfigService],
     }),
 
@@ -90,6 +87,8 @@ import { buildLoggerParams } from './config/pino-logger.config';
     DirectorModule,
     LicenciasModule,
     GroqModule,
+    AlumnoModule,
+    ProfesorModule,
   ],
   controllers: [AppController],
   providers: [

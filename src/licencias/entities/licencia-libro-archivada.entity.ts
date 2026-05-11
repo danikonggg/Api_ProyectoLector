@@ -44,4 +44,3 @@ export class LicenciaLibroArchivada {
   @Column({ name: 'motivo', type: 'varchar', length: 64 })
   motivo: string;
 }
-

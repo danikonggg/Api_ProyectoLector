@@ -9,7 +9,9 @@ const DEFAULT_POOL_IDLE_MS = 120_000;
 
 export function createTypeOrmConfig(configService: ConfigService): TypeOrmModuleOptions {
   const databaseUrl = configService.get('DATABASE_URL');
-  const ssl = databaseUrl ? { rejectUnauthorized: false } : undefined;
+  const dbSslEnabled = configService.get('DB_SSL_ENABLED', 'true') === 'true';
+  const rejectUnauthorized = configService.get('DB_SSL_REJECT_UNAUTHORIZED', 'true') === 'true';
+  const ssl = databaseUrl && dbSslEnabled ? { rejectUnauthorized } : undefined;
 
   const poolMax = Number(configService.get('DB_POOL_SIZE')) || DEFAULT_POOL_MAX;
   const idleTimeoutMillis =

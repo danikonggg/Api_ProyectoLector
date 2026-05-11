@@ -19,7 +19,8 @@ export class LicenciasAutoArchiverService implements OnModuleInit, OnModuleDestr
   onModuleInit() {
     const raw = process.env.LICENCIAS_AUTO_ARCHIVAR_INTERVAL_MS;
     const intervalMs = raw ? Number(raw) : 60 * 60 * 1000; // 1h por defecto
-    const safeIntervalMs = Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : 60 * 60 * 1000;
+    const safeIntervalMs =
+      Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : 60 * 60 * 1000;
 
     // Primer intento inmediato (opcional).
     void this.runOnce();
@@ -47,4 +48,3 @@ export class LicenciasAutoArchiverService implements OnModuleInit, OnModuleDestr
     }
   }
 }
-

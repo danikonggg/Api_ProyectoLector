@@ -5,8 +5,7 @@ import { validateEnv } from './config/env.validation';
 import { initOpenTelemetry } from './infra/telemetry/otel-init';
 
 async function bootstrap(): Promise<void> {
-  process.env.OTEL_SERVICE_NAME =
-    process.env.OTEL_SERVICE_NAME_WORKER ?? 'api-lector-worker';
+  process.env.OTEL_SERVICE_NAME = process.env.OTEL_SERVICE_NAME_WORKER ?? 'api-lector-worker';
   await initOpenTelemetry();
   validateEnv();
 

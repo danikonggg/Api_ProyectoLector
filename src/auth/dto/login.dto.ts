@@ -2,7 +2,7 @@
  * ============================================
  * DTO: LoginDto
  * ============================================
- * 
+ *
  * DTO para el login de usuarios.
  * Se usa el email y se genera un JWT token.
  */
@@ -21,7 +21,9 @@ export class LoginDto {
   })
   @IsEmail({}, { message: 'El correo debe tener un formato válido (ej: usuario@dominio.com)' })
   @IsNotEmpty({ message: 'El correo es obligatorio' })
-  @MaxLength(EMAIL_MAX_LENGTH, { message: `El correo no puede superar ${EMAIL_MAX_LENGTH} caracteres` })
+  @MaxLength(EMAIL_MAX_LENGTH, {
+    message: `El correo no puede superar ${EMAIL_MAX_LENGTH} caracteres`,
+  })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim().toLowerCase() : value))
   email: string;
 
@@ -33,6 +35,8 @@ export class LoginDto {
   })
   @IsString()
   @IsNotEmpty({ message: 'La contraseña es obligatoria' })
-  @MinLength(PASSWORD_MIN_LENGTH, { message: `La contraseña debe tener al menos ${PASSWORD_MIN_LENGTH} caracteres` })
+  @MinLength(PASSWORD_MIN_LENGTH, {
+    message: `La contraseña debe tener al menos ${PASSWORD_MIN_LENGTH} caracteres`,
+  })
   password: string;
 }

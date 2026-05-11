@@ -6,13 +6,7 @@
  * para cada segmento. Se crean al cargar el libro.
  */
 
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  ManyToOne,
-  JoinColumn,
-} from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { Segmento } from './segmento.entity';
 
 @Entity('PreguntaSegmento')

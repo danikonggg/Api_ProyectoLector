@@ -17,13 +17,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiBearerAuth,
-  ApiParam,
-} from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { MateriasService } from './materias.service';
 import { CreateMateriaDto } from './dto/create-materia.dto';
@@ -87,10 +81,7 @@ export class MateriasController {
   @ApiParam({ name: 'id', description: 'ID de la materia' })
   @ApiResponse({ status: 200, description: 'Materia actualizada' })
   @ApiResponse({ status: 404, description: 'Materia no encontrada' })
-  async update(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() dto: UpdateMateriaDto,
-  ) {
+  async update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateMateriaDto) {
     return this.materiasService.update(id, dto);
   }
 

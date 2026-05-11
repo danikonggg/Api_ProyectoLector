@@ -20,16 +20,18 @@ export class TypeOrmLoggerService {
     return cleaned.slice(0, MAX_QUERY_LENGTH) + '...';
   }
 
-  logQuery(query: string, _parameters?: unknown[], _queryRunner?: QueryRunner): void {
+  logQuery(query: string): void {
     this.logger.log(`${DB_LOG} ${this.formatQuery(query)}`);
   }
 
   logQueryError(
     error: string | Error,
     query: string,
-    _parameters?: unknown[],
-    _queryRunner?: QueryRunner,
+    parameters?: unknown[],
+    queryRunner?: QueryRunner,
   ): void {
+    void parameters;
+    void queryRunner;
     const msg = error instanceof Error ? error.message : String(error);
     this.logger.error(`${DB_LOG} ERROR: ${msg}`);
     this.logger.error(`${DB_LOG} Query: ${this.formatQuery(query)}`);
@@ -38,28 +40,29 @@ export class TypeOrmLoggerService {
   logQuerySlow(
     time: number,
     query: string,
-    _parameters?: unknown[],
-    _queryRunner?: QueryRunner,
+    parameters?: unknown[],
+    queryRunner?: QueryRunner,
   ): void {
+    void parameters;
+    void queryRunner;
     this.logger.warn(`${DB_LOG} SLOW (${time}ms): ${this.formatQuery(query)}`);
   }
 
-  log(
-    level: 'log' | 'info' | 'warn',
-    message: unknown,
-    _queryRunner?: QueryRunner,
-  ): void {
+  log(level: 'log' | 'info' | 'warn', message: unknown, queryRunner?: QueryRunner): void {
+    void queryRunner;
     const msg = typeof message === 'string' ? message : JSON.stringify(message);
     if (level === 'warn') this.logger.warn(`${DB_LOG} ${msg}`);
     else if (level === 'info') this.logger.log(`${DB_LOG} ${msg}`);
     else this.logger.log(`${DB_LOG} ${msg}`);
   }
 
-  logSchemaBuild(message: string, _queryRunner?: QueryRunner): void {
+  logSchemaBuild(message: string, queryRunner?: QueryRunner): void {
+    void queryRunner;
     this.logger.log(`${DB_LOG} Schema: ${message}`);
   }
 
-  logMigration(message: string, _queryRunner?: QueryRunner): void {
+  logMigration(message: string, queryRunner?: QueryRunner): void {
+    void queryRunner;
     this.logger.log(`${DB_LOG} Migration: ${message}`);
   }
 }

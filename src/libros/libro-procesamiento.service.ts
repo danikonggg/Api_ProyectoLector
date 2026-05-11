@@ -14,13 +14,11 @@ import { Unidad } from './entities/unidad.entity';
 import { Segmento } from './entities/segmento.entity';
 import { LibrosPdfService } from './libros-pdf.service';
 import { LibrosPdfImagenesService } from './libros-pdf-imagenes.service';
-import { PdfStorageService } from './pdf-storage.service';
-import type {
-  UnidadConSegmentosDto,
-  SegmentoDto,
-} from './libros-pdf.service';
+import { SupabaseStorageService } from './supabase-storage.service';
+import type { UnidadConSegmentosDto, SegmentoDto } from './libros-pdf.service';
 import { LibroUploadValidationService } from './libro-upload-validation.service';
 import { LIBRO_ESTADO } from './constants/libro-estado.constants';
+import { GlosarioSegmentoService } from './glosario-segmento.service';
 
 export interface ProcesarLibroInput {
   buffer: Buffer;
@@ -53,8 +51,9 @@ export class LibroProcesamientoService {
     private readonly dataSource: DataSource,
     private readonly librosPdfService: LibrosPdfService,
     private readonly librosPdfImagenesService: LibrosPdfImagenesService,
-    private readonly pdfStorageService: PdfStorageService,
+    private readonly pdfStorageService: SupabaseStorageService,
     private readonly uploadValidation: LibroUploadValidationService,
+    private readonly glosarioSegmentoService: GlosarioSegmentoService,
   ) {}
 
   /**
@@ -80,10 +79,7 @@ export class LibroProcesamientoService {
         ? resultado.unidades
         : [{ nombre: 'Unidad 1', orden: 1, segmentos: resultado.segmentos }];
 
-    const numSegmentos = unidades.reduce(
-      (acc, u) => acc + (u.segmentos?.length ?? 0),
-      0,
-    );
+    const numSegmentos = unidades.reduce((acc, u) => acc + (u.segmentos?.length ?? 0), 0);
 
     await this.actualizarEstado(libroId, LIBRO_ESTADO.GUARDANDO);
 
@@ -111,8 +107,16 @@ export class LibroProcesamientoService {
     try {
       await this.librosPdfImagenesService.guardarPaginasParaLibro(buffer, libroId, codigo);
     } catch (err) {
-      this.logger.warn(`Imágenes del libro ${libroId} no generadas: ${(err as Error)?.message ?? err}`);
+      this.logger.warn(
+        `Imágenes del libro ${libroId} no generadas: ${(err as Error)?.message ?? err}`,
+      );
     }
+
+    void this.glosarioSegmentoService.precargarGlosarioLibro(libroId).catch((err) => {
+      this.logger.warn(
+        `Precarga glosario libro ${libroId} falló (no afecta estado del libro): ${(err as Error)?.message ?? err}`,
+      );
+    });
 
     this.logger.log(
       `Libro ${libroId} procesado: ${unidades.length} unidades, ${numSegmentos} segmentos, ${resultado.numPaginas} páginas`,

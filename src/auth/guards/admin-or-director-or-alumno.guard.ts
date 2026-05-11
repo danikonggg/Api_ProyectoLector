@@ -21,9 +21,7 @@ export class AdminOrDirectorOrAlumnoGuard implements CanActivate {
     const esAlumno = user.tipoPersona === 'alumno' && user.alumno;
 
     if (!esAdmin && !esDirector && !esAlumno) {
-      throw new ForbiddenException(
-        'Solo administradores, directores o alumnos pueden acceder',
-      );
+      throw new ForbiddenException('Solo administradores, directores o alumnos pueden acceder');
     }
 
     return true;

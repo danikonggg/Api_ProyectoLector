@@ -22,13 +22,7 @@ import {
   ForbiddenException,
   BadRequestException,
 } from '@nestjs/common';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiBearerAuth,
-  ApiParam,
-} from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { Request } from 'express';
 import { MaestrosService } from './maestros.service';
 import { EscuelasService } from '../escuelas/escuelas.service';
@@ -113,10 +107,7 @@ export class MaestrosController {
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'No es maestro' })
   @ApiResponse({ status: 404, description: 'Alumno no encontrado o no asignado' })
-  async obtenerAlumnoPorId(
-    @Req() req: Request,
-    @Param('id', ParseIntPipe) id: number,
-  ) {
+  async obtenerAlumnoPorId(@Req() req: Request, @Param('id', ParseIntPipe) id: number) {
     const user = req.user as RequestUser;
     return this.maestrosService.obtenerAlumnoPorId(user.maestro.id, id);
   }
@@ -151,10 +142,7 @@ export class MaestrosController {
   @ApiResponse({ status: 200, description: 'Libros que coinciden con grado y grupo del alumno' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'Solo maestros' })
-  async librosDisponiblesParaAsignar(
-    @Req() req: Request,
-    @Query('alumnoId') alumnoIdStr: string,
-  ) {
+  async librosDisponiblesParaAsignar(@Req() req: Request, @Query('alumnoId') alumnoIdStr: string) {
     const user = req.user as RequestUser;
     const escuelaId = user.maestro?.escuelaId ?? user.maestro?.escuela?.id;
     if (!escuelaId) throw new ForbiddenException('No se encontró la escuela del maestro');
@@ -183,7 +171,10 @@ export class MaestrosController {
     const maestroId = user.maestro?.id;
     if (!escuelaId) throw new ForbiddenException('No se encontró la escuela del maestro');
     if (maestroId) {
-      const pertenece = await this.maestrosService.alumnoPerteneceAGruposDelMaestro(maestroId, dto.alumnoId);
+      const pertenece = await this.maestrosService.alumnoPerteneceAGruposDelMaestro(
+        maestroId,
+        dto.alumnoId,
+      );
       if (!pertenece) {
         throw new ForbiddenException('Solo puedes asignar libros a alumnos de tus grupos');
       }

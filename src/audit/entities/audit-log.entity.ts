@@ -6,12 +6,7 @@
  * Solo visible por administradores.
  */
 
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  CreateDateColumn,
-} from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn } from 'typeorm';
 
 @Entity('audit_log')
 export class AuditLog {

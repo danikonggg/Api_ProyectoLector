@@ -5,11 +5,7 @@
  * Representa una materia/asignatura del sistema.
  */
 
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-} from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
 
 @Entity('Materia')
 export class Materia {

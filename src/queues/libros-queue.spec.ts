@@ -7,6 +7,7 @@ import { Libro } from '../libros/entities/libro.entity';
 import { RedisService } from '../infra/redis/redis.service';
 import { AuditService } from '../audit/audit.service';
 import { LIBRO_ESTADO } from '../libros/constants/libro-estado.constants';
+import { SupabaseStorageService } from '../libros/supabase-storage.service';
 
 describe('LibrosImportProcessor', () => {
   it('omite si el libro ya está listo (idempotencia)', async () => {
@@ -35,6 +36,10 @@ describe('LibrosImportProcessor', () => {
         },
         { provide: getRepositoryToken(Libro), useValue: { findOne } },
         { provide: AuditService, useValue: { log: auditLog } },
+        {
+          provide: SupabaseStorageService,
+          useValue: { descargarArchivo: jest.fn() },
+        },
       ],
     }).compile();
 
@@ -79,6 +84,10 @@ describe('LibrosImportProcessor', () => {
         },
         { provide: getRepositoryToken(Libro), useValue: { findOne } },
         { provide: AuditService, useValue: { log: jest.fn() } },
+        {
+          provide: SupabaseStorageService,
+          useValue: { descargarArchivo: jest.fn() },
+        },
       ],
     }).compile();
 

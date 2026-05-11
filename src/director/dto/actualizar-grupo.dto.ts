@@ -35,7 +35,8 @@ export class ActualizarGrupoDto {
 
   @ApiPropertyOptional({
     example: [10, 11, 12],
-    description: 'IDs de alumnos en este grupo. Reemplaza la lista actual. [] quita a todos del grupo.',
+    description:
+      'IDs de alumnos en este grupo. Reemplaza la lista actual. [] quita a todos del grupo.',
     type: 'array',
     items: { type: 'number' },
     isArray: true,

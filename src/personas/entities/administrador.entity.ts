@@ -2,18 +2,12 @@
  * ============================================
  * ENTIDAD: Administrador
  * ============================================
- * 
+ *
  * Representa a un usuario administrador del sistema.
  * Relacionado con Persona mediante relación uno-a-uno.
  */
 
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  OneToOne,
-  JoinColumn,
-} from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, OneToOne, JoinColumn } from 'typeorm';
 import { Persona } from './persona.entity';
 
 @Entity('Admin')

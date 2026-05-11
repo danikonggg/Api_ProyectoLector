@@ -6,14 +6,7 @@
  * Usado para organizar alumnos por grado y sección.
  */
 
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  ManyToOne,
-  JoinColumn,
-  Index,
-} from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, JoinColumn, Index } from 'typeorm';
 import { Escuela } from '../../personas/entities/escuela.entity';
 
 @Entity('Grupo')

@@ -20,4 +20,3 @@ export class ArchivarVencidasDto {
   @IsPositive()
   libroId?: number;
 }
-

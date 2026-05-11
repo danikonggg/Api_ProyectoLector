@@ -12,8 +12,6 @@ import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
 const TEMP_DIR = 'pdfs_temp';
-const TTL_MS = 24 * 60 * 60 * 1000; // 24 horas
-
 @Injectable()
 export class LibroStorageTempService {
   private baseDir: string;

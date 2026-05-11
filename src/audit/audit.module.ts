@@ -7,9 +7,7 @@ import { AuditController } from './audit.controller';
 
 @Global()
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([AuditLog, Persona]),
-  ],
+  imports: [TypeOrmModule.forFeature([AuditLog, Persona])],
   controllers: [AuditController],
   providers: [AuditService],
   exports: [AuditService],

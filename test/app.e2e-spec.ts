@@ -31,6 +31,7 @@ describe('App (e2e)', () => {
       .expect((res) => {
         expect(res.body.status).toBeDefined();
         expect(res.body.checks?.database).toBeDefined();
+        expect(res.body.checks?.redis).toBeDefined();
         expect(res.body.uptime).toBeDefined();
       });
   });

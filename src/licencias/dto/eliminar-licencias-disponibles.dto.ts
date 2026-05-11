@@ -10,8 +10,7 @@ import { Type } from 'class-transformer';
 export class EliminarLicenciasDisponiblesDto {
   @ApiPropertyOptional({
     example: 1,
-    description:
-      'Filtrar por escuela. Si no se envía, elimina de todas las escuelas.',
+    description: 'Filtrar por escuela. Si no se envía, elimina de todas las escuelas.',
   })
   @IsOptional()
   @IsInt()

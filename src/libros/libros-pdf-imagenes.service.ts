@@ -83,11 +83,7 @@ export class LibrosPdfImagenesService {
    * Ruta: pdfs/imagenes/{codigo}_{libroId}/1.png, 2.png, ...
    * No rompe el flujo si falla; devuelve numPaginas guardadas o 0.
    */
-  async guardarPaginasParaLibro(
-    buffer: Buffer,
-    libroId: number,
-    codigo: string,
-  ): Promise<number> {
+  async guardarPaginasParaLibro(buffer: Buffer, libroId: number, codigo: string): Promise<number> {
     if (!buffer || buffer.length < 100) return 0;
 
     const slug = codigo.replace(/[^a-zA-Z0-9-_]/g, '_').slice(0, 80) || 'libro';
@@ -115,7 +111,9 @@ export class LibrosPdfImagenesService {
     } catch (e) {
       await fs.unlink(tempPdfPath).catch(() => {});
       await fs.rm(baseDir, { recursive: true, force: true }).catch(() => {});
-      this.logger.warn(`No se pudieron generar imágenes para libro ${libroId}: ${(e as Error)?.message ?? e}`);
+      this.logger.warn(
+        `No se pudieron generar imágenes para libro ${libroId}: ${(e as Error)?.message ?? e}`,
+      );
       return 0;
     }
   }
@@ -139,7 +137,12 @@ export class LibrosPdfImagenesService {
     numeroPagina: number,
   ): Promise<string | null> {
     const slug = codigo.replace(/[^a-zA-Z0-9-_]/g, '_').slice(0, 80) || 'libro';
-    const relPath = path.join(PDFS_DIR, IMAGENES_LIBROS_DIR, `${slug}_${libroId}`, `${numeroPagina}.png`);
+    const relPath = path.join(
+      PDFS_DIR,
+      IMAGENES_LIBROS_DIR,
+      `${slug}_${libroId}`,
+      `${numeroPagina}.png`,
+    );
     const absPath = path.join(process.cwd(), relPath);
     try {
       await fs.access(absPath, fs.constants.R_OK);

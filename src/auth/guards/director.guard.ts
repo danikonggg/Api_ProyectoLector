@@ -2,7 +2,7 @@
  * ============================================
  * GUARD: DirectorGuard
  * ============================================
- * 
+ *
  * Guard que verifica que el usuario autenticado sea un director.
  * Se usa después de JwtAuthGuard para proteger rutas de director.
  */

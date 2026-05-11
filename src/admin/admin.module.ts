@@ -7,11 +7,13 @@ import { Alumno } from '../personas/entities/alumno.entity';
 import { Maestro } from '../personas/entities/maestro.entity';
 import { Libro } from '../libros/entities/libro.entity';
 import { PersonasModule } from '../personas/personas.module';
+import { EscuelasModule } from '../escuelas/escuelas.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Escuela, Alumno, Maestro, Libro]),
     PersonasModule,
+    EscuelasModule,
   ],
   controllers: [AdminController],
   providers: [AdminService],

@@ -1,5 +1,30 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, ParseIntPipe, Query, UseGuards, Request, ForbiddenException, BadRequestException, HttpCode, HttpStatus, UseInterceptors } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiConsumes, ApiBody, ApiParam } from '@nestjs/swagger';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Body,
+  Param,
+  ParseIntPipe,
+  Query,
+  UseGuards,
+  Request,
+  ForbiddenException,
+  BadRequestException,
+  HttpCode,
+  HttpStatus,
+  UseInterceptors,
+} from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+  ApiConsumes,
+  ApiBody,
+  ApiParam,
+} from '@nestjs/swagger';
 import { DirectorGuard } from '../auth/guards/director.guard';
 import { DirectorService } from './director.service';
 import { EscuelasService } from '../escuelas/escuelas.service';
@@ -15,7 +40,9 @@ import { CargaMasivaService } from '../personas/carga-masiva.service';
 import { getAuditContext } from '../common/utils/audit.utils';
 import type { Request as ExpressRequest } from 'express';
 
-function getEscuelaId(req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } }): number {
+function getEscuelaId(
+  req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } },
+): number {
   const escuelaId = req.user?.director?.escuelaId ?? req.user?.director?.escuela?.id;
   if (!escuelaId) {
     throw new ForbiddenException('No se encontró la escuela del director');
@@ -43,7 +70,10 @@ export class DirectorController {
   @ApiResponse({ status: 200, description: 'Estadísticas de la escuela del director' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'Solo directores' })
-  async getDashboard(@Request() req: ExpressRequest & { user?: { director?: { escuelaId: number; escuela?: { id: number } } } }) {
+  async getDashboard(
+    @Request()
+    req: ExpressRequest & { user?: { director?: { escuelaId: number; escuela?: { id: number } } } },
+  ) {
     const escuelaId = getEscuelaId(req);
     return await this.directorService.getDashboard(escuelaId);
   }
@@ -54,11 +84,19 @@ export class DirectorController {
    */
   @Get('escuela')
   @ApiTags('Solo Director')
-  @ApiOperation({ summary: 'Ver datos de mi escuela', description: 'Sin parámetros. La escuela se toma del token.' })
+  @ApiOperation({
+    summary: 'Ver datos de mi escuela',
+    description: 'Sin parámetros. La escuela se toma del token.',
+  })
   @ApiResponse({ status: 200, description: 'Datos de la escuela del director' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'Solo directores' })
-  async getMiEscuela(@Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } }) {
+  async getMiEscuela(
+    @Request()
+    req: ExpressRequest & {
+      user?: { director?: { escuelaId?: number; escuela?: { id: number } } };
+    },
+  ) {
     const escuelaId = getEscuelaId(req);
     return await this.escuelasService.obtenerPorId(escuelaId);
   }
@@ -69,11 +107,19 @@ export class DirectorController {
    */
   @Get('maestros')
   @ApiTags('Solo Director')
-  @ApiOperation({ summary: 'Maestros de mi escuela', description: 'Sin parámetros. La escuela se toma del token.' })
+  @ApiOperation({
+    summary: 'Maestros de mi escuela',
+    description: 'Sin parámetros. La escuela se toma del token.',
+  })
   @ApiResponse({ status: 200, description: 'Lista de maestros' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'Solo directores' })
-  async getMaestros(@Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } }) {
+  async getMaestros(
+    @Request()
+    req: ExpressRequest & {
+      user?: { director?: { escuelaId?: number; escuela?: { id: number } } };
+    },
+  ) {
     const escuelaId = getEscuelaId(req);
     return await this.escuelasService.listarMaestrosDeEscuela(escuelaId);
   }
@@ -84,11 +130,19 @@ export class DirectorController {
    */
   @Get('alumnos')
   @ApiTags('Solo Director')
-  @ApiOperation({ summary: 'Alumnos de mi escuela', description: 'Sin parámetros. La escuela se toma del token.' })
+  @ApiOperation({
+    summary: 'Alumnos de mi escuela',
+    description: 'Sin parámetros. La escuela se toma del token.',
+  })
   @ApiResponse({ status: 200, description: 'Lista de alumnos' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'Solo directores' })
-  async getAlumnos(@Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } }) {
+  async getAlumnos(
+    @Request()
+    req: ExpressRequest & {
+      user?: { director?: { escuelaId?: number; escuela?: { id: number } } };
+    },
+  ) {
     const escuelaId = getEscuelaId(req);
     return await this.escuelasService.listarAlumnosDeEscuela(escuelaId);
   }
@@ -101,10 +155,14 @@ export class DirectorController {
   @ApiTags('Solo Director')
   @ApiOperation({
     summary: 'Cambiar grupo de alumno',
-    description: 'Asigna o cambia el grupo de un alumno. Body: { grupoId } (número) o { grupoId: null } para quitar del grupo.',
+    description:
+      'Asigna o cambia el grupo de un alumno. Body: { grupoId } (número) o { grupoId: null } para quitar del grupo.',
   })
   @ApiParam({ name: 'id', description: 'ID del alumno' })
-  @ApiBody({ type: ActualizarAlumnoGrupoDto, examples: { asignar: { value: { grupoId: 2 } }, quitar: { value: { grupoId: null } } } })
+  @ApiBody({
+    type: ActualizarAlumnoGrupoDto,
+    examples: { asignar: { value: { grupoId: 2 } }, quitar: { value: { grupoId: null } } },
+  })
   @ApiResponse({ status: 200, description: 'Grupo del alumno actualizado' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'No autorizado' })
@@ -112,10 +170,18 @@ export class DirectorController {
   async actualizarGrupoAlumno(
     @Param('id', ParseIntPipe) alumnoId: number,
     @Body() dto: ActualizarAlumnoGrupoDto,
-    @Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } },
+    @Request()
+    req: ExpressRequest & {
+      user?: { director?: { escuelaId?: number; escuela?: { id: number } } };
+    },
   ) {
     const escuelaId = getEscuelaId(req);
-    return await this.directorService.actualizarGrupoDeAlumno(escuelaId, alumnoId, dto, getAuditContext(req));
+    return await this.directorService.actualizarGrupoDeAlumno(
+      escuelaId,
+      alumnoId,
+      dto,
+      getAuditContext(req),
+    );
   }
 
   /**
@@ -131,7 +197,12 @@ export class DirectorController {
   @ApiResponse({ status: 200, description: 'Lista de grupos' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'Solo directores' })
-  async getGrupos(@Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } }) {
+  async getGrupos(
+    @Request()
+    req: ExpressRequest & {
+      user?: { director?: { escuelaId?: number; escuela?: { id: number } } };
+    },
+  ) {
     const escuelaId = getEscuelaId(req);
     return await this.directorService.listarGrupos(escuelaId);
   }
@@ -151,7 +222,10 @@ export class DirectorController {
   @ApiResponse({ status: 409, description: 'Ya existe un grupo con ese grado y nombre' })
   async crearGrupo(
     @Body() dto: CrearGrupoDto,
-    @Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } },
+    @Request()
+    req: ExpressRequest & {
+      user?: { director?: { escuelaId?: number; escuela?: { id: number } } };
+    },
   ) {
     const escuelaId = getEscuelaId(req);
     return await this.directorService.crearGrupo(escuelaId, dto, getAuditContext(req));
@@ -165,7 +239,8 @@ export class DirectorController {
   @ApiTags('Solo Director')
   @ApiOperation({
     summary: 'Actualizar grupo',
-    description: 'Actualiza grado, nombre, activo. Opcional: maestroIds para asignar maestros al grupo (reemplaza la lista actual).',
+    description:
+      'Actualiza grado, nombre, activo. Opcional: maestroIds para asignar maestros al grupo (reemplaza la lista actual).',
   })
   @ApiBody({
     type: ActualizarGrupoDto,
@@ -184,7 +259,10 @@ export class DirectorController {
   async actualizarGrupo(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: ActualizarGrupoDto,
-    @Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } },
+    @Request()
+    req: ExpressRequest & {
+      user?: { director?: { escuelaId?: number; escuela?: { id: number } } };
+    },
   ) {
     const escuelaId = getEscuelaId(req);
     return await this.directorService.actualizarGrupo(escuelaId, id, dto, getAuditContext(req));
@@ -204,7 +282,10 @@ export class DirectorController {
   @ApiResponse({ status: 404, description: 'Grupo no encontrado' })
   async eliminarGrupo(
     @Param('id', ParseIntPipe) id: number,
-    @Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } },
+    @Request()
+    req: ExpressRequest & {
+      user?: { director?: { escuelaId?: number; escuela?: { id: number } } };
+    },
   ) {
     const escuelaId = getEscuelaId(req);
     return await this.directorService.eliminarGrupo(escuelaId, id, getAuditContext(req));
@@ -223,7 +304,10 @@ export class DirectorController {
   @ApiResponse({ status: 404, description: 'Maestro no encontrado' })
   async getGruposDeMaestro(
     @Param('maestroId', ParseIntPipe) maestroId: number,
-    @Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } },
+    @Request()
+    req: ExpressRequest & {
+      user?: { director?: { escuelaId?: number; escuela?: { id: number } } };
+    },
   ) {
     const escuelaId = getEscuelaId(req);
     return await this.directorService.listarGruposDeMaestro(escuelaId, maestroId);
@@ -245,10 +329,18 @@ export class DirectorController {
   @ApiResponse({ status: 409, description: 'El maestro ya tiene asignado este grupo' })
   async asignarGrupoAMaestro(
     @Body() dto: AsignarGrupoMaestroDto,
-    @Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } },
+    @Request()
+    req: ExpressRequest & {
+      user?: { director?: { escuelaId?: number; escuela?: { id: number } } };
+    },
   ) {
     const escuelaId = getEscuelaId(req);
-    return await this.directorService.asignarGrupoAMaestro(escuelaId, dto.maestroId, dto.grupoId, getAuditContext(req));
+    return await this.directorService.asignarGrupoAMaestro(
+      escuelaId,
+      dto.maestroId,
+      dto.grupoId,
+      getAuditContext(req),
+    );
   }
 
   /**
@@ -266,10 +358,18 @@ export class DirectorController {
   async desasignarGrupoDeMaestro(
     @Param('maestroId', ParseIntPipe) maestroId: number,
     @Param('grupoId', ParseIntPipe) grupoId: number,
-    @Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } },
+    @Request()
+    req: ExpressRequest & {
+      user?: { director?: { escuelaId?: number; escuela?: { id: number } } };
+    },
   ) {
     const escuelaId = getEscuelaId(req);
-    return await this.directorService.desasignarGrupoDeMaestro(escuelaId, maestroId, grupoId, getAuditContext(req));
+    return await this.directorService.desasignarGrupoDeMaestro(
+      escuelaId,
+      maestroId,
+      grupoId,
+      getAuditContext(req),
+    );
   }
 
   /**
@@ -278,11 +378,19 @@ export class DirectorController {
    */
   @Get('directores')
   @ApiTags('Solo Director')
-  @ApiOperation({ summary: 'Directores de mi escuela', description: 'Sin parámetros. La escuela se toma del token.' })
+  @ApiOperation({
+    summary: 'Directores de mi escuela',
+    description: 'Sin parámetros. La escuela se toma del token.',
+  })
   @ApiResponse({ status: 200, description: 'Lista de directores de la escuela' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'Solo directores' })
-  async getDirectores(@Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } }) {
+  async getDirectores(
+    @Request()
+    req: ExpressRequest & {
+      user?: { director?: { escuelaId?: number; escuela?: { id: number } } };
+    },
+  ) {
     const escuelaId = getEscuelaId(req);
     return await this.escuelasService.listarDirectoresDeEscuela(escuelaId);
   }
@@ -295,12 +403,18 @@ export class DirectorController {
   @ApiTags('Solo Director')
   @ApiOperation({
     summary: 'Libros activos de mi escuela',
-    description: 'Sin parámetros. La escuela se toma del token del director. No se envía ID de escuela.',
+    description:
+      'Sin parámetros. La escuela se toma del token del director. No se envía ID de escuela.',
   })
   @ApiResponse({ status: 200, description: 'Libros ya canjeados en mi escuela' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'Solo directores' })
-  async getLibros(@Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } }) {
+  async getLibros(
+    @Request()
+    req: ExpressRequest & {
+      user?: { director?: { escuelaId?: number; escuela?: { id: number } } };
+    },
+  ) {
     const escuelaId = getEscuelaId(req);
     return await this.escuelasService.listarLibrosDeEscuela(escuelaId);
   }
@@ -321,7 +435,8 @@ export class DirectorController {
   @ApiTags('Solo Director')
   @ApiOperation({
     summary: 'Carga masiva desde Excel',
-    description: 'Sube Excel con: nombre, apellidoPaterno, apellidoMaterno, email, [password], [grado], [grupo]. Tipo: alumno o maestro.',
+    description:
+      'Sube Excel con: nombre, apellidoPaterno, apellidoMaterno, email, [password], [grado], [grupo]. Tipo: alumno o maestro.',
   })
   @ApiBody({
     schema: {
@@ -340,10 +455,14 @@ export class DirectorController {
   async cargaMasiva(
     @UploadedFile() file: { buffer: Buffer },
     @Body() body: { tipo?: string },
-    @Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } },
+    @Request()
+    req: ExpressRequest & {
+      user?: { director?: { escuelaId?: number; escuela?: { id: number } } };
+    },
   ) {
     const escuelaId = getEscuelaId(req);
-    if (!file?.buffer) throw new BadRequestException('Debes enviar un archivo Excel (campo "file").');
+    if (!file?.buffer)
+      throw new BadRequestException('Debes enviar un archivo Excel (campo "file").');
     const tipoNorm = (body?.tipo || 'alumno').toLowerCase();
     if (tipoNorm !== 'alumno' && tipoNorm !== 'maestro') {
       throw new BadRequestException('El tipo debe ser "alumno" o "maestro".');
@@ -367,7 +486,9 @@ export class DirectorController {
 
     const excelBase64 =
       resultado.credenciales.length > 0
-        ? (await this.cargaMasivaService.generarExcelCredenciales(resultado.credenciales)).toString('base64')
+        ? (await this.cargaMasivaService.generarExcelCredenciales(resultado.credenciales)).toString(
+            'base64',
+          )
         : null;
 
     return {
@@ -391,7 +512,10 @@ export class DirectorController {
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'Solo directores' })
   async librosDisponiblesParaAsignar(
-    @Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } },
+    @Request()
+    req: ExpressRequest & {
+      user?: { director?: { escuelaId?: number; escuela?: { id: number } } };
+    },
     @Query('alumnoId') alumnoIdStr: string,
   ) {
     const escuelaId = getEscuelaId(req);
@@ -416,7 +540,10 @@ export class DirectorController {
   @ApiResponse({ status: 409, description: 'Libro ya asignado al alumno' })
   async asignarLibro(
     @Body() dto: AsignarLibroAlumnoDto,
-    @Request() req: ExpressRequest & { user?: { director?: { id: number; escuelaId?: number; escuela?: { id: number } } } },
+    @Request()
+    req: ExpressRequest & {
+      user?: { director?: { id: number; escuelaId?: number; escuela?: { id: number } } };
+    },
   ) {
     const escuelaId = getEscuelaId(req);
     const directorId = req.user?.director?.id;
@@ -446,7 +573,10 @@ export class DirectorController {
   async desasignarLibro(
     @Param('alumnoId', ParseIntPipe) alumnoId: number,
     @Param('libroId', ParseIntPipe) libroId: number,
-    @Request() req: ExpressRequest & { user?: { director?: { escuelaId?: number; escuela?: { id: number } } } },
+    @Request()
+    req: ExpressRequest & {
+      user?: { director?: { escuelaId?: number; escuela?: { id: number } } };
+    },
   ) {
     const escuelaId = getEscuelaId(req);
     return await this.escuelasService.desasignarLibroAlAlumno(alumnoId, libroId, {

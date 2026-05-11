@@ -1,8 +1,4 @@
-import {
-  normalizarGrupo,
-  grupoCoincide,
-  alumnoPerteneceAGrupos,
-} from './grupo.utils';
+import { normalizarGrupo, grupoCoincide, alumnoPerteneceAGrupos } from './grupo.utils';
 
 describe('grupo.utils', () => {
   describe('normalizarGrupo', () => {

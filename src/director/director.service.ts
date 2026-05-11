@@ -48,14 +48,13 @@ export class DirectorService {
       throw new NotFoundException('No se encontró la escuela del director');
     }
 
-    const [totalEstudiantes, totalProfesores, librosDisponibles] =
-      await Promise.all([
-        this.alumnoRepository.count({ where: { escuelaId } }),
-        this.maestroRepository.count({ where: { escuelaId } }),
-        this.escuelaLibroRepository.count({
-          where: { escuelaId, activo: true },
-        }),
-      ]);
+    const [totalEstudiantes, totalProfesores, librosDisponibles] = await Promise.all([
+      this.alumnoRepository.count({ where: { escuelaId } }),
+      this.maestroRepository.count({ where: { escuelaId } }),
+      this.escuelaLibroRepository.count({
+        where: { escuelaId, activo: true },
+      }),
+    ]);
 
     return {
       message: 'Dashboard obtenido correctamente',
@@ -94,11 +93,17 @@ export class DirectorService {
       relations: ['maestro', 'maestro.persona'],
     });
 
-    const maestrosPorGrupo = new Map<number, Array<{ id: number; personaId: number; nombre: string; correo: string | null }>>();
+    const maestrosPorGrupo = new Map<
+      number,
+      Array<{ id: number; personaId: number; nombre: string; correo: string | null }>
+    >();
     for (const a of asignaciones) {
       if (!a.maestro?.persona) continue;
       const p = a.maestro.persona;
-      const nombre = [p.nombre, p.apellidoPaterno, p.apellidoMaterno].filter(Boolean).join(' ').trim();
+      const nombre = [p.nombre, p.apellidoPaterno, p.apellidoMaterno]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
       const item = {
         id: a.maestro.id,
         personaId: a.maestro.personaId,
@@ -118,7 +123,9 @@ export class DirectorService {
     for (const al of alumnosEnGrupos) {
       if (al.grupoId == null) continue;
       const p = al.persona;
-      const nombre = [p?.nombre, p?.apellidoPaterno, p?.apellidoMaterno].filter(Boolean).join(' ').trim() || 'Sin nombre';
+      const nombre =
+        [p?.nombre, p?.apellidoPaterno, p?.apellidoMaterno].filter(Boolean).join(' ').trim() ||
+        'Sin nombre';
       const list = nombresAlumnosPorGrupo.get(al.grupoId) ?? [];
       list.push(nombre);
       nombresAlumnosPorGrupo.set(al.grupoId, list);
@@ -169,7 +176,12 @@ export class DirectorService {
   /**
    * Actualizar grupo. Solo si pertenece a la escuela del director.
    */
-  async actualizarGrupo(escuelaId: number, id: number, dto: ActualizarGrupoDto, auditContext?: AuditContext) {
+  async actualizarGrupo(
+    escuelaId: number,
+    id: number,
+    dto: ActualizarGrupoDto,
+    auditContext?: AuditContext,
+  ) {
     const grupo = await this.grupoRepository.findOne({ where: { id } });
     if (!grupo) {
       throw new NotFoundException('Grupo no encontrado');
@@ -187,7 +199,9 @@ export class DirectorService {
         where: { escuelaId, grado: grupo.grado },
       });
       const nombreNorm = (grupo.nombre || '').trim().toUpperCase();
-      const otro = gruposDelGrado.find((g) => (g.nombre || '').trim().toUpperCase() === nombreNorm && g.id !== grupo.id);
+      const otro = gruposDelGrado.find(
+        (g) => (g.nombre || '').trim().toUpperCase() === nombreNorm && g.id !== grupo.id,
+      );
       if (otro) {
         throw new ConflictException(
           `Ya existe un grupo con grado ${grupo.grado} y nombre "${grupo.nombre}" en esta escuela`,
@@ -211,7 +225,9 @@ export class DirectorService {
       const existentes = await this.maestroGrupoRepository.find({ where: { grupoId: id } });
       await this.maestroGrupoRepository.remove(existentes);
       for (const maestroId of maestroIdsUnicos) {
-        const yaExiste = await this.maestroGrupoRepository.findOne({ where: { maestroId, grupoId: id } });
+        const yaExiste = await this.maestroGrupoRepository.findOne({
+          where: { maestroId, grupoId: id },
+        });
         if (!yaExiste) {
           const mg = this.maestroGrupoRepository.create({ maestroId, grupoId: id });
           await this.maestroGrupoRepository.save(mg);
@@ -274,7 +290,10 @@ export class DirectorService {
       .filter((a) => a.maestro?.persona)
       .map((a) => {
         const p = a.maestro!.persona!;
-        const nombre = [p.nombre, p.apellidoPaterno, p.apellidoMaterno].filter(Boolean).join(' ').trim();
+        const nombre = [p.nombre, p.apellidoPaterno, p.apellidoMaterno]
+          .filter(Boolean)
+          .join(' ')
+          .trim();
         return {
           id: a.maestro!.id,
           personaId: a.maestro!.personaId,
@@ -316,7 +335,12 @@ export class DirectorService {
   /**
    * Asignar grupo a maestro. Director solo puede asignar en su escuela.
    */
-  async asignarGrupoAMaestro(escuelaId: number, maestroId: number, grupoId: number, auditContext?: AuditContext) {
+  async asignarGrupoAMaestro(
+    escuelaId: number,
+    maestroId: number,
+    grupoId: number,
+    auditContext?: AuditContext,
+  ) {
     const maestro = await this.maestroRepository.findOne({ where: { id: maestroId } });
     if (!maestro) throw new NotFoundException('Maestro no encontrado');
     if (Number(maestro.escuelaId) !== Number(escuelaId)) {
@@ -349,7 +373,12 @@ export class DirectorService {
   /**
    * Desasignar grupo de maestro.
    */
-  async desasignarGrupoDeMaestro(escuelaId: number, maestroId: number, grupoId: number, auditContext?: AuditContext) {
+  async desasignarGrupoDeMaestro(
+    escuelaId: number,
+    maestroId: number,
+    grupoId: number,
+    auditContext?: AuditContext,
+  ) {
     const maestro = await this.maestroRepository.findOne({ where: { id: maestroId } });
     if (!maestro) throw new NotFoundException('Maestro no encontrado');
     if (Number(maestro.escuelaId) !== Number(escuelaId)) {
@@ -379,7 +408,10 @@ export class DirectorService {
     dto: { grupoId?: number | null },
     auditContext?: AuditContext,
   ) {
-    const alumno = await this.alumnoRepository.findOne({ where: { id: alumnoId }, relations: ['persona'] });
+    const alumno = await this.alumnoRepository.findOne({
+      where: { id: alumnoId },
+      relations: ['persona'],
+    });
     if (!alumno) throw new NotFoundException('Alumno no encontrado');
     if (Number(alumno.escuelaId) !== Number(escuelaId)) {
       throw new ForbiddenException('No puedes modificar alumnos de otra escuela');

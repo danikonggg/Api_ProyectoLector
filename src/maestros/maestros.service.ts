@@ -109,9 +109,7 @@ export class MaestrosService {
     const pertenece = alumnoPerteneceAGrupos(alumno, maestroGrupos);
 
     if (!pertenece) {
-      throw new NotFoundException(
-        'Alumno no encontrado o no pertenece a tus grupos',
-      );
+      throw new NotFoundException('Alumno no encontrado o no pertenece a tus grupos');
     }
 
     return {
@@ -145,9 +143,7 @@ export class MaestrosService {
     }
 
     if (Number(alumno.escuelaId) !== Number(maestro.escuelaId)) {
-      throw new ForbiddenException(
-        'Solo puedes asignar alumnos de tu misma escuela',
-      );
+      throw new ForbiddenException('Solo puedes asignar alumnos de tu misma escuela');
     }
 
     const maestroGrupos = await this.maestroGrupoRepository.find({
@@ -160,9 +156,7 @@ export class MaestrosService {
       );
     }
     if (!alumnoPerteneceAGrupos(alumno, maestroGrupos)) {
-      throw new ForbiddenException(
-        'Solo puedes asignar alumnos que pertenezcan a tus grupos',
-      );
+      throw new ForbiddenException('Solo puedes asignar alumnos que pertenezcan a tus grupos');
     }
 
     const materia = await this.materiaRepository.findOne({
@@ -183,9 +177,7 @@ export class MaestrosService {
     });
 
     if (existente) {
-      throw new ConflictException(
-        'El alumno ya está asignado a tu clase en esta materia',
-      );
+      throw new ConflictException('El alumno ya está asignado a tu clase en esta materia');
     }
 
     const asignacion = this.alumnoMaestroRepository.create({
@@ -236,7 +228,12 @@ export class MaestrosService {
   /**
    * Desasignar un alumno de la clase (marcar fecha_fin).
    */
-  async desasignarAlumno(maestroId: number, alumnoId: number, materiaId: number, auditContext?: AuditContext) {
+  async desasignarAlumno(
+    maestroId: number,
+    alumnoId: number,
+    materiaId: number,
+    auditContext?: AuditContext,
+  ) {
     const asignacion = await this.alumnoMaestroRepository.findOne({
       where: {
         maestroId,
@@ -247,9 +244,7 @@ export class MaestrosService {
     });
 
     if (!asignacion) {
-      throw new NotFoundException(
-        'No se encontró la asignación o el alumno no está en tu clase',
-      );
+      throw new NotFoundException('No se encontró la asignación o el alumno no está en tu clase');
     }
 
     asignacion.fechaFin = new Date();

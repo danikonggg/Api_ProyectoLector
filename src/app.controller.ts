@@ -1,4 +1,4 @@
-import { Controller, Get, Header } from '@nestjs/common';
+import { Controller, ForbiddenException, Get, Header, Headers } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { AppService } from './app.service';
 import { Public } from './auth/decorators/public.decorator';
@@ -29,7 +29,17 @@ export class AppController {
   @Header('Content-Type', register.contentType)
   @ApiTags('Público')
   @ApiOperation({ summary: 'Métricas Prometheus (scraping desde Docker)' })
-  async metrics(): Promise<string> {
+  async metrics(@Headers('x-metrics-token') metricsTokenHeader?: string): Promise<string> {
+    if (process.env.NODE_ENV === 'test') {
+      return register.metrics();
+    }
+    const expectedToken = process.env.METRICS_TOKEN?.trim();
+    if (!expectedToken) {
+      throw new ForbiddenException('Métricas deshabilitadas: falta METRICS_TOKEN en el entorno.');
+    }
+    if (metricsTokenHeader !== expectedToken) {
+      throw new ForbiddenException('Acceso a métricas no autorizado.');
+    }
     return register.metrics();
   }
 }

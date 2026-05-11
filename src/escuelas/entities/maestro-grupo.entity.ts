@@ -5,14 +5,7 @@
  * Asignación maestro ↔ grupo. Un maestro puede impartir clase a varios grupos.
  */
 
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  ManyToOne,
-  JoinColumn,
-  Unique,
-} from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, JoinColumn, Unique } from 'typeorm';
 import { Maestro } from '../../personas/entities/maestro.entity';
 import { Grupo } from './grupo.entity';
 

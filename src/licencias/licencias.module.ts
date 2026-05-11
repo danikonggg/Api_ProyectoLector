@@ -17,6 +17,7 @@ import { Escuela } from '../personas/entities/escuela.entity';
 import { Alumno } from '../personas/entities/alumno.entity';
 import { EscuelaLibro } from '../escuelas/entities/escuela-libro.entity';
 import { AlumnoLibro } from '../escuelas/entities/alumno-libro.entity';
+import { ListarLibrosDisponiblesUseCase } from './application/listar-libros-disponibles.use-case';
 
 @Module({
   imports: [
@@ -31,7 +32,7 @@ import { AlumnoLibro } from '../escuelas/entities/alumno-libro.entity';
     ]),
   ],
   controllers: [LicenciasController],
-  providers: [LicenciasService, LicenciasAutoArchiverService],
+  providers: [LicenciasService, LicenciasAutoArchiverService, ListarLibrosDisponiblesUseCase],
   exports: [LicenciasService],
 })
 export class LicenciasModule {}

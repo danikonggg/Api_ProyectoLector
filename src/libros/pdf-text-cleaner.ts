@@ -29,9 +29,7 @@ function normalizarEspaciosUnicode(texto: string): string {
  * Elimina caracteres de control y no imprimibles (mantiene \n \r \t).
  */
 function eliminarControlYInvisibles(texto: string): string {
-  return texto
-    .replace(CONTROL_CHARS, '')
-    .replace(ZERO_WIDTH, '');
+  return texto.replace(CONTROL_CHARS, '').replace(ZERO_WIDTH, '');
 }
 
 /**
@@ -69,13 +67,9 @@ function normalizarLigaduras(texto: string): string {
  */
 function unirPalabrasPartidasPorGuion(texto: string): string {
   let t = texto;
-  const letras =
-    '[a-zA-ZáéíóúÁÉÍÓÚñÑüÜàèìòùÀÈÌÒÙâêîôûÂÊÎÔÛäëïöüÄËÏÖÜ]';
+  const letras = '[a-zA-ZáéíóúÁÉÍÓÚñÑüÜàèìòùÀÈÌÒÙâêîôûÂÊÎÔÛäëïöüÄËÏÖÜ]';
   const guion = '[\\-\\u00AD\\u2010\\u2011]';
-  const pat = new RegExp(
-    `(${letras})${guion}\\s*\\n\\s*(${letras})`,
-    'g',
-  );
+  const pat = new RegExp(`(${letras})${guion}\\s*\\n\\s*(${letras})`, 'g');
   t = t.replace(pat, '$1$2');
   const pat2 = new RegExp(`(${letras})${guion}\\s+(${letras})`, 'g');
   t = t.replace(pat2, '$1$2');

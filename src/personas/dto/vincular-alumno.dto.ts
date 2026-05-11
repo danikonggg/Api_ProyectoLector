@@ -11,4 +11,3 @@ export class VincularAlumnoDto {
   @MaxLength(64, { message: 'El código de vinculación no puede superar 64 caracteres' })
   codigo: string;
 }
-

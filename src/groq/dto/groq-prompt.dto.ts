@@ -14,7 +14,9 @@ export class GroqPromptDto {
   })
   @IsOptional()
   @IsString()
-  @MaxLength(PROMPT_MAX_LENGTH, { message: `El prompt no puede superar ${PROMPT_MAX_LENGTH} caracteres` })
+  @MaxLength(PROMPT_MAX_LENGTH, {
+    message: `El prompt no puede superar ${PROMPT_MAX_LENGTH} caracteres`,
+  })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   prompt?: string;
 }

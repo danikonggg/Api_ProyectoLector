@@ -2,12 +2,12 @@
  * ============================================
  * CONTROLADOR: PersonasController
  * ============================================
- * 
+ *
  * Controlador que maneja el registro de usuarios.
- * 
+ *
  * Endpoints públicos:
  * - POST /personas/registro-admin - Registrar administrador inicial (máx 3)
- * 
+ *
  * Endpoints protegidos (requieren ser admin):
  * - POST /personas/registro-padre - Registrar padre
  * - POST /personas/registro-alumno - Registrar alumno
@@ -30,14 +30,13 @@ import {
   Req,
   Query,
 } from '@nestjs/common';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiBearerAuth,
-} from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { ForbiddenException, BadRequestException } from '@nestjs/common';
-import { PersonasService } from './personas.service';
+import { CargaMasivaService } from './carga-masiva.service';
+import { VinculacionPadresService } from './services/vinculacion-padres.service';
+import { RegistroPersonasService } from './services/registro-personas.service';
+import { ConsultaPersonasService } from './services/consulta-personas.service';
+import { GestionPersonasService } from './services/gestion-personas.service';
 import { RegistroPadreDto } from './dto/registro-padre.dto';
 import { RegistroAlumnoDto } from './dto/registro-alumno.dto';
 import { RegistroMaestroDto } from './dto/registro-maestro.dto';
@@ -49,13 +48,18 @@ import { DesvincularAlumnoDto } from './dto/desvincular-alumno.dto';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { AdminOrDirectorGuard } from '../auth/guards/admin-or-director.guard';
 import { getAuditContext } from '../common/utils/audit.utils';
-import { User } from '../auth/decorators/user.decorator';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import type { Request } from 'express';
 
 @Controller('personas')
 export class PersonasController {
-  constructor(private readonly personasService: PersonasService) {}
+  constructor(
+    private readonly cargaMasivaService: CargaMasivaService,
+    private readonly vinculacionPadresService: VinculacionPadresService,
+    private readonly registroPersonasService: RegistroPersonasService,
+    private readonly consultaPersonasService: ConsultaPersonasService,
+    private readonly gestionPersonasService: GestionPersonasService,
+  ) {}
 
   // Nota: El registro de admin inicial está en /auth/registro-admin
 
@@ -75,7 +79,8 @@ export class PersonasController {
     schema: {
       example: {
         message: 'Padre registrado exitosamente',
-        description: 'El padre/tutor ha sido creado correctamente. Puede iniciar sesión con su email y contraseña.',
+        description:
+          'El padre/tutor ha sido creado correctamente. Puede iniciar sesión con su email y contraseña.',
         data: {
           idPersona: 1,
           nombre: 'María',
@@ -89,7 +94,7 @@ export class PersonasController {
   @ApiResponse({ status: 403, description: 'No es administrador' })
   @ApiResponse({ status: 409, description: 'Email ya registrado' })
   async registrarPadre(@Body() registroDto: RegistroPadreDto, @Req() req: Request) {
-    return await this.personasService.registrarPadre(registroDto, getAuditContext(req));
+    return await this.registroPersonasService.registrarPadre(registroDto, getAuditContext(req));
   }
 
   /**
@@ -107,11 +112,11 @@ export class PersonasController {
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'No es administrador' })
   @ApiResponse({ status: 409, description: 'Email ya registrado' })
-  async registrarPadreConHijo(
-    @Body() registroDto: RegistroPadreConHijoDto,
-    @Req() req: Request,
-  ) {
-    return await this.personasService.registrarPadreConHijo(registroDto, getAuditContext(req));
+  async registrarPadreConHijo(@Body() registroDto: RegistroPadreConHijoDto, @Req() req: Request) {
+    return await this.registroPersonasService.registrarPadreConHijo(
+      registroDto,
+      getAuditContext(req),
+    );
   }
 
   /**
@@ -127,15 +132,15 @@ export class PersonasController {
   @ApiResponse({ status: 200, description: 'Alumno vinculado correctamente' })
   @ApiResponse({ status: 400, description: 'Código inválido, ya utilizado o expirado' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
-  async vincularAlumnoComoPadre(
-    @Body() dto: VincularAlumnoDto,
-    @Req() req: Request,
-  ) {
+  async vincularAlumnoComoPadre(@Body() dto: VincularAlumnoDto, @Req() req: Request) {
     const user = req.user as RequestUser;
     if (user.tipoPersona !== 'padre' || !user.padre) {
       throw new ForbiddenException('Solo los padres/tutores pueden vincular alumnos con un código');
     }
-    return await this.personasService.vincularAlumnoConPadrePorCodigo(user.padre.id, dto.codigo);
+    return await this.vinculacionPadresService.vincularAlumnoConPadrePorCodigo(
+      user.padre.id,
+      dto.codigo,
+    );
   }
 
   /**
@@ -152,15 +157,15 @@ export class PersonasController {
   @ApiResponse({ status: 403, description: 'El alumno no está vinculado a tu cuenta' })
   @ApiResponse({ status: 404, description: 'Alumno no encontrado' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
-  async desvincularAlumnoComoPadre(
-    @Body() dto: DesvincularAlumnoDto,
-    @Req() req: Request,
-  ) {
+  async desvincularAlumnoComoPadre(@Body() dto: DesvincularAlumnoDto, @Req() req: Request) {
     const user = req.user as RequestUser;
     if (user.tipoPersona !== 'padre' || !user.padre) {
       throw new ForbiddenException('Solo los padres/tutores pueden desvincular alumnos');
     }
-    return await this.personasService.desvincularAlumnoDelPadre(user.padre.id, dto.alumnoId);
+    return await this.vinculacionPadresService.desvincularAlumnoDelPadre(
+      user.padre.id,
+      dto.alumnoId,
+    );
   }
 
   /**
@@ -181,7 +186,8 @@ export class PersonasController {
     schema: {
       example: {
         message: 'Alumno registrado exitosamente',
-        description: 'El alumno ha sido creado correctamente. Puede iniciar sesión con su email y contraseña.',
+        description:
+          'El alumno ha sido creado correctamente. Puede iniciar sesión con su email y contraseña.',
         data: {
           idPersona: 1,
           nombre: 'Carlos',
@@ -208,7 +214,9 @@ export class PersonasController {
       if (registroDto.idEscuela == null || registroDto.idEscuela === undefined) {
         registroDto.idEscuela = miEscuelaId;
       } else if (Number(registroDto.idEscuela) !== miEscuelaId) {
-        throw new ForbiddenException('Los directores solo pueden registrar alumnos en su propia escuela');
+        throw new ForbiddenException(
+          'Los directores solo pueden registrar alumnos en su propia escuela',
+        );
       }
     } else {
       // Admin: idEscuela es obligatorio
@@ -217,7 +225,7 @@ export class PersonasController {
       }
     }
 
-    return await this.personasService.registrarAlumno(registroDto, getAuditContext(req));
+    return await this.registroPersonasService.registrarAlumno(registroDto, getAuditContext(req));
   }
 
   /**
@@ -238,7 +246,8 @@ export class PersonasController {
     schema: {
       example: {
         message: 'Maestro registrado exitosamente',
-        description: 'El maestro/profesor ha sido creado correctamente. Puede iniciar sesión con su email y contraseña.',
+        description:
+          'El maestro/profesor ha sido creado correctamente. Puede iniciar sesión con su email y contraseña.',
         data: {
           idPersona: 1,
           nombre: 'Ana',
@@ -263,7 +272,9 @@ export class PersonasController {
       if (registroDto.idEscuela == null || registroDto.idEscuela === undefined) {
         registroDto.idEscuela = miEscuelaId;
       } else if (Number(registroDto.idEscuela) !== miEscuelaId) {
-        throw new ForbiddenException('Los directores solo pueden registrar maestros en su propia escuela');
+        throw new ForbiddenException(
+          'Los directores solo pueden registrar maestros en su propia escuela',
+        );
       }
     } else {
       // Admin: idEscuela es obligatorio
@@ -272,7 +283,7 @@ export class PersonasController {
       }
     }
 
-    return await this.personasService.registrarMaestro(registroDto, getAuditContext(req));
+    return await this.registroPersonasService.registrarMaestro(registroDto, getAuditContext(req));
   }
 
   /**
@@ -304,7 +315,7 @@ export class PersonasController {
     },
   })
   async obtenerAdmins() {
-    return await this.personasService.obtenerAdmins();
+    return await this.consultaPersonasService.obtenerAdmins();
   }
 
   /**
@@ -318,14 +329,15 @@ export class PersonasController {
   @ApiOperation({ summary: 'Obtener cantidad de administradores (requiere admin)' })
   @ApiResponse({ status: 200, description: 'Cantidad de administradores' })
   async contarAdmins() {
-    const cantidad = await this.personasService.contarAdmins();
+    const cantidad = await this.consultaPersonasService.contarAdmins();
     const MAX_ADMINS = 5;
     return {
       cantidad,
       maxAdmins: MAX_ADMINS,
-      mensaje: cantidad >= MAX_ADMINS
-        ? `Ya se han registrado los ${MAX_ADMINS} administradores permitidos`
-        : `Puedes registrar ${MAX_ADMINS - cantidad} administrador(es) más`,
+      mensaje:
+        cantidad >= MAX_ADMINS
+          ? `Ya se han registrado los ${MAX_ADMINS} administradores permitidos`
+          : `Puedes registrar ${MAX_ADMINS - cantidad} administrador(es) más`,
     };
   }
 
@@ -345,7 +357,8 @@ export class PersonasController {
     schema: {
       example: {
         message: 'Director registrado exitosamente',
-        description: 'El director ha sido creado correctamente. Puede iniciar sesión con su email y contraseña.',
+        description:
+          'El director ha sido creado correctamente. Puede iniciar sesión con su email y contraseña.',
         data: {
           idPersona: 1,
           nombre: 'Juan',
@@ -359,7 +372,7 @@ export class PersonasController {
   @ApiResponse({ status: 403, description: 'No es administrador' })
   @ApiResponse({ status: 409, description: 'Email ya registrado o escuela ya tiene 3 directores' })
   async registrarDirector(@Body() registroDto: RegistroDirectorDto, @Req() req: Request) {
-    return await this.personasService.registrarDirector(registroDto, getAuditContext(req));
+    return await this.registroPersonasService.registrarDirector(registroDto, getAuditContext(req));
   }
 
   // ========== GET Alumnos y Padres (requieren token) ==========
@@ -392,7 +405,7 @@ export class PersonasController {
     }
     const pageNum = page ? parseInt(page, 10) : undefined;
     const limitNum = limit ? parseInt(limit, 10) : undefined;
-    return await this.personasService.obtenerAlumnos(escuelaIdFiltro, pageNum, limitNum);
+    return await this.consultaPersonasService.obtenerAlumnos(escuelaIdFiltro, pageNum, limitNum);
   }
 
   /**
@@ -426,7 +439,7 @@ export class PersonasController {
     if (user.tipoPersona === 'director' && user.director) {
       escuelaIdFiltro = Number(user.director.escuelaId ?? user.director.escuela?.id);
     }
-    return await this.personasService.buscarAlumnos(campo, valor, escuelaIdFiltro);
+    return await this.consultaPersonasService.buscarAlumnos(campo, valor, escuelaIdFiltro);
   }
 
   /**
@@ -440,16 +453,18 @@ export class PersonasController {
   @ApiResponse({ status: 200, description: 'Código de vinculación obtenido correctamente' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'No autorizado' })
-  async obtenerMiCodigoVinculacionAlumno(
-    @Req() req: Request,
-  ) {
+  async obtenerMiCodigoVinculacionAlumno(@Req() req: Request) {
     const user = req.user as RequestUser;
     // El frontend puede consumir este endpoint como Alumno o como Padre/Tutor.
     if (user.alumno) {
-      return await this.personasService.obtenerCodigoVinculacionAlumno(Number(user.alumno.id));
+      return await this.vinculacionPadresService.obtenerCodigoVinculacionAlumno(
+        Number(user.alumno.id),
+      );
     }
     if (user.padre) {
-      return await this.personasService.obtenerCodigoVinculacionParaPadre(Number(user.padre.id));
+      return await this.vinculacionPadresService.obtenerCodigoVinculacionParaPadre(
+        Number(user.padre.id),
+      );
     }
     throw new ForbiddenException('Solo alumnos o padres/tutores pueden acceder a esta ruta');
   }
@@ -469,10 +484,7 @@ export class PersonasController {
   @ApiResponse({ status: 200, description: 'Código de vinculación obtenido correctamente' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'No autorizado' })
-  async obtenerCodigoVinculacionAlumno(
-    @Param('id', ParseIntPipe) id: number,
-    @Req() req: Request,
-  ) {
+  async obtenerCodigoVinculacionAlumno(@Param('id', ParseIntPipe) id: number, @Req() req: Request) {
     const user = req.user as RequestUser;
     // Preferimos basarnos en la relación "alumno" para evitar inconsistencias en tipoPersona.
     if (!user.alumno) {
@@ -486,7 +498,7 @@ export class PersonasController {
       throw new ForbiddenException('No puedes consultar el código de otro alumno');
     }
 
-    return await this.personasService.obtenerCodigoVinculacionAlumno(id);
+    return await this.vinculacionPadresService.obtenerCodigoVinculacionAlumno(id);
   }
 
   /**
@@ -503,15 +515,13 @@ export class PersonasController {
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'No autorizado' })
   @ApiResponse({ status: 404, description: 'Alumno no encontrado' })
-  async obtenerPadreDeAlumno(
-    @Param('id', ParseIntPipe) id: number,
-    @Req() req: Request,
-  ) {
+  async obtenerPadreDeAlumno(@Param('id', ParseIntPipe) id: number, @Req() req: Request) {
     const user = req.user as RequestUser;
-    const escuelaId = user.tipoPersona === 'director' && user.director
-      ? Number(user.director.escuelaId ?? user.director.escuela?.id)
-      : undefined;
-    return await this.personasService.obtenerPadreDeAlumno(id, escuelaId);
+    const escuelaId =
+      user.tipoPersona === 'director' && user.director
+        ? Number(user.director.escuelaId ?? user.director.escuela?.id)
+        : undefined;
+    return await this.consultaPersonasService.obtenerPadreDeAlumno(id, escuelaId);
   }
 
   /**
@@ -527,16 +537,14 @@ export class PersonasController {
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'No autorizado' })
   @ApiResponse({ status: 404, description: 'Alumno no encontrado' })
-  async obtenerAlumnoPorId(
-    @Param('id', ParseIntPipe) id: number,
-    @Req() req: Request,
-  ) {
+  async obtenerAlumnoPorId(@Param('id', ParseIntPipe) id: number, @Req() req: Request) {
     const user = req.user as RequestUser;
 
-    const escuelaId = user.tipoPersona === 'director' && user.director
-      ? Number(user.director.escuelaId ?? user.director.escuela?.id)
-      : undefined;
-    return await this.personasService.obtenerAlumnoPorId(id, escuelaId);
+    const escuelaId =
+      user.tipoPersona === 'director' && user.director
+        ? Number(user.director.escuelaId ?? user.director.escuela?.id)
+        : undefined;
+    return await this.consultaPersonasService.obtenerAlumnoPorId(id, escuelaId);
   }
 
   /**
@@ -550,7 +558,8 @@ export class PersonasController {
   @ApiTags('Admin o Director')
   @ApiOperation({
     summary: 'Actualizar alumno (admin o director; director solo de su escuela)',
-    description: 'Actualiza datos de persona (nombre, correo, etc.) y opcionalmente grupoId para asignar o quitar del grupo.',
+    description:
+      'Actualiza datos de persona (nombre, correo, etc.) y opcionalmente grupoId para asignar o quitar del grupo.',
   })
   @ApiResponse({ status: 200, description: 'Alumno actualizado' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
@@ -562,10 +571,16 @@ export class PersonasController {
     @Req() req: Request,
   ) {
     const user = req.user as RequestUser;
-    const escuelaId = user.tipoPersona === 'director' && user.director
-      ? Number(user.director.escuelaId ?? user.director.escuela?.id)
-      : undefined;
-    return await this.personasService.actualizarAlumno(id, dto, escuelaId, getAuditContext(req));
+    const escuelaId =
+      user.tipoPersona === 'director' && user.director
+        ? Number(user.director.escuelaId ?? user.director.escuela?.id)
+        : undefined;
+    return await this.gestionPersonasService.actualizarAlumno(
+      id,
+      dto,
+      escuelaId,
+      getAuditContext(req),
+    );
   }
 
   /**
@@ -582,16 +597,17 @@ export class PersonasController {
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'No autorizado' })
   @ApiResponse({ status: 404, description: 'Alumno no encontrado' })
-  async eliminarAlumno(
-    @Param('id', ParseIntPipe) id: number,
-    @Req() req: Request,
-  ) {
+  async eliminarAlumno(@Param('id', ParseIntPipe) id: number, @Req() req: Request) {
     const user = req.user as RequestUser;
-    const escuelaId = user.tipoPersona === 'director' && user.director
-      ? Number(user.director.escuelaId ?? user.director.escuela?.id)
-      : undefined;
-    const { data } = await this.personasService.obtenerAlumnoPorId(id, escuelaId);
-    return await this.personasService.eliminarUsuarioPorId(data.personaId, getAuditContext(req));
+    const escuelaId =
+      user.tipoPersona === 'director' && user.director
+        ? Number(user.director.escuelaId ?? user.director.escuela?.id)
+        : undefined;
+    const { data } = await this.consultaPersonasService.obtenerAlumnoPorId(id, escuelaId);
+    return await this.gestionPersonasService.eliminarUsuarioPorId(
+      data.personaId,
+      getAuditContext(req),
+    );
   }
 
   /**
@@ -614,11 +630,16 @@ export class PersonasController {
     @Req() req: Request,
   ) {
     const user = req.user as RequestUser;
-    const escuelaId = user.tipoPersona === 'director' && user.director
-      ? Number(user.director.escuelaId ?? user.director.escuela?.id)
-      : undefined;
-    const { data } = await this.personasService.obtenerMaestroPorId(id, escuelaId);
-    return await this.personasService.actualizarUsuarioPorId(data.personaId, dto, getAuditContext(req));
+    const escuelaId =
+      user.tipoPersona === 'director' && user.director
+        ? Number(user.director.escuelaId ?? user.director.escuela?.id)
+        : undefined;
+    const { data } = await this.consultaPersonasService.obtenerMaestroPorId(id, escuelaId);
+    return await this.gestionPersonasService.actualizarUsuarioPorId(
+      data.personaId,
+      dto,
+      getAuditContext(req),
+    );
   }
 
   /**
@@ -635,16 +656,17 @@ export class PersonasController {
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'No autorizado' })
   @ApiResponse({ status: 404, description: 'Maestro no encontrado' })
-  async eliminarMaestro(
-    @Param('id', ParseIntPipe) id: number,
-    @Req() req: Request,
-  ) {
+  async eliminarMaestro(@Param('id', ParseIntPipe) id: number, @Req() req: Request) {
     const user = req.user as RequestUser;
-    const escuelaId = user.tipoPersona === 'director' && user.director
-      ? Number(user.director.escuelaId ?? user.director.escuela?.id)
-      : undefined;
-    const { data } = await this.personasService.obtenerMaestroPorId(id, escuelaId);
-    return await this.personasService.eliminarUsuarioPorId(data.personaId, getAuditContext(req));
+    const escuelaId =
+      user.tipoPersona === 'director' && user.director
+        ? Number(user.director.escuelaId ?? user.director.escuela?.id)
+        : undefined;
+    const { data } = await this.consultaPersonasService.obtenerMaestroPorId(id, escuelaId);
+    return await this.gestionPersonasService.eliminarUsuarioPorId(
+      data.personaId,
+      getAuditContext(req),
+    );
   }
 
   /**
@@ -659,13 +681,10 @@ export class PersonasController {
   @ApiResponse({ status: 200, description: 'Lista de padres con sus alumnos' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'Solo administradores' })
-  async obtenerPadres(
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ) {
+  async obtenerPadres(@Query('page') page?: string, @Query('limit') limit?: string) {
     const pageNum = page ? parseInt(page, 10) : undefined;
     const limitNum = limit ? parseInt(limit, 10) : undefined;
-    return await this.personasService.obtenerPadres(pageNum, limitNum);
+    return await this.consultaPersonasService.obtenerPadres(pageNum, limitNum);
   }
 
   /**
@@ -681,22 +700,21 @@ export class PersonasController {
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'No autorizado (solo admin o tu propio padre)' })
   @ApiResponse({ status: 404, description: 'Padre no encontrado' })
-  async obtenerAlumnosDePadre(
-    @Param('id', ParseIntPipe) id: number,
-    @Req() req: Request,
-  ) {
+  async obtenerAlumnosDePadre(@Param('id', ParseIntPipe) id: number, @Req() req: Request) {
     const user = req.user as RequestUser;
     if (user.tipoPersona === 'padre' && user.padre) {
       // El Frontend podría mandar el id incorrecto (padre.id vs personaId).
       // Para seguridad, siempre resolvemos contra el padre del token.
-      return await this.personasService.obtenerAlumnosDePadre(Number(user.padre.id));
+      return await this.consultaPersonasService.obtenerAlumnosDePadre(Number(user.padre.id));
     } else if (user.tipoPersona === 'administrador' && user.administrador) {
       // Admin: puede ver cualquier padre
     } else {
-      throw new ForbiddenException('Solo administradores o padres/tutores pueden acceder a esta ruta');
+      throw new ForbiddenException(
+        'Solo administradores o padres/tutores pueden acceder a esta ruta',
+      );
     }
 
-    return await this.personasService.obtenerAlumnosDePadre(id);
+    return await this.consultaPersonasService.obtenerAlumnosDePadre(id);
   }
 
   /**
@@ -711,20 +729,19 @@ export class PersonasController {
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'No autorizado (solo admin o tu propio padre)' })
   @ApiResponse({ status: 404, description: 'Padre no encontrado' })
-  async obtenerPadrePorId(
-    @Param('id', ParseIntPipe) id: number,
-    @Req() req: Request,
-  ) {
+  async obtenerPadrePorId(@Param('id', ParseIntPipe) id: number, @Req() req: Request) {
     const user = req.user as RequestUser;
     if (user.tipoPersona === 'padre' && user.padre) {
       // Para seguridad, siempre resolvemos el padre del token.
-      return await this.personasService.obtenerPadrePorId(Number(user.padre.id));
+      return await this.consultaPersonasService.obtenerPadrePorId(Number(user.padre.id));
     } else if (user.tipoPersona === 'administrador' && user.administrador) {
       // Admin: puede ver cualquier padre
     } else {
-      throw new ForbiddenException('Solo administradores o padres/tutores pueden acceder a esta ruta');
+      throw new ForbiddenException(
+        'Solo administradores o padres/tutores pueden acceder a esta ruta',
+      );
     }
 
-    return await this.personasService.obtenerPadrePorId(id);
+    return await this.consultaPersonasService.obtenerPadrePorId(id);
   }
 }

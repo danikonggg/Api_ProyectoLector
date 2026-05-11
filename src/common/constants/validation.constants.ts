@@ -33,3 +33,6 @@ export const MAX_PAGE_SIZE = 100;
 
 /** Paginación: máximo número de página razonable (evitar offset gigante) */
 export const MAX_PAGE_NUMBER = 10000;
+
+/** Palabra en tabla `glosario` (varchar 180) */
+export const GLOSSARY_WORD_MAX_LENGTH = 180;

@@ -45,4 +45,3 @@ export class AlumnoVinculacionPadre {
   @CreateDateColumn({ name: 'creado_en', type: 'timestamp' })
   creadoEn: Date;
 }
-

@@ -2,7 +2,7 @@
  * ============================================
  * SERVICIO: EscuelasService
  * ============================================
- * 
+ *
  * Servicio que maneja las operaciones CRUD de escuelas.
  * Solo los administradores pueden gestionar escuelas.
  */
@@ -11,30 +11,29 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
-  BadRequestException,
-  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
-import { Repository, DataSource, IsNull, In } from 'typeorm';
+import { Repository, DataSource, In } from 'typeorm';
 import { Escuela } from '../personas/entities/escuela.entity';
 import { Alumno } from '../personas/entities/alumno.entity';
 import { Maestro } from '../personas/entities/maestro.entity';
 import { Director } from '../personas/entities/director.entity';
 import { EscuelaLibro } from './entities/escuela-libro.entity';
 import { Libro } from '../libros/entities/libro.entity';
-import { Segmento } from '../libros/entities/segmento.entity';
 import { AlumnoLibro } from './entities/alumno-libro.entity';
 import { MaestroGrupo } from './entities/maestro-grupo.entity';
-import { Anotacion } from './entities/anotacion.entity';
-import { AlumnoMaestro } from '../personas/entities/alumno-maestro.entity';
-import { alumnoPerteneceAGrupos, grupoCoincide } from '../common/utils/grupo.utils';
+import { LicenciaLibro } from '../licencias/entities/licencia-libro.entity';
+import { grupoCoincide } from '../common/utils/grupo.utils';
 import { LicenciasService } from '../licencias/licencias.service';
 import { CrearEscuelaDto } from './dto/crear-escuela.dto';
 import { ActualizarEscuelaDto } from './dto/actualizar-escuela.dto';
 import { AuditService } from '../audit/audit.service';
-import { CrearAnotacionDto } from './dto/crear-anotacion.dto';
 import { ListarLibrosAsignadosAlumnoUseCase } from './application/listar-libros-asignados-alumno.use-case';
+import { DesasignarLibroAlumnoUseCase } from './application/desasignar-libro-alumno.use-case';
+import { AlumnoEvaluacionSegmentoService } from './services/alumno-evaluacion-segmento.service';
+import { AlumnoAnotacionesProgresoService } from './services/alumno-anotaciones-progreso.service';
+import type { CrearAnotacionDto } from './dto/crear-anotacion.dto';
 
 export interface AuditContext {
   usuarioId?: number | null;
@@ -69,17 +68,18 @@ export class EscuelasService {
     private readonly libroRepository: Repository<Libro>,
     @InjectRepository(AlumnoLibro)
     private readonly alumnoLibroRepository: Repository<AlumnoLibro>,
-    @InjectRepository(Anotacion)
-    private readonly anotacionRepository: Repository<Anotacion>,
     @InjectRepository(MaestroGrupo)
     private readonly maestroGrupoRepository: Repository<MaestroGrupo>,
-    @InjectRepository(Segmento)
-    private readonly segmentoRepository: Repository<Segmento>,
+    @InjectRepository(LicenciaLibro)
+    private readonly licenciaLibroRepository: Repository<LicenciaLibro>,
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly auditService: AuditService,
     private readonly licenciasService: LicenciasService,
     private readonly listarLibrosAsignadosAlumnoUseCase: ListarLibrosAsignadosAlumnoUseCase,
+    private readonly desasignarLibroAlumnoUseCase: DesasignarLibroAlumnoUseCase,
+    private readonly alumnoEvaluacionSegmentoService: AlumnoEvaluacionSegmentoService,
+    private readonly alumnoAnotacionesProgresoService: AlumnoAnotacionesProgresoService,
   ) {}
 
   /**
@@ -94,7 +94,9 @@ export class EscuelasService {
     });
 
     if (escuelaExistente) {
-      this.logger.warn(`Creación fallida: Escuela con nombre duplicado - ${crearEscuelaDto.nombre}`);
+      this.logger.warn(
+        `Creación fallida: Escuela con nombre duplicado - ${crearEscuelaDto.nombre}`,
+      );
       throw new ConflictException('Ya existe una escuela con ese nombre');
     }
 
@@ -105,7 +107,9 @@ export class EscuelasService {
       });
 
       if (escuelaConClave) {
-        this.logger.warn(`Creación fallida: Escuela con clave duplicada - ${crearEscuelaDto.clave}`);
+        this.logger.warn(
+          `Creación fallida: Escuela con clave duplicada - ${crearEscuelaDto.clave}`,
+        );
         throw new ConflictException('Ya existe una escuela con esa clave');
       }
     }
@@ -124,7 +128,9 @@ export class EscuelasService {
 
     const escuelaGuardada = await this.escuelaRepository.save(escuela);
 
-    this.logger.log(`Escuela creada exitosamente: ${escuelaGuardada.nombre} - ID: ${escuelaGuardada.id}`);
+    this.logger.log(
+      `Escuela creada exitosamente: ${escuelaGuardada.nombre} - ID: ${escuelaGuardada.id}`,
+    );
 
     await this.auditService.log('escuela_crear', {
       usuarioId: auditContext?.usuarioId ?? null,
@@ -209,7 +215,7 @@ export class EscuelasService {
       this.dataSource
         .createQueryBuilder()
         .select('a.escuela_id', 'escuelaId')
-        .addSelect('COUNT(DISTINCT (a.grado::text || \'-\' || COALESCE(a.grupo, \'\')))', 'total')
+        .addSelect("COUNT(DISTINCT (a.grado::text || '-' || COALESCE(a.grupo, '')))", 'total')
         .from(Alumno, 'a')
         .where('a.escuela_id IN (:...ids)', { ids: escuelaIds })
         .andWhere('a.activo = true')
@@ -220,7 +226,13 @@ export class EscuelasService {
     const mapDirectores = new Map<number, string[]>();
     for (const d of directores) {
       const list = mapDirectores.get(Number(d.escuelaId)) ?? [];
-      const nombreCompleto = [d.persona?.nombre, d.persona?.apellidoPaterno, d.persona?.apellidoMaterno].filter(Boolean).join(' ');
+      const nombreCompleto = [
+        d.persona?.nombre,
+        d.persona?.apellidoPaterno,
+        d.persona?.apellidoMaterno,
+      ]
+        .filter(Boolean)
+        .join(' ');
       list.push(nombreCompleto || '—');
       mapDirectores.set(Number(d.escuelaId), list);
     }
@@ -310,7 +322,10 @@ export class EscuelasService {
       this.maestroRepository.count({ where: { escuelaId: id } }),
       this.alumnoRepository
         .createQueryBuilder('a')
-        .select('COUNT(DISTINCT CONCAT(COALESCE(a.grado::text, \'\'), \'-\', COALESCE(a.grupo, \'\')))', 'count')
+        .select(
+          "COUNT(DISTINCT CONCAT(COALESCE(a.grado::text, ''), '-', COALESCE(a.grupo, '')))",
+          'count',
+        )
         .where('a.escuelaId = :id', { id })
         .getRawOne()
         .then((r) => (r?.count ? Number(r.count) : 0)),
@@ -352,7 +367,11 @@ export class EscuelasService {
   /**
    * Actualizar una escuela
    */
-  async actualizar(id: number, actualizarEscuelaDto: ActualizarEscuelaDto, auditContext?: AuditContext) {
+  async actualizar(
+    id: number,
+    actualizarEscuelaDto: ActualizarEscuelaDto,
+    auditContext?: AuditContext,
+  ) {
     this.logger.log(`Intento de actualización de escuela ID: ${id}`);
 
     const escuela = await this.escuelaRepository.findOne({
@@ -406,7 +425,9 @@ export class EscuelasService {
       );
     }
 
-    this.logger.log(`Escuela actualizada exitosamente: ${escuelaActualizada.nombre} - ID: ${escuelaActualizada.id}`);
+    this.logger.log(
+      `Escuela actualizada exitosamente: ${escuelaActualizada.nombre} - ID: ${escuelaActualizada.id}`,
+    );
 
     await this.auditService.log('escuela_actualizar', {
       usuarioId: auditContext?.usuarioId ?? null,
@@ -427,29 +448,71 @@ export class EscuelasService {
   async eliminar(id: number, auditContext?: AuditContext) {
     this.logger.log(`Intento de eliminación de escuela ID: ${id}`);
 
-    const escuela = await this.escuelaRepository.findOne({
-      where: { id },
-      relations: ['alumnos', 'maestros'],
-    });
+    const escuela = await this.escuelaRepository.findOne({ where: { id } });
 
     if (!escuela) {
       throw new NotFoundException(`No se encontró la escuela con ID ${id}`);
     }
 
-    // Verificar si tiene alumnos o maestros asociados
-    if (escuela.alumnos && escuela.alumnos.length > 0) {
-      throw new BadRequestException(
-        `No se puede eliminar la escuela porque tiene ${escuela.alumnos.length} alumno(s) asociado(s)`,
-      );
-    }
+    await this.dataSource.transaction(async (manager) => {
+      const [alumnos, maestros, directores] = await Promise.all([
+        manager.query(`SELECT id, persona_id FROM "Alumno" WHERE escuela_id = $1`, [id]),
+        manager.query(`SELECT id, persona_id FROM "Maestro" WHERE escuela_id = $1`, [id]),
+        manager.query(`SELECT id, persona_id FROM "Director" WHERE escuela_id = $1`, [id]),
+      ]);
 
-    if (escuela.maestros && escuela.maestros.length > 0) {
-      throw new BadRequestException(
-        `No se puede eliminar la escuela porque tiene ${escuela.maestros.length} maestro(s) asociado(s)`,
+      const alumnoIds: number[] = alumnos.map((r: { id: number }) => Number(r.id));
+      const maestroIds: number[] = maestros.map((r: { id: number }) => Number(r.id));
+      const personaIds: number[] = [...alumnos, ...maestros, ...directores].map(
+        (r: { persona_id: number }) => Number(r.persona_id),
       );
-    }
 
-    await this.escuelaRepository.remove(escuela);
+      if (alumnoIds.length > 0) {
+        await manager.query(`DELETE FROM "Sesion_Lectura" WHERE alumno_id = ANY($1::bigint[])`, [
+          alumnoIds,
+        ]);
+        await manager.query(
+          `DELETE FROM "Preferencias_Alumno" WHERE alumno_id = ANY($1::bigint[])`,
+          [alumnoIds],
+        );
+        await manager.query(
+          `DELETE FROM "Alumno_Segmento_Evaluacion" WHERE alumno_id = ANY($1::bigint[])`,
+          [alumnoIds],
+        );
+        await manager.query(`DELETE FROM "Anotacion" WHERE alumno_id = ANY($1::bigint[])`, [
+          alumnoIds,
+        ]);
+        await manager.query(`DELETE FROM "Alumno_Libro" WHERE alumno_id = ANY($1::bigint[])`, [
+          alumnoIds,
+        ]);
+      }
+
+      if (maestroIds.length > 0) {
+        await manager.query(`DELETE FROM "Maestro_Grupo" WHERE maestro_id = ANY($1::bigint[])`, [
+          maestroIds,
+        ]);
+      }
+
+      if (alumnoIds.length > 0 || maestroIds.length > 0) {
+        await manager.query(
+          `DELETE FROM "Alumno_Maestro" WHERE alumno_id = ANY($1::bigint[]) OR maestro_id = ANY($2::bigint[])`,
+          [alumnoIds, maestroIds],
+        );
+      }
+
+      await manager.query(`DELETE FROM "Licencia_Libro" WHERE escuela_id = $1`, [id]);
+      await manager.query(`DELETE FROM "Escuela_Libro" WHERE escuela_id = $1`, [id]);
+      await manager.query(`DELETE FROM "Escuela_Libro_Pendiente" WHERE escuela_id = $1`, [id]);
+      await manager.query(`DELETE FROM "Director" WHERE escuela_id = $1`, [id]);
+      await manager.query(`DELETE FROM "Alumno" WHERE escuela_id = $1`, [id]);
+      await manager.query(`DELETE FROM "Maestro" WHERE escuela_id = $1`, [id]);
+      await manager.query(`DELETE FROM "Grupo" WHERE escuela_id = $1`, [id]);
+      await manager.query(`DELETE FROM "Escuela" WHERE id = $1`, [id]);
+
+      if (personaIds.length > 0) {
+        await manager.query(`DELETE FROM "Persona" WHERE id = ANY($1::bigint[])`, [personaIds]);
+      }
+    });
 
     this.logger.log(`Escuela eliminada exitosamente: ${escuela.nombre} - ID: ${id}`);
 
@@ -529,7 +592,9 @@ export class EscuelasService {
   async listarTodosLosDirectores(page?: number, limit?: number) {
     const qb = this.escuelaRepository
       .createQueryBuilder('escuela')
-      .leftJoinAndSelect('escuela.directores', 'director', 'director.activo = :activo', { activo: true })
+      .leftJoinAndSelect('escuela.directores', 'director', 'director.activo = :activo', {
+        activo: true,
+      })
       .leftJoinAndSelect('director.persona', 'persona')
       .orderBy('escuela.nombre', 'ASC')
       .addOrderBy('director.id', 'ASC');
@@ -619,7 +684,10 @@ export class EscuelasService {
     });
 
     const maestroIds = maestrosEntidad.map((m) => m.id);
-    const gruposPorMaestro = new Map<number, Array<{ id: number; grado: number; nombre: string; cantidadAlumnos: number }>>();
+    const gruposPorMaestro = new Map<
+      number,
+      Array<{ id: number; grado: number; nombre: string; cantidadAlumnos: number }>
+    >();
     const cantidadAlumnosPorGrupo = new Map<number, number>();
 
     if (maestroIds.length > 0) {
@@ -734,11 +802,12 @@ export class EscuelasService {
             correo: a.persona.correo,
             telefono: a.persona.telefono,
             genero: a.persona.genero ?? null,
-            fechaNacimiento: a.persona.fechaNacimiento != null
-              ? (a.persona.fechaNacimiento instanceof Date
+            fechaNacimiento:
+              a.persona.fechaNacimiento != null
+                ? a.persona.fechaNacimiento instanceof Date
                   ? a.persona.fechaNacimiento.toISOString().split('T')[0]
-                  : String(a.persona.fechaNacimiento).split('T')[0])
-              : null,
+                  : String(a.persona.fechaNacimiento).split('T')[0]
+                : null,
           }
         : null,
       padre: a.padre
@@ -788,7 +857,9 @@ export class EscuelasService {
     await this.escuelaLibroRepository.save(el);
     this.logger.log(`Escuela ${escuelaId} / libro ${libroId}: activo=${activo}.`);
     return {
-      message: activo ? 'Libro activado para esta escuela.' : 'Libro desactivado para esta escuela.',
+      message: activo
+        ? 'Libro activado para esta escuela.'
+        : 'Libro desactivado para esta escuela.',
       data: { escuelaId, libroId, activo, titulo: el.libro?.titulo },
     };
   }
@@ -855,7 +926,8 @@ export class EscuelasService {
     );
     return {
       message: 'Escuelas con sus libros obtenidas correctamente.',
-      description: 'Cada escuela puede tener el mismo libro asignado; las asignaciones son independientes por escuela.',
+      description:
+        'Cada escuela puede tener el mismo libro asignado; las asignaciones son independientes por escuela.',
       total: data.length,
       data,
     };
@@ -949,9 +1021,7 @@ export class EscuelasService {
       select: ['id', 'escuelaId'],
     });
     if (!alumno) {
-      throw new NotFoundException(
-        `No se encontró el alumno con ID ${alumnoId}`,
-      );
+      throw new NotFoundException(`No se encontró el alumno con ID ${alumnoId}`);
     }
     return Number(alumno.escuelaId);
   }
@@ -999,7 +1069,8 @@ export class EscuelasService {
     const existe = await this.alumnoLibroRepository.findOne({
       where: { alumnoId, libroId },
     });
-    return !!existe;
+    if (!existe) return false;
+    return this.licenciasService.accesoLibroActivoSegunLicencia(alumnoId, libroId);
   }
 
   /**
@@ -1011,192 +1082,65 @@ export class EscuelasService {
     libroId: number,
     context?: DesasignarLibroContext,
   ) {
-    const asignacion = await this.alumnoLibroRepository.findOne({
-      where: { alumnoId, libroId },
-      relations: ['alumno'],
-    });
-    if (!asignacion) {
-      throw new NotFoundException('No se encontró la asignación libro-alumno.');
-    }
-
-    if (context?.escuelaIdRestriccion != null) {
-      if (Number(asignacion.alumno?.escuelaId) !== Number(context.escuelaIdRestriccion)) {
-        throw new ForbiddenException('Solo puedes desasignar libros de alumnos de tu escuela.');
-      }
-    }
-
-    if (context?.maestroId != null) {
-      const enClase = await this.dataSource.getRepository(AlumnoMaestro).findOne({
-        where: {
-          maestroId: context.maestroId,
-          alumnoId,
-          fechaFin: IsNull(),
-        },
-      });
-      if (!enClase) {
-        const mgList = await this.maestroGrupoRepository.find({
-          where: { maestroId: context.maestroId },
-          relations: ['grupo'],
-        });
-        if (!asignacion.alumno || !alumnoPerteneceAGrupos(asignacion.alumno, mgList)) {
-          throw new ForbiddenException('Solo puedes desasignar libros de alumnos de tus grupos.');
-        }
-      }
-    }
-
-    await this.alumnoLibroRepository.remove(asignacion);
-    const accion = context?.escuelaIdRestriccion != null ? 'director_desasignar_libro' : context?.maestroId != null ? 'maestro_desasignar_libro' : null;
-    if (accion && context?.auditContext) {
-      await this.auditService.log(accion, {
-        usuarioId: context.auditContext.usuarioId ?? null,
-        ip: context.auditContext.ip ?? null,
-        detalles: `alumnoId=${alumnoId} libroId=${libroId}`,
-      });
-    }
-    return {
-      message: 'Libro desasignado correctamente.',
-      description: 'El alumno ya no verá este libro en "Mis libros".',
-    };
+    return this.desasignarLibroAlumnoUseCase.execute(alumnoId, libroId, context);
   }
 
   /**
    * Actualizar progreso de lectura del alumno en un libro.
    */
   async crearAnotacionAlumno(alumnoId: number, dto: CrearAnotacionDto) {
-    if (dto.offsetFin <= dto.offsetInicio) {
-      throw new BadRequestException('offsetFin debe ser mayor a offsetInicio.');
-    }
-
-    const [alumno, libroAsignado, segmento] = await Promise.all([
-      this.alumnoRepository.findOne({ where: { id: alumnoId }, select: ['id'] }),
-      this.alumnoLibroRepository.findOne({
-        where: { alumnoId, libroId: dto.libroId },
-        select: ['id'],
-      }),
-      this.segmentoRepository.findOne({
-        where: { id: dto.segmentoId },
-        select: ['id', 'libroId', 'contenido'],
-      }),
-    ]);
-
-    if (!alumno) {
-      throw new NotFoundException('Alumno no encontrado.');
-    }
-    if (!libroAsignado) {
-      throw new ForbiddenException('No tienes asignado este libro.');
-    }
-    if (!segmento) {
-      throw new NotFoundException('Segmento no encontrado.');
-    }
-    if (Number(segmento.libroId) !== Number(dto.libroId)) {
-      throw new BadRequestException('El segmento no pertenece al libro enviado.');
-    }
-
-    const largo = (segmento.contenido || '').length;
-    if (dto.offsetInicio < 0 || dto.offsetFin > largo) {
-      throw new BadRequestException('Offsets fuera del rango del contenido del segmento.');
-    }
-
-    if (dto.tipo === 'highlight' && !dto.color) {
-      throw new BadRequestException('Para tipo "highlight" debes enviar color.');
-    }
-    if (dto.tipo === 'comentario' && (!dto.comentario || dto.comentario.trim().length === 0)) {
-      throw new BadRequestException('Para tipo "comentario" debes enviar comentario.');
-    }
-
-    const anotacion = this.anotacionRepository.create({
-      alumnoId,
-      libroId: dto.libroId,
-      segmentoId: dto.segmentoId,
-      tipo: dto.tipo,
-      textoSeleccionado: dto.textoSeleccionado,
-      offsetInicio: dto.offsetInicio,
-      offsetFin: dto.offsetFin,
-      color: dto.tipo === 'highlight' ? dto.color ?? null : null,
-      comentario: dto.tipo === 'comentario' ? (dto.comentario ?? '').trim() : null,
-    });
-    const guardada = await this.anotacionRepository.save(anotacion);
-
-    return {
-      message: 'Anotación guardada correctamente.',
-      data: guardada,
-    };
+    return this.alumnoAnotacionesProgresoService.crearAnotacionAlumno(alumnoId, dto);
   }
 
   async eliminarAnotacionAlumno(alumnoId: number, anotacionId: number) {
-    const anotacion = await this.anotacionRepository.findOne({
-      where: { id: anotacionId },
-      select: ['id', 'alumnoId'],
-    });
-    if (!anotacion) {
-      throw new NotFoundException('Anotación no encontrada.');
-    }
-    if (Number(anotacion.alumnoId) !== Number(alumnoId)) {
-      throw new ForbiddenException('No puedes eliminar anotaciones de otro alumno.');
-    }
-
-    await this.anotacionRepository.delete({ id: anotacionId });
-    return {
-      message: 'Anotación eliminada correctamente.',
-      data: { id: anotacionId },
-    };
+    return this.alumnoAnotacionesProgresoService.eliminarAnotacionAlumno(alumnoId, anotacionId);
   }
 
   async listarAnotacionesAlumnoPorLibro(alumnoId: number, libroId: number) {
-    const existeAsignacion = await this.alumnoLibroRepository.findOne({
-      where: { alumnoId, libroId },
-      select: ['id'],
-    });
-    if (!existeAsignacion) {
-      throw new ForbiddenException('No tienes asignado este libro.');
-    }
-
-    const data = await this.anotacionRepository.find({
-      where: { alumnoId, libroId },
-      order: { creadoEn: 'ASC' },
-    });
-
-    return {
-      message: 'Anotaciones obtenidas correctamente.',
-      total: data.length,
-      data,
-    };
+    return this.alumnoAnotacionesProgresoService.listarAnotacionesAlumnoPorLibro(alumnoId, libroId);
   }
 
-  /**
-   * Actualizar progreso de lectura del alumno en un libro.
-   */
   async actualizarProgresoLibro(
     alumnoId: number,
     libroId: number,
     dto: { porcentaje?: number; ultimoSegmentoId?: number },
   ) {
-    let asignacion = await this.alumnoLibroRepository.findOne({
-      where: { alumnoId, libroId },
-      relations: ['libro'],
-    });
-    if (!asignacion) {
-      throw new NotFoundException('No tienes asignado este libro.');
-    }
+    return this.alumnoAnotacionesProgresoService.actualizarProgresoLibro(alumnoId, libroId, dto);
+  }
 
-    if (dto.porcentaje !== undefined) {
-      asignacion.porcentaje = Math.max(0, Math.min(100, dto.porcentaje));
-    }
-    if (dto.ultimoSegmentoId !== undefined) {
-      asignacion.ultimoSegmentoId = dto.ultimoSegmentoId;
-    }
-    asignacion.ultimaLectura = new Date();
-    await this.alumnoLibroRepository.save(asignacion);
+  async obtenerEvaluacionSegmento(
+    alumnoId: number,
+    libroId: number,
+    segmentoId: number,
+    nivelSolicitado?: string,
+  ) {
+    return this.alumnoEvaluacionSegmentoService.obtenerEvaluacionSegmento(
+      alumnoId,
+      libroId,
+      segmentoId,
+      nivelSolicitado,
+    );
+  }
 
-    return {
-      message: 'Progreso actualizado correctamente.',
-      data: {
-        alumnoLibroId: asignacion.id,
-        libroId,
-        progreso: asignacion.porcentaje,
-        ultimoSegmentoId: asignacion.ultimoSegmentoId,
-        ultimaLectura: asignacion.ultimaLectura,
-      },
-    };
+  async responderEvaluacionSegmento(
+    alumnoId: number,
+    libroId: number,
+    segmentoId: number,
+    dto: { respuestas: Array<{ preguntaId: string; respuesta: string }>; nivel?: string },
+  ) {
+    return this.alumnoEvaluacionSegmentoService.responderEvaluacionSegmento(
+      alumnoId,
+      libroId,
+      segmentoId,
+      dto,
+    );
+  }
+
+  async crearReintentoEvaluacionSegmento(alumnoId: number, libroId: number, segmentoId: number) {
+    return this.alumnoEvaluacionSegmentoService.crearReintentoEvaluacionSegmento(
+      alumnoId,
+      libroId,
+      segmentoId,
+    );
   }
 }

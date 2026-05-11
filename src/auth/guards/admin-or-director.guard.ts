@@ -2,7 +2,7 @@
  * ============================================
  * GUARD: AdminOrDirectorGuard
  * ============================================
- * 
+ *
  * Guard que verifica que el usuario autenticado sea un administrador O un director.
  * Se usa para permitir que tanto admins como directores accedan a ciertas rutas.
  */
@@ -23,7 +23,9 @@ export class AdminOrDirectorGuard implements CanActivate {
     const esDirector = user.tipoPersona === 'director' && user.director;
 
     if (!esAdmin && !esDirector) {
-      throw new ForbiddenException('Solo los administradores o directores pueden acceder a esta ruta');
+      throw new ForbiddenException(
+        'Solo los administradores o directores pueden acceder a esta ruta',
+      );
     }
 
     return true;

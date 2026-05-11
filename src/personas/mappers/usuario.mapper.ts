@@ -26,12 +26,16 @@ export function mapPersonaToUsuarioListItem(p: Persona): UsuarioListItem {
     telefono: p.telefono ?? null,
     genero: p.genero ?? null,
     fechaNacimiento: p.fechaNacimiento
-      ? (p.fechaNacimiento instanceof Date ? p.fechaNacimiento.toISOString().split('T')[0] : String(p.fechaNacimiento).split('T')[0])
+      ? p.fechaNacimiento instanceof Date
+        ? p.fechaNacimiento.toISOString().split('T')[0]
+        : String(p.fechaNacimiento).split('T')[0]
       : null,
     tipoPersona: p.tipoPersona ?? 'desconocido',
     activo: p.activo ?? true,
     ultimaConexion: p.ultimaConexion
-      ? (p.ultimaConexion instanceof Date ? p.ultimaConexion.toISOString() : String(p.ultimaConexion))
+      ? p.ultimaConexion instanceof Date
+        ? p.ultimaConexion.toISOString()
+        : String(p.ultimaConexion)
       : null,
   };
   let rolId: number | undefined;

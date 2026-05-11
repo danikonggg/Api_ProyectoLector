@@ -18,6 +18,7 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
 
+
   api:
     build:
       context: .
@@ -29,10 +30,15 @@ services:
       PORT: "3000"
       REDIS_URL: redis://redis:6379
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/api_lector
-      JWT_SECRET: ${JWT_SECRET:-docker-dev-secret-key-min-32-chars-please-change-ok}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS is required}
       JWT_PERSONA_CACHE_TTL_MS: ${JWT_PERSONA_CACHE_TTL_MS:-30000}
       LIBROS_IMPORT_WORKER_CONCURRENCY: ${LIBROS_IMPORT_WORKER_CONCURRENCY:-2}
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      METRICS_TOKEN: ${METRICS_TOKEN:?METRICS_TOKEN is required}
+      SUPABASE_URL: ${SUPABASE_URL:?SUPABASE_URL is required}
+      SUPABASE_KEY: ${SUPABASE_KEY:?SUPABASE_KEY is required}
+      SUPABASE_BUCKET: ${SUPABASE_BUCKET:?SUPABASE_BUCKET is required}
     volumes:
       - pdfs_data:/usr/src/app/pdfs
     depends_on:
@@ -47,10 +53,14 @@ services:
       NODE_ENV: production
       REDIS_URL: redis://redis:6379
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/api_lector
-      JWT_SECRET: ${JWT_SECRET:-docker-dev-secret-key-min-32-chars-please-change-ok}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       JWT_PERSONA_CACHE_TTL_MS: ${JWT_PERSONA_CACHE_TTL_MS:-30000}
       LIBROS_IMPORT_WORKER_CONCURRENCY: ${LIBROS_IMPORT_WORKER_CONCURRENCY:-2}
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
       OTEL_SERVICE_NAME: api-lector-worker
+      SUPABASE_URL: ${SUPABASE_URL:?SUPABASE_URL is required}
+      SUPABASE_KEY: ${SUPABASE_KEY:?SUPABASE_KEY is required}
+      SUPABASE_BUCKET: ${SUPABASE_BUCKET:?SUPABASE_BUCKET is required}
     volumes:
       - pdfs_data:/usr/src/app/pdfs
     depends_on:

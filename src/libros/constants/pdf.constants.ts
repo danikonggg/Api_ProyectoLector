@@ -53,8 +53,7 @@ export const FOOTER_HEADER_PATTERNS = [
 ];
 
 /** Patrones para quitar marcadores de página embebidos (ej. "-- 1 of 35 --" en medio del texto). */
-export const PAGINA_EMBEBIDA =
-  /(?:\n|^)\s*--\s*\d{1,5}\s+(?:of|de)\s+\d{1,5}\s*--\s*(?=\n|$)/gi;
+export const PAGINA_EMBEBIDA = /(?:\n|^)\s*--\s*\d{1,5}\s+(?:of|de)\s+\d{1,5}\s*--\s*(?=\n|$)/gi;
 
 /** Línea de índice: "Texto ...................... 11" -> queda solo "Texto". */
 export const LINEA_INDICE = /^(.+?)\s*[.\s]{3,}\s*\d{1,5}\s*$/;
@@ -105,4 +104,3 @@ export const COMILLAS_UNICODE = [
   ['\u2013', '-'], // en-dash
   ['\u2014', '-'], // em-dash
 ];
-

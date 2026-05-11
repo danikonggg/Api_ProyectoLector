@@ -5,13 +5,7 @@
  * Fragmento de texto del libro (~100–200 palabras, 1 idea).
  */
 
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  ManyToOne,
-  JoinColumn,
-} from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { Libro } from './libro.entity';
 import { Unidad } from './unidad.entity';
 

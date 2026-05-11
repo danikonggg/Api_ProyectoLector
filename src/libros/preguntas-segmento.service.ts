@@ -148,7 +148,9 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto extra, con esta 
       const preguntas = this.extraerPreguntasDeJson(raw);
 
       if (preguntas.length === 0) {
-        this.logger.warn(`Groq no devolvió preguntas válidas para segmento ${segmentoId}. Raw: ${raw.slice(0, 200)}`);
+        this.logger.warn(
+          `Groq no devolvió preguntas válidas para segmento ${segmentoId}. Raw: ${raw.slice(0, 200)}`,
+        );
         return {
           success: false,
           segmentoId,
@@ -157,7 +159,9 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto extra, con esta 
         };
       }
 
-      this.logger.log(`Preguntas generadas: segmento=${segmentoId}, nivel=${nivel}, cantidad=${preguntas.length}`);
+      this.logger.log(
+        `Preguntas generadas: segmento=${segmentoId}, nivel=${nivel}, cantidad=${preguntas.length}`,
+      );
       return {
         success: true,
         segmentoId,
@@ -179,9 +183,7 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto extra, con esta 
   /**
    * Genera las preguntas para los 3 niveles en UNA sola llamada a Groq (más rápido).
    */
-  async generarPreguntas3Niveles(
-    segmentoId: number,
-  ): Promise<{
+  async generarPreguntas3Niveles(segmentoId: number): Promise<{
     success: boolean;
     basico?: string[];
     intermedio?: string[];
@@ -235,7 +237,9 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto extra:
         const parsed = this.extraerPreguntas3NivelesDeJson(raw);
 
         if (!parsed) {
-          this.logger.warn(`Groq no devolvió JSON válido para segmento ${segmentoId}. Raw: ${raw.slice(0, 200)}`);
+          this.logger.warn(
+            `Groq no devolvió JSON válido para segmento ${segmentoId}. Raw: ${raw.slice(0, 200)}`,
+          );
           return { success: false, error: 'No se pudieron generar preguntas válidas.' };
         }
 
@@ -245,7 +249,9 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto extra:
         const err = error as { status?: number };
         if (err?.status === 429 && intento < MAX_REINTENTOS - 1) {
           const delay = RETRY_DELAY_BASE_MS * Math.pow(2, intento);
-          this.logger.warn(`Rate limit (429) segmento ${segmentoId}. Reintento ${intento + 2}/${MAX_REINTENTOS} en ${delay}ms`);
+          this.logger.warn(
+            `Rate limit (429) segmento ${segmentoId}. Reintento ${intento + 2}/${MAX_REINTENTOS} en ${delay}ms`,
+          );
           await sleep(delay);
         } else {
           const message = error instanceof Error ? error.message : String(error);
@@ -342,7 +348,9 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto extra:
 
     const totalGuardadas = resultados.reduce((a, r) => a + r.guardadas, 0);
     const totalErrores = resultados.reduce((a, r) => a + r.errores, 0);
-    this.logger.log(`Libro ${libroId}: preguntas listas. Guardadas=${totalGuardadas}, niveles fallidos=${totalErrores}.`);
+    this.logger.log(
+      `Libro ${libroId}: preguntas listas. Guardadas=${totalGuardadas}, niveles fallidos=${totalErrores}.`,
+    );
   }
 
   /**
@@ -364,7 +372,10 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto extra:
       select: ['segmentoId', 'nivel', 'textoPregunta'],
     });
 
-    const porSegmento: Record<number, { basico: string[]; intermedio: string[]; avanzado: string[] }> = {};
+    const porSegmento: Record<
+      number,
+      { basico: string[]; intermedio: string[]; avanzado: string[] }
+    > = {};
     for (const segId of segmentoIds) {
       porSegmento[segId] = { basico: [], intermedio: [], avanzado: [] };
     }
@@ -380,10 +391,7 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto extra:
   /**
    * Obtiene las preguntas desde BD para un segmento y nivel.
    */
-  async getPreguntasDesdeDb(
-    segmentoId: number,
-    nivel: NivelPregunta,
-  ): Promise<string[]> {
+  async getPreguntasDesdeDb(segmentoId: number, nivel: NivelPregunta): Promise<string[]> {
     const filas = await this.preguntaSegmentoRepository.find({
       where: { segmentoId, nivel },
       order: { orden: 'ASC' },

@@ -43,10 +43,7 @@ export class LibrosPdfService {
     try {
       const pdfjs = await import('pdfjs-dist');
       const pdfjsMain = require.resolve('pdfjs-dist');
-      const workerPath = path.join(
-        path.dirname(pdfjsMain),
-        'pdf.worker.mjs',
-      );
+      const workerPath = path.join(path.dirname(pdfjsMain), 'pdf.worker.mjs');
       pdfjs.GlobalWorkerOptions.workerSrc = `file://${workerPath}`;
       this.workerSrcInitialized = true;
     } catch {
@@ -101,9 +98,9 @@ export class LibrosPdfService {
       return null;
     }
 
-    const getDocument = (pdfjs.default?.getDocument ?? pdfjs.getDocument) as (
-      src: unknown,
-    ) => { promise: Promise<unknown> };
+    const getDocument = (pdfjs.default?.getDocument ?? pdfjs.getDocument) as (src: unknown) => {
+      promise: Promise<unknown>;
+    };
 
     const uint8 = new Uint8Array(buffer);
 
@@ -123,11 +120,7 @@ export class LibrosPdfService {
       const msg = (e as Error)?.message ?? String(e);
       const lower = msg.toLowerCase();
 
-      if (
-        lower.includes('password') ||
-        lower.includes('contraseña') ||
-        lower.includes('encrypt')
-      ) {
+      if (lower.includes('password') || lower.includes('contraseña') || lower.includes('encrypt')) {
         throw new BadRequestException(
           'El PDF está protegido con contraseña. Sube una versión sin protección.',
         );
@@ -143,9 +136,7 @@ export class LibrosPdfService {
           'El PDF parece estar dañado o tener un formato no soportado. Prueba con otro archivo.',
         );
       }
-      throw new BadRequestException(
-        `No se pudo leer el PDF: ${msg.slice(0, 120)}`,
-      );
+      throw new BadRequestException(`No se pudo leer el PDF: ${msg.slice(0, 120)}`);
     }
 
     const numPaginas = pdfDoc.numPages;
@@ -201,7 +192,7 @@ export class LibrosPdfService {
       getText: () => Promise<{ text: string; total: number }>;
     };
     try {
-      const mod = require('pdf-parse');
+      const mod: any = await import('pdf-parse');
       PDFParse = mod.PDFParse ?? mod.default?.PDFParse ?? mod;
       if (typeof PDFParse !== 'function') {
         throw new Error('PDFParse no encontrado');
@@ -219,11 +210,7 @@ export class LibrosPdfService {
     } catch (e: unknown) {
       const msg = (e as Error)?.message ?? String(e);
       const lower = msg.toLowerCase();
-      if (
-        lower.includes('password') ||
-        lower.includes('contraseña') ||
-        lower.includes('encrypt')
-      ) {
+      if (lower.includes('password') || lower.includes('contraseña') || lower.includes('encrypt')) {
         throw new BadRequestException(
           'El PDF está protegido con contraseña. Sube una versión sin protección.',
         );
@@ -234,13 +221,9 @@ export class LibrosPdfService {
         lower.includes('corrupted') ||
         lower.includes('malformed')
       ) {
-        throw new BadRequestException(
-          'El PDF parece estar dañado. Prueba con otro archivo.',
-        );
+        throw new BadRequestException('El PDF parece estar dañado. Prueba con otro archivo.');
       }
-      throw new BadRequestException(
-        `No se pudo leer el PDF: ${msg.slice(0, 120)}`,
-      );
+      throw new BadRequestException(`No se pudo leer el PDF: ${msg.slice(0, 120)}`);
     }
 
     const texto = (result?.text ?? '').trim();
@@ -290,9 +273,7 @@ export class LibrosPdfService {
     const c = contenido.trim();
     if (!c) return;
     const palabras = this.contarPalabras(c);
-    const min = allowSmall
-      ? SEGMENTOS.MIN_WORDS_FLUSH_REST
-      : SEGMENTOS.MIN_WORDS_SEGMENT;
+    const min = allowSmall ? SEGMENTOS.MIN_WORDS_FLUSH_REST : SEGMENTOS.MIN_WORDS_SEGMENT;
     if (palabras < min) return;
     ordenRef.n += 1;
     segmentos.push({
@@ -307,19 +288,18 @@ export class LibrosPdfService {
    * Obtiene párrafos (doble salto) y, si no hay ninguno útil, un único bloque (texto sin \n\n).
    */
   private obtenerParrafos(texto: string): string[] {
-    const porParrafo = texto.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
+    const porParrafo = texto
+      .split(/\n\n+/)
+      .map((p) => p.trim())
+      .filter(Boolean);
     const filtrados = porParrafo.filter((p) => {
       return (
-        p.length > SEGMENTOS.MIN_LEN_PARRAFO &&
-        this.contarPalabras(p) > SEGMENTOS.MIN_WORDS_PARRAFO
+        p.length > SEGMENTOS.MIN_LEN_PARRAFO && this.contarPalabras(p) > SEGMENTOS.MIN_WORDS_PARRAFO
       );
     });
     if (filtrados.length > 0) return filtrados;
     const total = this.contarPalabras(texto);
-    if (
-      total >= SEGMENTOS.MIN_WORDS_PARRAFO &&
-      texto.trim().length > SEGMENTOS.MIN_LEN_PARRAFO
-    ) {
+    if (total >= SEGMENTOS.MIN_WORDS_PARRAFO && texto.trim().length > SEGMENTOS.MIN_LEN_PARRAFO) {
       return [texto.trim()];
     }
     return [];
@@ -328,10 +308,7 @@ export class LibrosPdfService {
   /**
    * Divide un bloque grande por oraciones (. ! ? … ¿ ¡ y dobles saltos) y luego en chunks de ~target palabras.
    */
-  private dividirPorOracionesYPalabras(
-    texto: string,
-    targetPalabras: number,
-  ): string[] {
+  private dividirPorOracionesYPalabras(texto: string, targetPalabras: number): string[] {
     const partes: string[] = [];
     const raw = texto.trim();
     if (!raw) return partes;
@@ -376,10 +353,7 @@ export class LibrosPdfService {
       }
     }
 
-    if (
-      acu.trim() &&
-      this.contarPalabras(acu) >= SEGMENTOS.MIN_WORDS_FLUSH_REST
-    ) {
+    if (acu.trim() && this.contarPalabras(acu) >= SEGMENTOS.MIN_WORDS_FLUSH_REST) {
       partes.push(acu.trim());
     }
 
@@ -413,9 +387,7 @@ export class LibrosPdfService {
 
     const palabrasTotal = this.contarPalabras(texto);
     const palabrasPorPagina =
-      numPaginas > 0
-        ? Math.max(1, Math.ceil(palabrasTotal / numPaginas))
-        : 0;
+      numPaginas > 0 ? Math.max(1, Math.ceil(palabrasTotal / numPaginas)) : 0;
     let palabrasEnPagina = 0;
     let paginaActual = 1;
 
@@ -449,10 +421,7 @@ export class LibrosPdfService {
             acu = '';
             palabrasEnPagina = 0;
           } else {
-            const partes = this.dividirPorOracionesYPalabras(
-              p,
-              SEGMENTOS.TARGET_WORDS,
-            );
+            const partes = this.dividirPorOracionesYPalabras(p, SEGMENTOS.TARGET_WORDS);
             const acuMasPrimera = acu + '\n\n' + (partes[0] ?? '');
             const palAcuPrimera = this.contarPalabras(acuMasPrimera);
 
@@ -504,10 +473,7 @@ export class LibrosPdfService {
           flush(p, paginaActual);
           palabrasEnPagina += palabras;
         } else {
-          const chunks = this.dividirPorOracionesYPalabras(
-            p,
-            SEGMENTOS.TARGET_WORDS,
-          );
+          const chunks = this.dividirPorOracionesYPalabras(p, SEGMENTOS.TARGET_WORDS);
           for (const c of chunks) {
             flush(c, paginaActual);
             palabrasEnPagina += this.contarPalabras(c);

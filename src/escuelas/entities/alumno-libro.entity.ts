@@ -6,13 +6,7 @@
  * Maestro o Director asigna; el alumno solo ve libros asignados.
  */
 
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  ManyToOne,
-  JoinColumn,
-} from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { Alumno } from '../../personas/entities/alumno.entity';
 import { Libro } from '../../libros/entities/libro.entity';
 import { Segmento } from '../../libros/entities/segmento.entity';

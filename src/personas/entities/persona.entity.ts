@@ -2,18 +2,13 @@
  * ============================================
  * ENTIDAD: Persona
  * ============================================
- * 
+ *
  * Entidad principal que representa a cualquier persona en el sistema.
- * Todas las demás entidades (Administrador, Padre, Alumno, Maestro) 
+ * Todas las demás entidades (Administrador, Padre, Alumno, Maestro)
  * están relacionadas con Persona mediante una relación uno-a-uno.
  */
 
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  OneToOne,
-} from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, OneToOne } from 'typeorm';
 import { Exclude } from 'class-transformer';
 import { Administrador } from './administrador.entity';
 import { Padre } from './padre.entity';
@@ -47,8 +42,8 @@ export class Persona {
   @Column({ name: 'genero', type: 'varchar', length: 30, nullable: true })
   genero: string;
 
-  // Campos adicionales para autenticación
-  // NOTA: Estos campos deben agregarse a la base de datos ejecutando el script migrations/add_auth_fields.sql
+  // Autenticación: columnas en PostgreSQL; esquema base en migrations/complete_database_setup.sql
+  // o migraciones incrementales en migrations/ (p. ej. add_ultima_conexion_persona.sql).
   @Exclude()
   @Column({ name: 'password', type: 'varchar', length: 255, nullable: true, select: false })
   password: string;

@@ -1,11 +1,5 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiBearerAuth,
-  ApiQuery,
-} from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { AuditService } from './audit.service';
 import { AdminGuard } from '../auth/guards/admin.guard';
 
@@ -47,10 +41,7 @@ export class AuditController {
   })
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'Solo administradores' })
-  async findAll(
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ) {
+  async findAll(@Query('page') page?: string, @Query('limit') limit?: string) {
     const pageNum = page ? parseInt(page, 10) : undefined;
     const limitNum = limit ? parseInt(limit, 10) : undefined;
     return await this.auditService.findAll(pageNum, limitNum);
@@ -65,7 +56,8 @@ export class AuditController {
   @ApiTags('Solo Administrador')
   @ApiOperation({
     summary: 'Métricas de conexión por horas',
-    description: 'Conectados últimas 24h, 48h, 7 días, 30 días. Sin conexión: nunca, más de 7 días, más de 30 días. Por rol.',
+    description:
+      'Conectados últimas 24h, 48h, 7 días, 30 días. Sin conexión: nunca, más de 7 días, más de 30 días. Por rol.',
   })
   @ApiResponse({ status: 200, description: 'Métricas por rol y totales' })
   async metricasConexiones() {
@@ -82,10 +74,7 @@ export class AuditController {
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiResponse({ status: 200, description: 'Lista de logins recientes' })
-  async ultimasConexiones(
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ) {
+  async ultimasConexiones(@Query('page') page?: string, @Query('limit') limit?: string) {
     const pageNum = page ? parseInt(page, 10) : undefined;
     const limitNum = limit ? parseInt(limit, 10) : undefined;
     return await this.auditService.findUltimasConexiones(pageNum, limitNum);

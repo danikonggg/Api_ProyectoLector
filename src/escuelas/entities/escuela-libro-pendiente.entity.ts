@@ -7,13 +7,7 @@
  * Solo cuando la escuela canjea se crea Escuela_Libro.
  */
 
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  ManyToOne,
-  JoinColumn,
-} from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { Escuela } from '../../personas/entities/escuela.entity';
 import { Libro } from '../../libros/entities/libro.entity';
 

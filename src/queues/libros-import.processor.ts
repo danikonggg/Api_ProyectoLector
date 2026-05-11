@@ -3,8 +3,6 @@ import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import * as fs from 'fs/promises';
-import * as path from 'path';
 import { LibroProcesamientoService } from '../libros/libro-procesamiento.service';
 import { Libro } from '../libros/entities/libro.entity';
 import {
@@ -16,10 +14,8 @@ import type { LibrosImportJobPayload } from './interfaces/libros-import-job.inte
 import { LIBRO_ESTADO } from '../libros/constants/libro-estado.constants';
 import { RedisService } from '../infra/redis/redis.service';
 import { AuditService } from '../audit/audit.service';
-import {
-  getLibrosImportTracer,
-  runWithJobTraceContext,
-} from '../infra/telemetry/trace-context';
+import { getLibrosImportTracer, runWithJobTraceContext } from '../infra/telemetry/trace-context';
+import { SupabaseStorageService } from '../libros/supabase-storage.service';
 
 @Processor(LIBROS_IMPORT_QUEUE, {
   concurrency: Number(process.env.LIBROS_IMPORT_WORKER_CONCURRENCY ?? 2),
@@ -29,6 +25,7 @@ export class LibrosImportProcessor extends WorkerHost {
 
   constructor(
     private readonly libroProcesamiento: LibroProcesamientoService,
+    private readonly supabaseStorage: SupabaseStorageService,
     private readonly redis: RedisService,
     @InjectRepository(Libro) private readonly libroRepo: Repository<Libro>,
     private readonly auditService: AuditService,
@@ -57,9 +54,7 @@ export class LibrosImportProcessor extends WorkerHost {
 
     const locked = await this.redis.acquireLock(lockKey, lockTtl);
     if (!locked) {
-      this.logger.warn(
-        `Job ${job.id}: lock activo para libro ${libroId}, reintento más tarde.`,
-      );
+      this.logger.warn(`Job ${job.id}: lock activo para libro ${libroId}, reintento más tarde.`);
       throw new Error(
         `[libro-import] lock not acquired for libro=${libroId} (otro worker o job en curso)`,
       );
@@ -80,8 +75,7 @@ export class LibrosImportProcessor extends WorkerHost {
         return;
       }
 
-      const abs = path.join(process.cwd(), rutaPdfRelativa);
-      const buffer = await fs.readFile(abs);
+      const buffer = await this.supabaseStorage.descargarArchivo(rutaPdfRelativa);
 
       const resultado = await this.libroProcesamiento.procesar({
         buffer,
@@ -102,9 +96,7 @@ export class LibrosImportProcessor extends WorkerHost {
         detalles: `${final!.titulo} (id: ${final!.id}, codigo: ${codigo}) [async]`,
       });
 
-      this.logger.log(
-        `Libro ${libroId} OK job=${job.id} segmentos=${resultado.numSegmentos}`,
-      );
+      this.logger.log(`Libro ${libroId} OK job=${job.id} segmentos=${resultado.numSegmentos}`);
     } catch (e) {
       const msg = (e as Error)?.message ?? String(e);
       await this.libroProcesamiento.marcarError(libroId, msg);

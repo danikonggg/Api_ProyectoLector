@@ -21,12 +21,9 @@ export function buildLoggerParams(
   const level = config.get<string>('LOG_LEVEL', 'info');
   const logFile = config.get<string>('LOG_FILE')?.trim();
   const httpSummary = config.get<string>('LOG_HTTP_SUMMARY', 'true') !== 'false';
-  const autoLog =
-    enableHttp && config.get<string>('HTTP_AUTO_LOGGING', 'true') !== 'false';
+  const autoLog = enableHttp && config.get<string>('HTTP_AUTO_LOGGING', 'true') !== 'false';
 
-  const streams: pino.StreamEntry[] = [
-    { level: level as pino.Level, stream: process.stdout },
-  ];
+  const streams: pino.StreamEntry[] = [{ level: level as pino.Level, stream: process.stdout }];
   if (logFile) {
     const dir = dirname(logFile);
     if (dir && dir !== '.' && !existsSync(dir)) {

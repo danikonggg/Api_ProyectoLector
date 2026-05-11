@@ -2,16 +2,11 @@
  * ============================================
  * ENTIDAD: Escuela
  * ============================================
- * 
+ *
  * Representa una escuela en el sistema.
  */
 
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  OneToMany,
-} from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, OneToMany } from 'typeorm';
 import { Alumno } from './alumno.entity';
 import { Maestro } from './maestro.entity';
 import { Director } from './director.entity';

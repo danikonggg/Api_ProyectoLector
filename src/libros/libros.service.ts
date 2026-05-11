@@ -6,14 +6,7 @@
  * Pipeline rediseñado: validación robusta, detección de capítulos, estados finos.
  */
 
-import {
-  Injectable,
-  NotFoundException,
-  ConflictException,
-  BadRequestException,
-  Logger,
-  Optional,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, Logger, Optional } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -27,7 +20,7 @@ import { EscuelaLibroPendiente } from '../escuelas/entities/escuela-libro-pendie
 import { LibroProcesamientoService } from './libro-procesamiento.service';
 import { LibroUploadValidationService } from './libro-upload-validation.service';
 import { LibrosPdfImagenesService } from './libros-pdf-imagenes.service';
-import { PdfStorageService } from './pdf-storage.service';
+import { SupabaseStorageService } from './supabase-storage.service';
 import { CargarLibroDto } from './dto/cargar-libro.dto';
 import { v4 as uuidv4 } from 'uuid';
 import { AuditService } from '../audit/audit.service';
@@ -36,6 +29,7 @@ import { RedisService } from '../infra/redis/redis.service';
 import { LIBROS_IMPORT_QUEUE, librosImportJobId } from '../queues/libros-import.constants';
 import type { LibrosImportJobPayload } from '../queues/interfaces/libros-import-job.interface';
 import { injectTraceContextForJob } from '../infra/telemetry/trace-context';
+import { GlosarioSegmentoService } from './glosario-segmento.service';
 
 export interface AuditContext {
   usuarioId?: number | null;
@@ -51,8 +45,6 @@ export class LibrosService {
     private readonly libroRepository: Repository<Libro>,
     @InjectRepository(Unidad)
     private readonly unidadRepository: Repository<Unidad>,
-    @InjectRepository(Segmento)
-    private readonly segmentoRepository: Repository<Segmento>,
     @InjectRepository(Materia)
     private readonly materiaRepository: Repository<Materia>,
     @InjectRepository(EscuelaLibro)
@@ -62,10 +54,12 @@ export class LibrosService {
     private readonly libroProcesamientoService: LibroProcesamientoService,
     private readonly uploadValidation: LibroUploadValidationService,
     private readonly librosPdfImagenesService: LibrosPdfImagenesService,
-    private readonly pdfStorageService: PdfStorageService,
+    private readonly pdfStorageService: SupabaseStorageService,
     private readonly auditService: AuditService,
     private readonly redisService: RedisService,
-    @Optional() @InjectQueue(LIBROS_IMPORT_QUEUE)
+    private readonly glosarioSegmentoService: GlosarioSegmentoService,
+    @Optional()
+    @InjectQueue(LIBROS_IMPORT_QUEUE)
     private readonly librosImportQueue?: Queue,
   ) {}
 
@@ -94,14 +88,11 @@ export class LibrosService {
         where: { id: dto.materiaId },
       });
       if (!materia) {
-        throw new NotFoundException(
-          `No se encontró la materia con ID ${dto.materiaId}`,
-        );
+        throw new NotFoundException(`No se encontró la materia con ID ${dto.materiaId}`);
       }
     }
 
-    const codigo =
-      dto.codigo?.trim() || `LIB-${Date.now()}-${uuidv4().slice(0, 8)}`;
+    const codigo = dto.codigo?.trim() || `LIB-${Date.now()}-${uuidv4().slice(0, 8)}`;
     const existente = await this.libroRepository.findOne({ where: { codigo } });
     if (existente) {
       throw new ConflictException(
@@ -128,11 +119,7 @@ export class LibrosService {
     const useAsync = this.redisService.enabled && this.librosImportQueue != null;
 
     if (useAsync) {
-      const rutaPdfRelativa = await this.pdfStorageService.guardar(
-        buffer,
-        libro.id,
-        codigo,
-      );
+      const rutaPdfRelativa = await this.pdfStorageService.guardar(buffer, libro.id, codigo);
       const payload: LibrosImportJobPayload = {
         libroId: libro.id,
         codigo,
@@ -194,9 +181,7 @@ export class LibrosService {
         libro.id,
         (e as Error)?.message ?? String(e),
       );
-      this.logger.error(
-        `Libro id=${libro.id} falló: ${(e as Error)?.message ?? e}`,
-      );
+      this.logger.error(`Libro id=${libro.id} falló: ${(e as Error)?.message ?? e}`);
       throw e;
     }
   }
@@ -204,9 +189,7 @@ export class LibrosService {
   /**
    * Obtener estado actual del libro (para flujo async o debugging).
    */
-  async obtenerEstado(
-    id: number,
-  ): Promise<{
+  async obtenerEstado(id: number): Promise<{
     message: string;
     data: {
       id: number;
@@ -240,7 +223,10 @@ export class LibrosService {
   /**
    * Listar libros con paginación.
    */
-  async listar(page = 1, limit = 50): Promise<{
+  async listar(
+    page = 1,
+    limit = 50,
+  ): Promise<{
     message: string;
     total: number;
     data: Libro[];
@@ -257,7 +243,9 @@ export class LibrosService {
       .take(limit)
       .getMany();
 
-    this.logger.log(`GET /libros → page=${page}, limit=${limit}, total=${total}, returned=${data.length}`);
+    this.logger.log(
+      `GET /libros → page=${page}, limit=${limit}, total=${total}, returned=${data.length}`,
+    );
     return {
       message: 'Libros obtenidos correctamente.',
       total,
@@ -284,8 +272,11 @@ export class LibrosService {
       throw new NotFoundException(`No se encontró el libro con ID ${id}`);
     }
 
-    const numSegmentos = libro.unidades?.reduce((acc, u) => acc + (u.segmentos?.length ?? 0), 0) ?? 0;
-    this.logger.log(`GET /libros/${id} → "${libro.titulo}", ${libro.unidades?.length ?? 0} unidades, ${numSegmentos} segmentos`);
+    const numSegmentos =
+      libro.unidades?.reduce((acc, u) => acc + (u.segmentos?.length ?? 0), 0) ?? 0;
+    this.logger.log(
+      `GET /libros/${id} → "${libro.titulo}", ${libro.unidades?.length ?? 0} unidades, ${numSegmentos} segmentos`,
+    );
 
     if (libro.unidades?.length) {
       libro.unidades.sort((a, b) => Number(a.orden) - Number(b.orden));
@@ -297,10 +288,24 @@ export class LibrosService {
     }
 
     // Preguntas por segmento desactivadas (se agregarán después)
-    const preguntasVacias = { basico: [] as string[], intermedio: [] as string[], avanzado: [] as string[] };
+    const preguntasVacias = {
+      basico: [] as string[],
+      intermedio: [] as string[],
+      avanzado: [] as string[],
+    };
+    const idsSegmentos: number[] = [];
     for (const u of libro.unidades ?? []) {
       for (const seg of u.segmentos ?? []) {
-        (seg as Segmento & { preguntas?: object }).preguntas = preguntasVacias;
+        idsSegmentos.push(seg.id);
+      }
+    }
+    const mapaGlosario =
+      await this.glosarioSegmentoService.obtenerMapaGlosarioPorSegmentos(idsSegmentos);
+
+    for (const u of libro.unidades ?? []) {
+      for (const seg of u.segmentos ?? []) {
+        (seg as Segmento & { preguntas?: object; glosario?: object }).preguntas = preguntasVacias;
+        (seg as Segmento & { glosario?: object }).glosario = mapaGlosario.get(seg.id) ?? [];
       }
     }
 
@@ -362,7 +367,9 @@ export class LibrosService {
     await this.libroRepository.save(libro);
     if (!activo) {
       await this.escuelaLibroRepository.update({ libroId: id }, { activo: false });
-      this.logger.log(`Libro id=${id} desactivado globalmente; asignaciones en escuelas desactivadas.`);
+      this.logger.log(
+        `Libro id=${id} desactivado globalmente; asignaciones en escuelas desactivadas.`,
+      );
     }
     await this.auditService.log('libro_activo_global', {
       usuarioId: auditContext?.usuarioId ?? null,
@@ -370,7 +377,9 @@ export class LibrosService {
       detalles: `libro id=${id}, activo=${activo}`,
     });
     return {
-      message: activo ? 'Libro activado globalmente.' : 'Libro desactivado globalmente y en todas las escuelas.',
+      message: activo
+        ? 'Libro activado globalmente.'
+        : 'Libro desactivado globalmente y en todas las escuelas.',
       data: { id: libro.id, titulo: libro.titulo, activo: libro.activo },
     };
   }
@@ -415,7 +424,10 @@ export class LibrosService {
    * Activar o desactivar este libro en una escuela concreta (desde la pantalla del libro).
    */
   async setLibroActivoEnEscuela(libroId: number, escuelaId: number, activo: boolean) {
-    const libro = await this.libroRepository.findOne({ where: { id: libroId }, select: ['id', 'titulo'] });
+    const libro = await this.libroRepository.findOne({
+      where: { id: libroId },
+      select: ['id', 'titulo'],
+    });
     if (!libro) {
       throw new NotFoundException(`No se encontró el libro con ID ${libroId}`);
     }
@@ -432,8 +444,16 @@ export class LibrosService {
     await this.escuelaLibroRepository.save(el);
     this.logger.log(`Libro ${libroId} / escuela ${escuelaId}: activo=${activo}.`);
     return {
-      message: activo ? 'Libro activado para esta escuela.' : 'Libro desactivado para esta escuela.',
-      data: { libroId, escuelaId, activo, tituloLibro: libro.titulo, nombreEscuela: el.escuela?.nombre },
+      message: activo
+        ? 'Libro activado para esta escuela.'
+        : 'Libro desactivado para esta escuela.',
+      data: {
+        libroId,
+        escuelaId,
+        activo,
+        tituloLibro: libro.titulo,
+        nombreEscuela: el.escuela?.nombre,
+      },
     };
   }
 
@@ -464,14 +484,14 @@ export class LibrosService {
   }
 
   /**
-   * Obtiene la ruta absoluta del PDF guardado para un libro (para streaming).
+   * Obtiene la URL pública del PDF guardado para un libro.
    */
-  async rutaPdfAbsoluta(id: number): Promise<string | null> {
+  async obtenerUrlPdf(id: number): Promise<string | null> {
     const libro = await this.libroRepository.findOne({
       where: { id },
       select: ['id', 'rutaPdf'],
     });
     if (!libro?.rutaPdf) return null;
-    return this.pdfStorageService.rutaAbsoluta(libro.rutaPdf);
+    return this.pdfStorageService.obtenerUrl(libro.rutaPdf);
   }
 }

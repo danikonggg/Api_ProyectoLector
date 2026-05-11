@@ -1,12 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
+import { RedisService } from './infra/redis/redis.service';
 
 @Injectable()
 export class AppService {
   constructor(
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    private readonly redisService: RedisService,
   ) {}
 
   getHello(): string {
@@ -19,6 +21,7 @@ export class AppService {
     uptime: number;
     checks: {
       database: 'up' | 'down';
+      redis: 'up' | 'down' | 'skipped';
       memory?: { heapUsed: number; heapTotal: number };
     };
   }> {
@@ -30,8 +33,15 @@ export class AppService {
       // DB no disponible
     }
 
+    let redisStatus: 'up' | 'down' | 'skipped' = 'skipped';
+    if (this.redisService.enabled) {
+      redisStatus = (await this.redisService.ping()) ? 'up' : 'down';
+    }
+
     const mem = process.memoryUsage();
-    const status = dbStatus === 'up' ? 'ok' : 'degraded';
+    const dbOk = dbStatus === 'up';
+    const redisOk = redisStatus === 'skipped' || redisStatus === 'up';
+    const status: 'ok' | 'degraded' = dbOk && redisOk ? 'ok' : 'degraded';
 
     return {
       status,
@@ -39,6 +49,7 @@ export class AppService {
       uptime: process.uptime(),
       checks: {
         database: dbStatus,
+        redis: redisStatus,
         memory: { heapUsed: mem.heapUsed, heapTotal: mem.heapTotal },
       },
     };

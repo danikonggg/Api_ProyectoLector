@@ -27,7 +27,7 @@ Backend NestJS para sistema educativo: roles (Administrador, Director, Maestro, 
 ## 1. Resumen estructural
 
 - **Patrón:** NestJS modular; capas Controller → Service → Repository (TypeORM). Sin CQRS ni eventos de dominio.
-- **Módulos:** Auth, Personas, Escuelas, Libros, Director, Maestros, Admin, Audit. Dependencias lineales; Admin y Director consumen PersonasService y EscuelasService.
+- **Módulos:** Auth, Personas, Escuelas, Libros, Director, Maestros, Admin, Audit. Dependencias lineales; Admin y Director consumen servicios de `PersonasModule` (registro, consulta, gestión) y `EscuelasService`.
 - **Organización:** `src/` por dominio (auth/, personas/, escuelas/, libros/, director/, maestros/, admin/, common/). Entidades en cada dominio o en `personas/entities/`.
 - **Base de datos:** PostgreSQL vía TypeORM; migraciones SQL en `migrations/`. No hay soft delete; se usa campo **activo** en Persona, Director, Maestro, Alumno, Libro, EscuelaLibro.
 
@@ -41,15 +41,15 @@ Backend NestJS para sistema educativo: roles (Administrador, Director, Maestro, 
 |------|-----------|
 | `main.ts` | Bootstrap, ValidationPipe, CORS, Swagger (no prod), Throttler global, body limit 1MB |
 | `app.module.ts` | Importa todos los módulos en orden: Auth → Personas → Escuelas → Maestros → Libros → Audit → Admin → Director |
-| `app.controller.ts` | Rutas raíz: `/`, `/health`, `/groq-test` |
+| `app.controller.ts` | Rutas raíz: `/`, `/health`, `/metrics` (token). Groq: `/groq-test` (módulo aparte) |
 
 ### Módulos y responsabilidades
 
 | Módulo | Controlador | Servicios principales | Exporta |
 |--------|-------------|------------------------|---------|
 | **Auth** | AuthController | AuthService, JwtStrategy | AuthService |
-| **Personas** | PersonasController | PersonasService, CargaMasivaService | PersonasService, CargaMasivaService |
-| **Escuelas** | EscuelasController | EscuelasService | EscuelasService |
+| **Personas** | PersonasController | RegistroPersonasService, ConsultaPersonasService, GestionPersonasService, CargaMasivaService, VinculacionPadresService | Igual que columna servicios (exportados para Admin y otros módulos) |
+| **Escuelas** | EscuelasController, AlumnoAnotacionesController | EscuelasService, use-cases, estadísticas, consulta escuela, evaluación por segmento | EscuelasService |
 | **Libros** | LibrosController | LibrosService, LibrosPdfService, PdfStorageService, PreguntasSegmentoService | LibrosService |
 | **Director** | DirectorController | DirectorService | — |
 | **Maestros** | MaestrosController | MaestrosService | MaestrosService |
@@ -378,14 +378,14 @@ Alumno (N) ──< Alumno_Libro >── (N) Libro       [porcentaje, ultimo_segm
 ### Validaciones importantes
 
 - **Máximo 5 administradores:** AuthService.registrarAdmin usa `MAX_ADMINS = 5`; lanza ConflictException si se alcanza.
-- **Máximo 3 directores por escuela:** PersonasService.registrarDirector usa `MAX_DIRECTORES_POR_ESCUELA = 3`; lanza ConflictException si la escuela ya tiene 3.
+- **Máximo 3 directores por escuela:** `RegistroPersonasService.registrarDirector` usa `MAX_DIRECTORES_POR_ESCUELA = 3`; lanza ConflictException si la escuela ya tiene 3.
 - **Email único:** En todos los registros (padre, alumno, maestro, director, admin) se comprueba que el correo no esté en uso.
 - **Escuela activa:** Login rechaza director/maestro/alumno si la escuela está inactiva o suspendida.
 
 ### Transacciones
 
-- **PersonasService.registrarPadre:** transacción que crea Persona + Padre y vincula alumnos (padreId).
-- **PersonasService.eliminarUsuarioPorId:** transacción que borra rol (AlumnoMaestro, Alumno, Maestro, Director, Admin, Padre) y luego Persona.
+- **RegistroPersonasService.registrarPadre:** transacción que crea Persona + Padre y vincula alumnos (padreId).
+- **GestionPersonasService.eliminarUsuarioPorId:** transacción que borra rol (AlumnoMaestro, Alumno, Maestro, Director, Admin, Padre) y luego Persona.
 - No hay transacciones en otorgar/canjear libro ni en asignar/desasignar libro.
 
 ### Automatizaciones
@@ -400,14 +400,14 @@ Alumno (N) ──< Alumno_Libro >── (N) Libro       [porcentaje, ultimo_segm
 
 | Riesgo | Severidad | Descripción |
 |--------|-----------|-------------|
-| **IDOR en desasignar libro** | Alta | `DELETE /director/desasignar-libro/:alumnoId/:libroId` y `DELETE /maestros/desasignar-libro/:alumnoId/:libroId` no comprueban que el alumno pertenezca a la escuela del director/maestro. Un director o maestro puede desasignar libros a alumnos de otra escuela. |
+| **Desasignar libro (director/maestro)** | Mitigado | `DesasignarLibroAlumnoUseCase` exige `escuelaIdRestriccion` (director, vía `getEscuelaId`) o valida relación alumno–maestro/grupos (`maestroId`). |
 | **Fuga en /escuelas/lista** | Media | El director puede ver lista de todas las escuelas (id, nombre). Recomendación: restringir a su escuela. |
 
 ### Escalabilidad y rendimiento
 
 | Riesgo | Severidad | Descripción |
 |--------|-----------|-------------|
-| **Carga de PDF síncrona** | Media | POST /libros/cargar procesa el PDF en la request (límite 50 MB); no hay cola. Puede bloquear y causar timeouts. |
+| **Carga de PDF** | Media | Con Redis + worker: encolado asíncrono. Sin Redis (dev): procesamiento en la request; puede bloquear. Throttle dedicado en POST /libros/cargar. |
 | **Posible N+1** | Media | Listados con find + relations (ej. escuelas con libros, alumnos con padre) pueden generar N+1 en listas grandes. |
 | **Sin transacciones en flujo libro** | Baja | Canje y asignación/desasignación no usan transacción; en fallos parciales podría quedar estado inconsistente. |
 
@@ -418,7 +418,7 @@ Alumno (N) ──< Alumno_Libro >── (N) Libro       [porcentaje, ultimo_segm
 
 ### Rutas públicas
 
-- `/health`, `/groq-test` están expuestas. Asegurar que no devuelvan información sensible.
+- `/health` y `/metrics` (con token) son públicos; `/groq-test` exige admin JWT. Evitar datos sensibles en respuestas de health.
 
 ---
 

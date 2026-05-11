@@ -6,13 +6,7 @@
  * Un maestro gestiona a sus alumnos a través de esta relación.
  */
 
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  ManyToOne,
-  JoinColumn,
-} from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { Alumno } from './alumno.entity';
 import { Maestro } from './maestro.entity';
 import { Materia } from './materia.entity';

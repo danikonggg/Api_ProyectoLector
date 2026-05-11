@@ -2,19 +2,12 @@
  * ============================================
  * ENTIDAD: Alumno
  * ============================================
- * 
+ *
  * Representa a un estudiante/alumno del sistema.
  * Relacionado con Persona y Escuela.
  */
 
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  OneToOne,
-  JoinColumn,
-  ManyToOne,
-} from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, OneToOne, JoinColumn, ManyToOne } from 'typeorm';
 import { Persona } from './persona.entity';
 import { Escuela } from './escuela.entity';
 import { Padre } from './padre.entity';

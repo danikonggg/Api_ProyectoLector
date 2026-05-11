@@ -7,14 +7,22 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 
 export class UpdateMateriaDto {
-  @ApiPropertyOptional({ example: 'Matemáticas', description: 'Nombre de la materia', maxLength: 100 })
+  @ApiPropertyOptional({
+    example: 'Matemáticas',
+    description: 'Nombre de la materia',
+    maxLength: 100,
+  })
   @IsOptional()
   @IsString()
   @MaxLength(100, { message: 'El nombre no puede superar 100 caracteres' })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   nombre?: string;
 
-  @ApiPropertyOptional({ example: 'Matemáticas para primaria', description: 'Descripción', maxLength: 255 })
+  @ApiPropertyOptional({
+    example: 'Matemáticas para primaria',
+    description: 'Descripción',
+    maxLength: 255,
+  })
   @IsOptional()
   @IsString()
   @MaxLength(255, { message: 'La descripción no puede superar 255 caracteres' })

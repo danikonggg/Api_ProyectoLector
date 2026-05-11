@@ -2,19 +2,12 @@
  * ============================================
  * ENTIDAD: Padre
  * ============================================
- * 
+ *
  * Representa a un padre/tutor de alumnos.
  * Relacionado con Persona mediante relación uno-a-uno.
  */
 
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  OneToOne,
-  JoinColumn,
-  OneToMany,
-} from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, OneToOne, JoinColumn, OneToMany } from 'typeorm';
 import { Persona } from './persona.entity';
 import { Alumno } from './alumno.entity';
 

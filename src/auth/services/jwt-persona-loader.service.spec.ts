@@ -36,4 +36,50 @@ describe('JwtPersonaLoaderService', () => {
     expect(findOne.mock.calls[1][0].relations).toEqual(['alumno']);
     expect((p as Persona).alumno?.id).toBe(99);
   });
+
+  it('falla si usuario no existe en auth row', async () => {
+    const findOne = jest.fn().mockResolvedValueOnce(null);
+    const del = jest.fn();
+
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        JwtPersonaLoaderService,
+        { provide: getRepositoryToken(Persona), useValue: { findOne } },
+        { provide: ConfigService, useValue: { get: () => '0' } },
+        {
+          provide: RedisService,
+          useValue: { enabled: true, raw: {}, get: jest.fn(), setex: jest.fn(), del },
+        },
+      ],
+    }).compile();
+
+    const svc = moduleRef.get(JwtPersonaLoaderService);
+    await expect(svc.loadPrincipal(99)).rejects.toThrow('Usuario no encontrado');
+    expect(del).toHaveBeenCalled();
+  });
+
+  it('falla si usuario está inactivo', async () => {
+    const findOne = jest.fn().mockResolvedValueOnce({
+      id: 1,
+      activo: false,
+      tipoPersona: 'alumno',
+    });
+    const del = jest.fn();
+
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        JwtPersonaLoaderService,
+        { provide: getRepositoryToken(Persona), useValue: { findOne } },
+        { provide: ConfigService, useValue: { get: () => '0' } },
+        {
+          provide: RedisService,
+          useValue: { enabled: true, raw: {}, get: jest.fn(), setex: jest.fn(), del },
+        },
+      ],
+    }).compile();
+
+    const svc = moduleRef.get(JwtPersonaLoaderService);
+    await expect(svc.loadPrincipal(1)).rejects.toThrow('Usuario inactivo');
+    expect(del).toHaveBeenCalled();
+  });
 });

@@ -4,8 +4,7 @@
  *
  * Uso:
  *   k6 run load-test-k6.js
- *e 
- * Ajusta USUARIOS_SIMULTANEOS y las credenciales abajo
+ * Credenciales: exporta K6_LOGIN_EMAIL y K6_LOGIN_PASSWORD (no las pongas en el archivo).
  */
 
 import http from 'k6/http';
@@ -13,8 +12,10 @@ import { check, sleep } from 'k6';
 
 // ========== CONFIGURA AQUÍ ==========
 const USUARIOS_SIMULTANEOS = 1000;
-const BASE_URL = 'http://localhost:3000';
-const CREDENTIALS = { email: 'daniel@gmail.com', password: 'dani123' };
+const BASE_URL = __ENV.K6_BASE_URL || 'http://localhost:3000';
+const LOGIN_EMAIL = __ENV.K6_LOGIN_EMAIL || '';
+const LOGIN_PASSWORD = __ENV.K6_LOGIN_PASSWORD || '';
+const CREDENTIALS = () => ({ email: LOGIN_EMAIL, password: LOGIN_PASSWORD });
 /** Rampa: subir de 0 a USUARIOS_SIMULTANEOS en este tiempo (evita pico instantáneo) */
 const RAMP_UP_DURATION = '15s';
 /** Timeout por petición cuando el servidor va cargado */
@@ -43,10 +44,16 @@ export const options = {
   },
 };
 
+export function setup() {
+  if (!LOGIN_EMAIL || !LOGIN_PASSWORD) {
+    throw new Error('Define K6_LOGIN_EMAIL y K6_LOGIN_PASSWORD en el entorno (sin credenciales en el repo).');
+  }
+}
+
 export default function () {
   const res = http.post(
     `${BASE_URL}/auth/login`,
-    JSON.stringify(CREDENTIALS),
+    JSON.stringify(CREDENTIALS()),
     {
       headers: { 'Content-Type': 'application/json' },
       timeout: REQUEST_TIMEOUT,

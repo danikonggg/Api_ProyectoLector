@@ -2,19 +2,12 @@
  * ============================================
  * ENTIDAD: Director
  * ============================================
- * 
+ *
  * Representa a un director/encargado de una escuela.
  * Relacionado con Persona y Escuela.
  */
 
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  OneToOne,
-  JoinColumn,
-  ManyToOne,
-} from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, OneToOne, JoinColumn, ManyToOne } from 'typeorm';
 import { Persona } from './persona.entity';
 import { Escuela } from './escuela.entity';
 

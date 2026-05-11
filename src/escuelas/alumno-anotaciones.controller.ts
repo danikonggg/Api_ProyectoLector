@@ -10,13 +10,7 @@ import {
   Request,
   UseGuards,
 } from '@nestjs/common';
-import {
-  ApiBearerAuth,
-  ApiOperation,
-  ApiParam,
-  ApiResponse,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { AlumnoGuard } from '../auth/guards/alumno.guard';
 import { EscuelasService } from './escuelas.service';
 import { CrearAnotacionDto } from './dto/crear-anotacion.dto';
@@ -37,10 +31,7 @@ export class AlumnoAnotacionesController {
   @ApiResponse({ status: 201, description: 'Anotación guardada.' })
   @ApiResponse({ status: 400, description: 'Datos inválidos.' })
   @ApiResponse({ status: 403, description: 'Libro no asignado al alumno.' })
-  async crearAnotacion(
-    @Request() req: { user?: ReqUser },
-    @Body() dto: CrearAnotacionDto,
-  ) {
+  async crearAnotacion(@Request() req: { user?: ReqUser }, @Body() dto: CrearAnotacionDto) {
     const alumnoId = req.user?.alumno?.id;
     if (!alumnoId) {
       throw new ForbiddenException('No se encontró el alumno.');

@@ -8,12 +8,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiBearerAuth,
-} from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
@@ -42,7 +37,8 @@ export class AuthController {
     schema: {
       example: {
         message: 'Login exitoso',
-        description: 'Usuario autenticado correctamente. Usa el access_token para acceder a endpoints protegidos.',
+        description:
+          'Usuario autenticado correctamente. Usa el access_token para acceder a endpoints protegidos.',
         access_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
         token_type: 'Bearer',
         expires_in: '24h',
@@ -56,8 +52,16 @@ export class AuthController {
     },
   })
   @ApiResponse({ status: 401, description: 'Credenciales inválidas' })
-  async login(@Body() loginDto: LoginDto, @Request() req: { ip?: string; headers?: Record<string, string | string[] | undefined> }) {
-    const ip = req.ip ?? (Array.isArray(req.headers?.['x-forwarded-for']) ? req.headers['x-forwarded-for'][0] : req.headers?.['x-forwarded-for']) ?? req.headers?.['x-real-ip'];
+  async login(
+    @Body() loginDto: LoginDto,
+    @Request() req: { ip?: string; headers?: Record<string, string | string[] | undefined> },
+  ) {
+    const ip =
+      req.ip ??
+      (Array.isArray(req.headers?.['x-forwarded-for'])
+        ? req.headers['x-forwarded-for'][0]
+        : req.headers?.['x-forwarded-for']) ??
+      req.headers?.['x-real-ip'];
     return await this.authService.login(loginDto, typeof ip === 'string' ? ip : undefined);
   }
 
@@ -95,9 +99,20 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'Solo administradores' })
   @ApiResponse({ status: 409, description: 'Email ya registrado o límite alcanzado' })
-  async registrarAdmin(@Body() registroDto: RegistroAdminDto, @Request() req: { ip?: string; headers?: Record<string, string | string[] | undefined> }) {
-    const ip = req.ip ?? (Array.isArray(req.headers?.['x-forwarded-for']) ? req.headers['x-forwarded-for'][0] : req.headers?.['x-forwarded-for']) ?? req.headers?.['x-real-ip'];
-    return await this.authService.registrarAdmin(registroDto, typeof ip === 'string' ? ip : undefined);
+  async registrarAdmin(
+    @Body() registroDto: RegistroAdminDto,
+    @Request() req: { ip?: string; headers?: Record<string, string | string[] | undefined> },
+  ) {
+    const ip =
+      req.ip ??
+      (Array.isArray(req.headers?.['x-forwarded-for'])
+        ? req.headers['x-forwarded-for'][0]
+        : req.headers?.['x-forwarded-for']) ??
+      req.headers?.['x-real-ip'];
+    return await this.authService.registrarAdmin(
+      registroDto,
+      typeof ip === 'string' ? ip : undefined,
+    );
   }
 
   /**

@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  OnModuleDestroy,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, OnModuleDestroy, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 import { redisConnectionOptions } from '../../queues/redis-connection.factory';
@@ -19,7 +15,9 @@ export class RedisService implements OnModuleDestroy {
     this.enabled = !!(url || host);
 
     if (!this.enabled) {
-      this.logger.warn('Redis deshabilitado (sin REDIS_URL ni REDIS_HOST). JWT cache y colas no disponibles.');
+      this.logger.warn(
+        'Redis deshabilitado (sin REDIS_URL ni REDIS_HOST). JWT cache y colas no disponibles.',
+      );
       return;
     }
 
@@ -63,6 +61,17 @@ export class RedisService implements OnModuleDestroy {
 
   async releaseLock(key: string): Promise<void> {
     await this.del(key);
+  }
+
+  /** Para health checks: true si Redis responde PONG. */
+  async ping(): Promise<boolean> {
+    if (!this.client) return false;
+    try {
+      const r = await this.client.ping();
+      return r === 'PONG';
+    } catch {
+      return false;
+    }
   }
 
   async onModuleDestroy(): Promise<void> {

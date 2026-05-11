@@ -24,8 +24,7 @@ import { buildLoggerParams } from '../config/pino-logger.config';
     LoggerModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) =>
-        buildLoggerParams(config, { http: false }),
+      useFactory: (config: ConfigService) => buildLoggerParams(config, { http: false }),
     }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],

@@ -26,4 +26,3 @@ export class RegistroPadreConHijoDto {
   @Type(() => RegistroAlumnoDto)
   hijo: RegistroAlumnoDto;
 }
-

@@ -11,14 +11,23 @@ import { Transform } from 'class-transformer';
 import { GRADO_MIN, GRADO_MAX, ID_MIN } from '../../common/constants/validation.constants';
 
 export class CargarLibroDto {
-  @ApiProperty({ example: 'Matemáticas 5to grado', description: 'Título del libro', maxLength: 150, required: true })
+  @ApiProperty({
+    example: 'Matemáticas 5to grado',
+    description: 'Título del libro',
+    maxLength: 150,
+    required: true,
+  })
   @IsString()
   @IsNotEmpty({ message: 'El título del libro es obligatorio' })
   @MaxLength(150, { message: 'El título no puede superar 150 caracteres' })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   titulo: string;
 
-  @ApiProperty({ example: 5, description: `Grado escolar (${GRADO_MIN}-${GRADO_MAX})`, required: true })
+  @ApiProperty({
+    example: 5,
+    description: `Grado escolar (${GRADO_MIN}-${GRADO_MAX})`,
+    required: true,
+  })
   @Transform(({ value }) => (value !== undefined && value !== '' ? parseInt(value, 10) : undefined))
   @IsInt({ message: 'El grado debe ser un número entero' })
   @IsNotEmpty({ message: 'El grado es obligatorio' })
@@ -33,14 +42,24 @@ export class CargarLibroDto {
   @Min(ID_MIN, { message: 'El ID de la materia debe ser un número positivo' })
   materiaId?: number;
 
-  @ApiProperty({ example: 'MAT5-2024', description: 'Código del libro', maxLength: 50, required: false })
+  @ApiProperty({
+    example: 'MAT5-2024',
+    description: 'Código del libro',
+    maxLength: 50,
+    required: false,
+  })
   @IsOptional()
   @IsString()
   @MaxLength(50, { message: 'El código no puede superar 50 caracteres' })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   codigo?: string;
 
-  @ApiProperty({ example: 'Libro de matemáticas para quinto grado', description: 'Descripción del libro', maxLength: 255, required: false })
+  @ApiProperty({
+    example: 'Libro de matemáticas para quinto grado',
+    description: 'Descripción del libro',
+    maxLength: 255,
+    required: false,
+  })
   @IsOptional()
   @IsString()
   @MaxLength(255, { message: 'La descripción no puede superar 255 caracteres' })

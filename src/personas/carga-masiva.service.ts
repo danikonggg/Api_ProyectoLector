@@ -19,7 +19,7 @@ import { Maestro } from './entities/maestro.entity';
 import { Escuela } from './entities/escuela.entity';
 import { Grupo } from '../escuelas/entities/grupo.entity';
 import { AuditService } from '../audit/audit.service';
-import type { AuditContext } from './personas.service';
+import type { AuditContext } from './services/registro-personas.service';
 
 export interface FilaAlumno {
   nombre: string;
@@ -44,7 +44,13 @@ export interface FilaMaestro {
 export interface ResultadoCarga {
   creados: number;
   errores: { fila: number; email?: string; mensaje: string }[];
-  credenciales: { nombre: string; apellido: string; email: string; password: string; tipo: string }[];
+  credenciales: {
+    nombre: string;
+    apellido: string;
+    email: string;
+    password: string;
+    tipo: string;
+  }[];
 }
 
 const CHARS_PASSWORD = 'abcdefghjkmnpqrstuvwxyz23456789';
@@ -98,6 +104,7 @@ export class CargaMasivaService {
     rows: (typeof CargaMasivaService.EXCEL_ROW)[],
     columnasRequeridas: string[],
   ): { headerRowIndex: number; headers: string[] } {
+    void columnasRequeridas;
     type ExcelRow = (string | number | Date | null | undefined)[];
     for (let r = 0; r < Math.min(5, rows.length); r++) {
       const row = (rows[r] ?? []) as ExcelRow;
@@ -138,7 +145,11 @@ export class CargaMasivaService {
     const rows = XLSX.utils.sheet_to_json<any[]>(sh, { header: 1, defval: '' });
     if (rows.length < 2) return [];
 
-    const { headerRowIndex, headers } = this.detectarFilaEncabezados(rows, ['nombre', 'email', 'correo']);
+    const { headerRowIndex, headers } = this.detectarFilaEncabezados(rows, [
+      'nombre',
+      'email',
+      'correo',
+    ]);
     if (headerRowIndex < 0) return [];
     const map: Record<string, number> = {};
     const idxNombre = buscarColumna(headers, ['nombre']);
@@ -149,7 +160,7 @@ export class CargaMasivaService {
     map['apellidopaterno'] = idxApellidoP >= 0 ? idxApellidoP : idxNombre;
     map['apellidomaterno'] = idxApellidoM;
     map['email'] = idxEmail;
-    ;['password', 'grado', 'grupo', 'cicloescolar'].forEach((k) => {
+    ['password', 'grado', 'grupo', 'cicloescolar'].forEach((k) => {
       const idx = buscarColumna(headers, [k]);
       if (idx >= 0) map[k] = idx;
     });
@@ -159,7 +170,12 @@ export class CargaMasivaService {
     for (let i = headerRowIndex + 1; i < rows.length; i++) {
       const row = (rows[i] ?? []) as ExcelRow;
       const nombre = map['nombre'] >= 0 ? String(row[map['nombre']] ?? '').trim() : '';
-      const email = map['email'] >= 0 ? String(row[map['email']] ?? '').trim().toLowerCase() : '';
+      const email =
+        map['email'] >= 0
+          ? String(row[map['email']] ?? '')
+              .trim()
+              .toLowerCase()
+          : '';
       if (!nombre || !email) continue;
 
       const gradoVal = (map['grado'] ?? -1) >= 0 ? row[map['grado']] : undefined;
@@ -169,16 +185,22 @@ export class CargaMasivaService {
         grado = Number.isInteger(n) ? n : 1;
       }
 
-      const apellidoP = map['apellidopaterno'] >= 0 ? String(row[map['apellidopaterno']] ?? '').trim() : nombre;
+      const apellidoP =
+        map['apellidopaterno'] >= 0 ? String(row[map['apellidopaterno']] ?? '').trim() : nombre;
       result.push({
         nombre,
         apellidoPaterno: apellidoP || nombre,
-        apellidoMaterno: map['apellidomaterno'] >= 0 ? String(row[map['apellidomaterno']] ?? '').trim() : '',
+        apellidoMaterno:
+          map['apellidomaterno'] >= 0 ? String(row[map['apellidomaterno']] ?? '').trim() : '',
         email,
-        password: map['password'] >= 0 ? String(row[map['password']] ?? '').trim() || undefined : undefined,
+        password:
+          map['password'] >= 0 ? String(row[map['password']] ?? '').trim() || undefined : undefined,
         grado,
         grupo: map['grupo'] >= 0 ? String(row[map['grupo']] ?? '').trim() || undefined : undefined,
-        cicloEscolar: map['cicloescolar'] >= 0 ? String(row[map['cicloescolar']] ?? '').trim() || undefined : undefined,
+        cicloEscolar:
+          map['cicloescolar'] >= 0
+            ? String(row[map['cicloescolar']] ?? '').trim() || undefined
+            : undefined,
       });
     }
     return result;
@@ -194,7 +216,11 @@ export class CargaMasivaService {
     const rows = XLSX.utils.sheet_to_json<any[]>(sh, { header: 1, defval: '' });
     if (rows.length < 2) return [];
 
-    const { headerRowIndex, headers } = this.detectarFilaEncabezados(rows, ['nombre', 'email', 'correo']);
+    const { headerRowIndex, headers } = this.detectarFilaEncabezados(rows, [
+      'nombre',
+      'email',
+      'correo',
+    ]);
     if (headerRowIndex < 0) return [];
     const map: Record<string, number> = {};
     const idxNombre = buscarColumna(headers, ['nombre']);
@@ -205,7 +231,7 @@ export class CargaMasivaService {
     map['apellidopaterno'] = idxApellidoP >= 0 ? idxApellidoP : idxNombre;
     map['apellidomaterno'] = idxApellidoM;
     map['email'] = idxEmail;
-    ;['password', 'especialidad'].forEach((k) => {
+    ['password', 'especialidad'].forEach((k) => {
       const idx = buscarColumna(headers, [k]);
       if (idx >= 0) map[k] = idx;
     });
@@ -215,17 +241,28 @@ export class CargaMasivaService {
     for (let i = headerRowIndex + 1; i < rows.length; i++) {
       const row = (rows[i] ?? []) as ExcelRow;
       const nombre = map['nombre'] >= 0 ? String(row[map['nombre']] ?? '').trim() : '';
-      const email = map['email'] >= 0 ? String(row[map['email']] ?? '').trim().toLowerCase() : '';
+      const email =
+        map['email'] >= 0
+          ? String(row[map['email']] ?? '')
+              .trim()
+              .toLowerCase()
+          : '';
       if (!nombre || !email) continue;
 
-      const apellidoP = map['apellidopaterno'] >= 0 ? String(row[map['apellidopaterno']] ?? '').trim() : nombre;
+      const apellidoP =
+        map['apellidopaterno'] >= 0 ? String(row[map['apellidopaterno']] ?? '').trim() : nombre;
       result.push({
         nombre,
         apellidoPaterno: apellidoP || nombre,
-        apellidoMaterno: map['apellidomaterno'] >= 0 ? String(row[map['apellidomaterno']] ?? '').trim() : '',
+        apellidoMaterno:
+          map['apellidomaterno'] >= 0 ? String(row[map['apellidomaterno']] ?? '').trim() : '',
         email,
-        password: map['password'] >= 0 ? String(row[map['password']] ?? '').trim() || undefined : undefined,
-        especialidad: map['especialidad'] >= 0 ? String(row[map['especialidad']] ?? '').trim() || undefined : undefined,
+        password:
+          map['password'] >= 0 ? String(row[map['password']] ?? '').trim() || undefined : undefined,
+        especialidad:
+          map['especialidad'] >= 0
+            ? String(row[map['especialidad']] ?? '').trim() || undefined
+            : undefined,
       });
     }
     return result;
@@ -350,7 +387,9 @@ export class CargaMasivaService {
   /**
    * Crea un código de vinculación para un alumno (fuera de transacción).
    */
-  private async crearCodigoVinculacionParaAlumno(alumnoId: number): Promise<AlumnoVinculacionPadre> {
+  private async crearCodigoVinculacionParaAlumno(
+    alumnoId: number,
+  ): Promise<AlumnoVinculacionPadre> {
     const codigo = this.generarCodigoVinculacion();
     const ahora = new Date();
     const expiraEn = new Date(ahora.getTime() + 100 * 24 * 60 * 60 * 1000); // 100 días
@@ -478,7 +517,9 @@ export class CargaMasivaService {
     const ws = wb.addWorksheet('Credenciales', { views: [{ state: 'frozen', ySplit: 1 }] });
 
     const colWidths = [22, 22, 32, 18, 12];
-    ['A', 'B', 'C', 'D', 'E'].forEach((col, i) => { ws.getColumn(col).width = colWidths[i]; });
+    ['A', 'B', 'C', 'D', 'E'].forEach((col, i) => {
+      ws.getColumn(col).width = colWidths[i];
+    });
 
     // Título
     ws.mergeCells('A1:E1');
@@ -498,7 +539,12 @@ export class CargaMasivaService {
       cell.font = { bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } };
       cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-      cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+      cell.border = {
+        top: { style: 'thin' },
+        left: { style: 'thin' },
+        bottom: { style: 'thin' },
+        right: { style: 'thin' },
+      };
     });
     headerRow.height = 22;
 
@@ -509,9 +555,15 @@ export class CargaMasivaService {
         const cell = row.getCell(i + 1);
         cell.value = val;
         cell.font = { size: 10, color: { argb: 'FF374151' } };
-        cell.fill = idx % 2 === 1 ? { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } } : undefined;
+        cell.fill =
+          idx % 2 === 1
+            ? { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } }
+            : undefined;
         cell.alignment = { vertical: 'middle', wrapText: true };
-        cell.border = { top: { style: 'thin', color: { argb: 'FFE5E7EB' } }, bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } } };
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+          bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+        };
       });
       row.height = 20;
     });
@@ -529,7 +581,9 @@ export class CargaMasivaService {
     const ws = wb.addWorksheet('Alumnos', { views: [{ state: 'frozen', ySplit: 2 }] });
 
     const colWidths = [18, 18, 18, 28, 14, 8, 10, 14];
-    'ABCDEFGH'.split('').forEach((col, i) => { ws.getColumn(col).width = colWidths[i]; });
+    'ABCDEFGH'.split('').forEach((col, i) => {
+      ws.getColumn(col).width = colWidths[i];
+    });
 
     // Título e instrucciones
     ws.mergeCells('A1:H1');
@@ -542,14 +596,24 @@ export class CargaMasivaService {
 
     ws.mergeCells('A2:H2');
     const infoCell = ws.getCell('A2');
-    infoCell.value = 'Complete las filas. Obligatorios: nombre, apellidoPaterno, apellidoMaterno, email. Password opcional (mín 6 caracteres). Grado y grupo asignan al alumno a un grupo (ej. grado 1, grupo A = 1A). CicloEscolar opcional.';
+    infoCell.value =
+      'Complete las filas. Obligatorios: nombre, apellidoPaterno, apellidoMaterno, email. Password opcional (mín 6 caracteres). Grado y grupo asignan al alumno a un grupo (ej. grado 1, grupo A = 1A). CicloEscolar opcional.';
     infoCell.font = { size: 9, italic: true, color: { argb: 'FF6B7280' } };
     infoCell.alignment = { wrapText: true, vertical: 'middle' };
     infoCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
     ws.getRow(2).height = 36;
 
     // Encabezados
-    const headers = ['nombre', 'apellidoPaterno', 'apellidoMaterno', 'email', 'password', 'grado', 'grupo', 'cicloEscolar'];
+    const headers = [
+      'nombre',
+      'apellidoPaterno',
+      'apellidoMaterno',
+      'email',
+      'password',
+      'grado',
+      'grupo',
+      'cicloEscolar',
+    ];
     const headerRow = ws.getRow(3);
     headers.forEach((h, i) => {
       const cell = headerRow.getCell(i + 1);
@@ -557,7 +621,12 @@ export class CargaMasivaService {
       cell.font = { bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF059669' } };
       cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-      cell.border = { top: { style: 'medium' }, left: { style: 'thin' }, bottom: { style: 'medium' }, right: { style: 'thin' } };
+      cell.border = {
+        top: { style: 'medium' },
+        left: { style: 'thin' },
+        bottom: { style: 'medium' },
+        right: { style: 'thin' },
+      };
     });
     headerRow.height = 24;
 
@@ -572,7 +641,10 @@ export class CargaMasivaService {
         const cell = row.getCell(i + 1);
         cell.value = val;
         cell.font = { size: 10, color: { argb: 'FF4B5563' } };
-        cell.fill = idx % 2 === 1 ? { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0FDF4' } } : undefined;
+        cell.fill =
+          idx % 2 === 1
+            ? { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0FDF4' } }
+            : undefined;
         cell.alignment = { vertical: 'middle' };
         cell.border = { bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } } };
       });
