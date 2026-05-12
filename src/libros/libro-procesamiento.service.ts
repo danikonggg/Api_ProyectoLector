@@ -7,11 +7,8 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common';
-import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
-import { Repository, DataSource, EntityManager } from 'typeorm';
-import { Libro } from './entities/libro.entity';
-import { Unidad } from './entities/unidad.entity';
-import { Segmento } from './entities/segmento.entity';
+import { PrismaService } from '../prisma/prisma.service';
+import { Prisma } from '@prisma/client';
 import { LibrosPdfService } from './libros-pdf.service';
 import { LibrosPdfImagenesService } from './libros-pdf-imagenes.service';
 import { SupabaseStorageService } from './supabase-storage.service';
@@ -24,7 +21,7 @@ export interface ProcesarLibroInput {
   buffer: Buffer;
   libroId: number;
   codigo: string;
-  usarUnidadesReales?: boolean; // true = detectar capítulos; false = "Unidad 1"
+  usarUnidadesReales?: boolean;
   /** Si el PDF ya está en disco (API + cola), no volver a escribir el archivo */
   rutaPdfPreexistente?: string | null;
 }
@@ -41,14 +38,7 @@ export class LibroProcesamientoService {
   private readonly logger = new Logger(LibroProcesamientoService.name);
 
   constructor(
-    @InjectRepository(Libro)
-    private readonly libroRepository: Repository<Libro>,
-    @InjectRepository(Unidad)
-    private readonly unidadRepository: Repository<Unidad>,
-    @InjectRepository(Segmento)
-    private readonly segmentoRepository: Repository<Segmento>,
-    @InjectDataSource()
-    private readonly dataSource: DataSource,
+    private readonly prisma: PrismaService,
     private readonly librosPdfService: LibrosPdfService,
     private readonly librosPdfImagenesService: LibrosPdfImagenesService,
     private readonly pdfStorageService: SupabaseStorageService,
@@ -88,12 +78,15 @@ export class LibroProcesamientoService {
       : await this.pdfStorageService.guardar(buffer, libroId, codigo);
 
     try {
-      await this.dataSource.transaction(async (manager: EntityManager) => {
-        await this.persistirUnidadesYSegmentosEnTx(libroId, unidades, manager);
-        await manager.update(Libro, libroId, {
-          estado: LIBRO_ESTADO.LISTO,
-          numPaginas: resultado.numPaginas,
-          rutaPdf,
+      await this.prisma.$transaction(async (tx) => {
+        await this.persistirUnidadesYSegmentosEnTx(libroId, unidades, tx);
+        await tx.libro.update({
+          where: { id: BigInt(libroId) },
+          data: {
+            estado: LIBRO_ESTADO.LISTO,
+            numPaginas: BigInt(resultado.numPaginas),
+            rutaPdf,
+          },
         });
       });
     } catch (e) {
@@ -103,7 +96,6 @@ export class LibroProcesamientoService {
       throw e;
     }
 
-    // Generar imágenes de cada página (captura por página) para visualización tipo "mismo libro"
     try {
       await this.librosPdfImagenesService.guardarPaginasParaLibro(buffer, libroId, codigo);
     } catch (err) {
@@ -139,44 +131,45 @@ export class LibroProcesamientoService {
   }
 
   private async actualizarEstado(libroId: number, estado: string): Promise<void> {
-    await this.libroRepository.update(libroId, { estado });
+    await this.prisma.libro.update({ where: { id: BigInt(libroId) }, data: { estado } });
   }
 
   /**
-   * Persiste unidades y segmentos en transacción con bulk inserts (mejor rendimiento).
+   * Persiste unidades y segmentos en transacción con bulk inserts.
    */
   private async persistirUnidadesYSegmentosEnTx(
     libroId: number,
     unidades: UnidadConSegmentosDto[],
-    manager: EntityManager,
+    tx: Prisma.TransactionClient,
   ): Promise<void> {
-    const unidadesRepo = manager.getRepository(Unidad);
-    const segmentosRepo = manager.getRepository(Segmento);
+    const todosSegmentosData: Array<{
+      libroId: bigint;
+      unidadId: bigint;
+      contenido: string;
+      orden: bigint;
+      numeroPagina: bigint | null;
+      idExterno: string;
+    }> = [];
 
-    const entidadesUnidad = unidades.map((u) =>
-      unidadesRepo.create({ libroId, nombre: u.nombre, orden: u.orden }),
-    );
-    const savedUnidades = await unidadesRepo.save(entidadesUnidad);
+    for (const u of unidades) {
+      const unidad = await tx.unidad.create({
+        data: { libroId: BigInt(libroId), nombre: u.nombre, orden: BigInt(u.orden) },
+      });
 
-    const todosSegmentos: Partial<Segmento>[] = [];
-    for (let i = 0; i < savedUnidades.length; i++) {
-      const unidad = savedUnidades[i]!;
-      const dto = unidades[i]!;
-      for (const s of dto.segmentos) {
-        todosSegmentos.push(
-          segmentosRepo.create({
-            libroId,
-            unidadId: unidad.id,
-            contenido: s.contenido,
-            orden: s.orden,
-            numeroPagina: s.numeroPagina,
-            idExterno: s.idExterno,
-          }),
-        );
+      for (const s of u.segmentos) {
+        todosSegmentosData.push({
+          libroId: BigInt(libroId),
+          unidadId: unidad.id,
+          contenido: s.contenido,
+          orden: BigInt(s.orden),
+          numeroPagina: s.numeroPagina != null ? BigInt(s.numeroPagina) : null,
+          idExterno: s.idExterno ?? '',
+        });
       }
     }
-    if (todosSegmentos.length > 0) {
-      await segmentosRepo.save(todosSegmentos);
+
+    if (todosSegmentosData.length > 0) {
+      await tx.segmento.createMany({ data: todosSegmentosData });
     }
   }
 
@@ -184,9 +177,9 @@ export class LibroProcesamientoService {
    * Marca el libro como error y guarda el mensaje.
    */
   async marcarError(libroId: number, mensaje: string): Promise<void> {
-    await this.libroRepository.update(libroId, {
-      estado: LIBRO_ESTADO.ERROR,
-      mensajeError: mensaje,
+    await this.prisma.libro.update({
+      where: { id: BigInt(libroId) },
+      data: { estado: LIBRO_ESTADO.ERROR, mensajeError: mensaje },
     });
   }
 }

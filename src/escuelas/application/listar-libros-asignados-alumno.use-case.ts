@@ -1,47 +1,42 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { AlumnoLibro } from '../entities/alumno-libro.entity';
-import { LicenciaLibro } from '../../licencias/entities/licencia-libro.entity';
+import { PrismaService } from '../../prisma/prisma.service';
 
-/**
- * Caso de uso: libros asignados a un alumno (hexagonal mínimo — el repositorio se inyecta aquí, no en un god service).
- */
 @Injectable()
 export class ListarLibrosAsignadosAlumnoUseCase {
-  constructor(
-    @InjectRepository(AlumnoLibro)
-    private readonly alumnoLibroRepository: Repository<AlumnoLibro>,
-    @InjectRepository(LicenciaLibro)
-    private readonly licenciaLibroRepository: Repository<LicenciaLibro>,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async execute(alumnoId: number) {
-    const asignaciones = await this.alumnoLibroRepository.find({
-      where: { alumnoId },
-      relations: ['libro', 'libro.materia', 'ultimoSegmento'],
-      order: { fechaAsignacion: 'DESC' },
-    });
-
+    const alumnoIdBig = BigInt(alumnoId);
     const hoy = new Date();
     hoy.setHours(0, 0, 0, 0);
-    const hoyStr = hoy.toISOString().slice(0, 10);
-    const conLicenciaVigente = await this.licenciaLibroRepository
-      .createQueryBuilder('lic')
-      .where('lic.alumnoId = :alumnoId', { alumnoId })
-      .andWhere('lic.activa = true')
-      .andWhere('lic.fechaVencimiento >= :hoy', { hoy: hoyStr })
-      .select(['lic.libroId'])
-      .getMany();
-    const libroIdsPermitidos = new Set(conLicenciaVigente.map((r) => Number(r.libroId)));
 
+    const [asignaciones, licenciasVigentes] = await Promise.all([
+      this.prisma.alumnoLibro.findMany({
+        where: { alumnoId: alumnoIdBig },
+        include: {
+          libro: { include: { materia: true } },
+          ultimoSegmento: true,
+        },
+        orderBy: { fechaAsignacion: 'desc' },
+      }),
+      this.prisma.licenciaLibro.findMany({
+        where: {
+          alumnoId: alumnoIdBig,
+          activa: true,
+          fechaVencimiento: { gte: hoy },
+        },
+        select: { libroId: true },
+      }),
+    ]);
+
+    const libroIdsPermitidos = new Set(licenciasVigentes.map((r) => Number(r.libroId)));
     const visibles = asignaciones.filter((a) => libroIdsPermitidos.has(Number(a.libroId)));
 
     const data = visibles.map((a) => ({
       ...a.libro,
-      alumnoLibroId: a.id,
+      alumnoLibroId: Number(a.id),
       progreso: a.porcentaje,
-      ultimoSegmentoId: a.ultimoSegmentoId,
+      ultimoSegmentoId: a.ultimoSegmentoId != null ? Number(a.ultimoSegmentoId) : null,
       ultimaLectura: a.ultimaLectura,
       fechaAsignacion: a.fechaAsignacion,
     }));

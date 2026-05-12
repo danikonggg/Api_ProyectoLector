@@ -1,42 +1,28 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Alumno } from '../../personas/entities/alumno.entity';
-import { EscuelaLibro } from '../../escuelas/entities/escuela-libro.entity';
-import { AlumnoLibro } from '../../escuelas/entities/alumno-libro.entity';
-import { LicenciaLibro } from '../entities/licencia-libro.entity';
+import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class ListarLibrosDisponiblesUseCase {
-  constructor(
-    @InjectRepository(Alumno)
-    private readonly alumnoRepo: Repository<Alumno>,
-    @InjectRepository(EscuelaLibro)
-    private readonly escuelaLibroRepo: Repository<EscuelaLibro>,
-    @InjectRepository(AlumnoLibro)
-    private readonly alumnoLibroRepo: Repository<AlumnoLibro>,
-    @InjectRepository(LicenciaLibro)
-    private readonly licenciaRepo: Repository<LicenciaLibro>,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async execute(escuelaId: number, alumnoId: number) {
-    const alumno = await this.alumnoRepo.findOne({ where: { id: alumnoId } });
+    const alumno = await this.prisma.alumno.findUnique({ where: { id: BigInt(alumnoId) } });
     if (!alumno) throw new NotFoundException(`No se encontró el alumno con ID ${alumnoId}`);
     if (Number(alumno.escuelaId) !== Number(escuelaId)) {
       throw new BadRequestException('El alumno no pertenece a esta escuela.');
     }
 
-    const asignaciones = await this.escuelaLibroRepo.find({
-      where: { escuelaId, activo: true },
-      relations: ['libro', 'libro.materia'],
-      order: { fechaInicio: 'DESC' },
+    const asignaciones = await this.prisma.escuelaLibro.findMany({
+      where: { escuelaId: BigInt(escuelaId), activo: true },
+      include: { libro: { include: { materia: true } } },
+      orderBy: { fechaInicio: 'desc' },
     });
 
-    const yaAsignados = await this.alumnoLibroRepo.find({
-      where: { alumnoId },
-      select: ['libroId'],
+    const yaAsignados = await this.prisma.alumnoLibro.findMany({
+      where: { alumnoId: BigInt(alumnoId) },
+      select: { libroId: true },
     });
-    const idsAsignados = new Set(yaAsignados.map((x) => x.libroId));
+    const idsAsignados = new Set(yaAsignados.map((x) => Number(x.libroId)));
 
     const candidatas = asignaciones.filter((a) => {
       if (!a.libro || a.libro.activo === false) return false;
@@ -48,37 +34,39 @@ export class ListarLibrosDisponiblesUseCase {
       ) {
         return false;
       }
-      return !idsAsignados.has(a.libroId);
+      return !idsAsignados.has(Number(a.libroId));
     });
 
-    const libroIds = [...new Set(candidatas.map((a) => a.libroId))];
-    const hoyStr = new Date().toISOString().slice(0, 10);
-    const rows = libroIds.length
-      ? await this.licenciaRepo
-          .createQueryBuilder('lic')
-          .select('lic.libroId', 'libroId')
-          .addSelect('COUNT(*)', 'total')
-          .where('lic.escuelaId = :escuelaId', { escuelaId })
-          .andWhere('lic.libroId IN (:...libroIds)', { libroIds })
-          .andWhere('lic.activa = true')
-          .andWhere('lic.alumnoId IS NULL')
-          .andWhere('lic.fechaVencimiento >= :hoy', { hoy: hoyStr })
-          .groupBy('lic.libroId')
-          .getRawMany<{ libroId: string; total: string }>()
+    const libroIds = [...new Set(candidatas.map((a) => Number(a.libroId)))];
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+
+    const porLibro = libroIds.length
+      ? await this.prisma.licenciaLibro.groupBy({
+          by: ['libroId'],
+          where: {
+            escuelaId: BigInt(escuelaId),
+            libroId: { in: libroIds.map(BigInt) },
+            activa: true,
+            alumnoId: null,
+            fechaVencimiento: { gte: hoy },
+          },
+          _count: { libroId: true },
+        })
       : [];
 
     const libroIdsConLicencia = new Set(
-      rows.filter((r) => Number(r.total) > 0).map((r) => Number(r.libroId)),
+      porLibro.filter((r) => r._count.libroId > 0).map((r) => Number(r.libroId)),
     );
 
     const disponibles = candidatas
-      .filter((a) => libroIdsConLicencia.has(a.libroId))
+      .filter((a) => libroIdsConLicencia.has(Number(a.libroId)))
       .map((a) => ({
-        id: a.libro.id,
-        titulo: a.libro.titulo,
-        codigo: a.libro.codigo,
-        grado: a.libro.grado,
-        materia: a.libro.materia?.nombre ?? null,
+        id: Number(a.libro!.id),
+        titulo: a.libro!.titulo,
+        codigo: a.libro!.codigo,
+        grado: Number(a.libro!.grado),
+        materia: a.libro!.materia?.nombre ?? null,
       }));
 
     return {

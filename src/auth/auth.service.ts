@@ -1,10 +1,7 @@
 import { Injectable, UnauthorizedException, ConflictException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
-import { Persona } from '../personas/entities/persona.entity';
-import { Administrador } from '../personas/entities/administrador.entity';
+import { PrismaService } from '../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
 import { RegistroAdminDto } from './dto/registro-admin.dto';
 import { AuditService } from '../audit/audit.service';
@@ -15,45 +12,23 @@ export class AuthService {
   private readonly MAX_ADMINS = 5;
 
   constructor(
-    @InjectRepository(Persona)
-    private personaRepository: Repository<Persona>,
-    @InjectRepository(Administrador)
-    private administradorRepository: Repository<Administrador>,
+    private readonly prisma: PrismaService,
     private jwtService: JwtService,
     private readonly auditService: AuditService,
   ) {}
 
-  /**
-   * Validar credenciales y generar token JWT
-   */
   async login(loginDto: LoginDto, ip?: string) {
     this.logger.log(`Intento de login: ${loginDto.email}`);
 
-    const persona = await this.personaRepository.findOne({
+    const persona = await this.prisma.persona.findFirst({
       where: { correo: loginDto.email },
-      relations: [
-        'administrador',
-        'padre',
-        'alumno',
-        'alumno.escuela',
-        'maestro',
-        'maestro.escuela',
-        'director',
-        'director.escuela',
-      ],
-      select: [
-        'id',
-        'nombre',
-        'apellidoPaterno',
-        'apellidoMaterno',
-        'correo',
-        'telefono',
-        'fechaNacimiento',
-        'genero',
-        'password',
-        'tipoPersona',
-        'activo',
-      ],
+      include: {
+        administrador: true,
+        padre: true,
+        alumno: { include: { escuela: true } },
+        maestro: { include: { escuela: true } },
+        director: { include: { escuela: true } },
+      },
     });
 
     if (!persona) {
@@ -66,13 +41,12 @@ export class AuthService {
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
-    // Verificar contraseña
-    const isPasswordValid = await bcrypt.compare(loginDto.password, persona.password);
+    const isPasswordValid = await bcrypt.compare(loginDto.password, persona.password ?? '');
 
     if (!isPasswordValid) {
       this.logger.warn(`Login fallido: Contraseña incorrecta - ${loginDto.email}`);
       await this.auditService.log('login_fallido', {
-        usuarioId: persona.id,
+        usuarioId: Number(persona.id),
         ip: ip ?? null,
         detalles: `contraseña_incorrecta | ${persona.correo}`,
       });
@@ -82,55 +56,38 @@ export class AuthService {
     if (!persona.activo) {
       this.logger.warn(`Login fallido: Usuario inactivo - ${loginDto.email}`);
       await this.auditService.log('login_fallido', {
-        usuarioId: persona.id,
+        usuarioId: Number(persona.id),
         ip: ip ?? null,
         detalles: `usuario_inactivo | ${persona.correo}`,
       });
       throw new UnauthorizedException('Usuario inactivo');
     }
 
-    // Si es director, maestro o alumno: verificar que esté activo y que la escuela esté activa
     const escuelaInactivaMsg = 'Tu escuela no está activa. Contacta al administrador.';
     if (persona.director) {
-      const d = persona.director;
-      if (!d.activo || d.escuela?.estado === 'inactiva' || d.escuela?.estado === 'suspendida') {
-        this.logger.warn(`Login fallido: Director de escuela inactiva - ${loginDto.email}`);
-        await this.auditService.log('login_fallido', {
-          usuarioId: persona.id,
-          ip: ip ?? null,
-          detalles: `escuela_inactiva | ${persona.correo}`,
-        });
+      const d = persona.director as typeof persona.director & { escuela?: { estado?: string } };
+      if (!d.activo || (d as any).escuela?.estado === 'inactiva' || (d as any).escuela?.estado === 'suspendida') {
+        await this.auditService.log('login_fallido', { usuarioId: Number(persona.id), ip: ip ?? null, detalles: `escuela_inactiva | ${persona.correo}` });
         throw new UnauthorizedException(escuelaInactivaMsg);
       }
     }
     if (persona.maestro) {
-      const m = persona.maestro;
+      const m = persona.maestro as any;
       if (!m.activo || m.escuela?.estado === 'inactiva' || m.escuela?.estado === 'suspendida') {
-        this.logger.warn(`Login fallido: Maestro de escuela inactiva - ${loginDto.email}`);
-        await this.auditService.log('login_fallido', {
-          usuarioId: persona.id,
-          ip: ip ?? null,
-          detalles: `escuela_inactiva | ${persona.correo}`,
-        });
+        await this.auditService.log('login_fallido', { usuarioId: Number(persona.id), ip: ip ?? null, detalles: `escuela_inactiva | ${persona.correo}` });
         throw new UnauthorizedException(escuelaInactivaMsg);
       }
     }
     if (persona.alumno) {
-      const a = persona.alumno;
+      const a = persona.alumno as any;
       if (!a.activo || a.escuela?.estado === 'inactiva' || a.escuela?.estado === 'suspendida') {
-        this.logger.warn(`Login fallido: Alumno de escuela inactiva - ${loginDto.email}`);
-        await this.auditService.log('login_fallido', {
-          usuarioId: persona.id,
-          ip: ip ?? null,
-          detalles: `escuela_inactiva | ${persona.correo}`,
-        });
+        await this.auditService.log('login_fallido', { usuarioId: Number(persona.id), ip: ip ?? null, detalles: `escuela_inactiva | ${persona.correo}` });
         throw new UnauthorizedException(escuelaInactivaMsg);
       }
     }
 
-    // Generar token JWT
     const payload = {
-      sub: persona.id,
+      sub: Number(persona.id),
       email: persona.correo,
       tipoPersona: persona.tipoPersona,
     };
@@ -142,12 +99,15 @@ export class AuthService {
     );
 
     await this.auditService.log('login', {
-      usuarioId: persona.id,
+      usuarioId: Number(persona.id),
       ip: ip ?? null,
       detalles: persona.correo,
     });
 
-    await this.personaRepository.update({ id: persona.id }, { ultimaConexion: new Date() });
+    await this.prisma.persona.update({
+      where: { id: persona.id },
+      data: { ultimaConexion: new Date() },
+    });
 
     return {
       message: 'Login exitoso',
@@ -157,7 +117,7 @@ export class AuthService {
       token_type: 'Bearer',
       expires_in: '24h',
       user: {
-        id: persona.id,
+        id: Number(persona.id),
         nombre: persona.nombre,
         apellidoPaterno: persona.apellidoPaterno,
         apellidoMaterno: persona.apellidoMaterno ?? null,
@@ -167,38 +127,20 @@ export class AuthService {
     };
   }
 
-  /**
-   * Registrar un administrador (máximo 5). Requiere ser admin autenticado.
-   */
   async registrarAdmin(registroDto: RegistroAdminDto, ip?: string) {
     this.logger.log(`Intento de registro de administrador: ${registroDto.email}`);
 
-    // Verificar cantidad de administradores
-    const cantidadAdmins = await this.administradorRepository.count();
+    const cantidadAdmins = await this.prisma.administrador.count();
 
     if (cantidadAdmins >= this.MAX_ADMINS) {
-      this.logger.warn(
-        `Registro fallido: Límite de administradores alcanzado (${cantidadAdmins}/${this.MAX_ADMINS})`,
-      );
       throw new ConflictException(
         `Ya se han registrado los ${this.MAX_ADMINS} administradores permitidos.`,
       );
     }
 
-    // Verificar que el email no esté en uso
-    // Solo seleccionar campos que existen en la BD
-    const personaExistente = await this.personaRepository.findOne({
+    const personaExistente = await this.prisma.persona.findFirst({
       where: { correo: registroDto.email },
-      select: [
-        'id',
-        'nombre',
-        'apellidoPaterno',
-        'apellidoMaterno',
-        'correo',
-        'telefono',
-        'fechaNacimiento',
-        'genero',
-      ],
+      select: { id: true },
     });
 
     if (personaExistente) {
@@ -206,84 +148,76 @@ export class AuthService {
       throw new ConflictException('El email ya está registrado');
     }
 
-    // Hashear contraseña
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(registroDto.password, saltRounds);
 
-    // Crear la persona
-    const persona = this.personaRepository.create({
-      nombre: registroDto.nombre,
-      apellidoPaterno: registroDto.apellidoPaterno,
-      apellidoMaterno: registroDto.apellidoMaterno?.trim() || null,
-      correo: registroDto.email,
-      password: hashedPassword,
-      telefono: registroDto.telefono,
-      fechaNacimiento: registroDto.fechaNacimiento ? new Date(registroDto.fechaNacimiento) : null,
-      tipoPersona: 'administrador',
-      activo: true,
+    const personaGuardada = await this.prisma.persona.create({
+      data: {
+        nombre: registroDto.nombre,
+        apellidoPaterno: registroDto.apellidoPaterno,
+        apellidoMaterno: registroDto.apellidoMaterno?.trim() || null,
+        correo: registroDto.email,
+        password: hashedPassword,
+        telefono: registroDto.telefono,
+        fechaNacimiento: registroDto.fechaNacimiento ? new Date(registroDto.fechaNacimiento) : null,
+        tipoPersona: 'administrador',
+        activo: true,
+      },
     });
 
-    const personaGuardada = await this.personaRepository.save(persona);
-
-    // Crear el administrador
-    const administrador = this.administradorRepository.create({
-      personaId: personaGuardada.id,
-      fechaAlta: new Date(),
+    const administrador = await this.prisma.administrador.create({
+      data: {
+        personaId: personaGuardada.id,
+        fechaAlta: new Date(),
+      },
     });
-
-    await this.administradorRepository.save(administrador);
 
     this.logger.log(
       `Administrador creado exitosamente: ${personaGuardada.nombre} ${personaGuardada.apellidoPaterno} - ID: ${personaGuardada.id}`,
     );
-    this.logger.log(
-      `Total de administradores registrados: ${cantidadAdmins + 1}/${this.MAX_ADMINS}`,
-    );
 
     await this.auditService.log('registro_admin', {
-      usuarioId: personaGuardada.id,
+      usuarioId: Number(personaGuardada.id),
       ip: ip ?? null,
       detalles: personaGuardada.correo,
     });
 
-    // Retornar la persona sin la contraseña
     const result = { ...personaGuardada } as Record<string, unknown>;
     delete result.password;
     return {
       message: 'Administrador registrado exitosamente',
-      description: `El administrador ha sido creado correctamente. Puede iniciar sesión con su email y contraseña. Total de administradores: ${cantidadAdmins + 1}/${this.MAX_ADMINS}`,
+      description: `El administrador ha sido creado correctamente. Total de administradores: ${cantidadAdmins + 1}/${this.MAX_ADMINS}`,
       data: result,
       administrador: {
-        id: administrador.id,
+        id: Number(administrador.id),
         fechaAlta: administrador.fechaAlta,
       },
     };
   }
 
-  /**
-   * Obtener perfil del usuario autenticado
-   */
   async getProfile(userId: number) {
-    const persona = await this.personaRepository.findOne({
-      where: { id: userId },
-      relations: ['administrador', 'padre', 'alumno', 'maestro', 'director', 'director.escuela'],
-      select: [
-        'id',
-        'nombre',
-        'apellidoPaterno',
-        'apellidoMaterno',
-        'correo',
-        'telefono',
-        'fechaNacimiento',
-        'genero',
-        'tipoPersona',
-        'ultimaConexion',
-      ],
+    const persona = await this.prisma.persona.findUnique({
+      where: { id: BigInt(userId) },
+      select: {
+        id: true,
+        nombre: true,
+        apellidoPaterno: true,
+        apellidoMaterno: true,
+        correo: true,
+        telefono: true,
+        fechaNacimiento: true,
+        genero: true,
+        tipoPersona: true,
+        ultimaConexion: true,
+        administrador: true,
+        padre: true,
+        alumno: true,
+        maestro: true,
+        director: { include: { escuela: true } },
+      },
     });
 
-    if (!persona) {
-      throw new UnauthorizedException('Usuario no encontrado');
-    }
+    if (!persona) throw new UnauthorizedException('Usuario no encontrado');
 
     return {
       message: 'Perfil obtenido exitosamente',

@@ -1,13 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
+import { PrismaService } from './prisma/prisma.service';
 import { RedisService } from './infra/redis/redis.service';
 
 @Injectable()
 export class AppService {
   constructor(
-    @InjectDataSource()
-    private readonly dataSource: DataSource,
+    private readonly prisma: PrismaService,
     private readonly redisService: RedisService,
   ) {}
 
@@ -27,7 +25,7 @@ export class AppService {
   }> {
     let dbStatus: 'up' | 'down' = 'down';
     try {
-      await this.dataSource.query('SELECT 1');
+      await this.prisma.$queryRaw`SELECT 1`;
       dbStatus = 'up';
     } catch {
       // DB no disponible

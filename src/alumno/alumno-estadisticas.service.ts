@@ -1,10 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { AlumnoLibro } from '../escuelas/entities/alumno-libro.entity';
-import { AlumnoSegmentoEvaluacion } from '../escuelas/entities/alumno-segmento-evaluacion.entity';
-import { Anotacion } from '../escuelas/entities/anotacion.entity';
-import { SesionLectura } from './entities/sesion-lectura.entity';
+import { PrismaService } from '../prisma/prisma.service';
 
 function startOfMonth(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1, 0, 0, 0, 0));
@@ -45,40 +40,32 @@ function computeStreakUTC(keys: string[], todayKey: string): { actual: number; m
 
 @Injectable()
 export class AlumnoEstadisticasService {
-  constructor(
-    @InjectRepository(AlumnoLibro)
-    private readonly alumnoLibroRepository: Repository<AlumnoLibro>,
-    @InjectRepository(SesionLectura)
-    private readonly sesionLecturaRepository: Repository<SesionLectura>,
-    @InjectRepository(AlumnoSegmentoEvaluacion)
-    private readonly evaluacionRepository: Repository<AlumnoSegmentoEvaluacion>,
-    @InjectRepository(Anotacion)
-    private readonly anotacionRepository: Repository<Anotacion>,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async getEstadisticas(alumnoId: number) {
-    const [alumnoLibros, sesiones, evalAgg, anotacionesCountAgg] = await Promise.all([
-      this.alumnoLibroRepository.find({
-        where: { alumnoId },
-        select: ['id', 'libroId', 'porcentaje', 'ultimaLectura'],
+    const alumnoIdBig = BigInt(alumnoId);
+
+    const [alumnoLibros, sesiones] = await Promise.all([
+      this.prisma.alumnoLibro.findMany({
+        where: { alumnoId: alumnoIdBig },
+        select: { id: true, libroId: true, porcentaje: true, ultimaLectura: true },
       }),
-      this.sesionLecturaRepository.find({
-        where: { alumnoId },
-        select: ['duracionSegundos', 'fechaFin'],
-        order: { fechaFin: 'DESC' },
+      this.prisma.sesionLectura.findMany({
+        where: { alumnoId: alumnoIdBig },
+        select: { duracionSegundos: true, fechaFin: true },
+        orderBy: { fechaFin: 'desc' },
       }),
-      this.evaluacionRepository
-        .createQueryBuilder('e')
-        .select('AVG(e.score)', 'avgScore')
-        .addSelect('COUNT(*) FILTER (WHERE e.aprobado = true)', 'aprobados')
-        .where('e.alumno_id = :alumnoId', { alumnoId })
-        .getRawOne<{ avgScore: string | null; aprobados: string }>(),
-      this.anotacionRepository
-        .createQueryBuilder('a')
-        .select('COUNT(*)', 'total')
-        .where('a.alumno_id = :alumnoId', { alumnoId })
-        .getRawOne<{ total: string }>(),
     ]);
+
+    const evalAgg = await this.prisma.$queryRaw<[{ avgScore: string | null; aprobados: string }]>`
+      SELECT AVG(score)::text AS "avgScore", COUNT(*) FILTER (WHERE aprobado = true)::text AS "aprobados"
+      FROM "Alumno_Segmento_Evaluacion"
+      WHERE alumno_id = ${alumnoIdBig}
+    `;
+
+    const anotacionesAgg = await this.prisma.$queryRaw<[{ total: string }]>`
+      SELECT COUNT(*)::text AS "total" FROM "Anotacion" WHERE alumno_id = ${alumnoIdBig}
+    `;
 
     const librosLeidos = alumnoLibros.filter((x) => Number(x.porcentaje) >= 100).length;
     const librosEnProgreso = alumnoLibros.filter(
@@ -98,15 +85,17 @@ export class AlumnoEstadisticasService {
     );
 
     const promedioEvaluaciones =
-      evalAgg?.avgScore != null && !isNaN(Number(evalAgg.avgScore)) ? Number(evalAgg.avgScore) : 0;
+      evalAgg[0]?.avgScore != null && !isNaN(Number(evalAgg[0].avgScore))
+        ? Number(evalAgg[0].avgScore)
+        : 0;
 
     const actividadFechas = sesiones
       .map((s) => (s.fechaFin ? dateKeyUTC(new Date(s.fechaFin)) : null))
       .filter((x): x is string => !!x);
     const { actual, maxima } = computeStreakUTC(actividadFechas, dateKeyUTC(now));
 
-    const segmentosCompletados = Number(evalAgg?.aprobados || 0);
-    const anotacionesTotales = Number(anotacionesCountAgg?.total || 0);
+    const segmentosCompletados = Number(evalAgg[0]?.aprobados || 0);
+    const anotacionesTotales = Number(anotacionesAgg[0]?.total || 0);
     const ultimaActividad = sesiones.length > 0 ? sesiones[0].fechaFin : null;
 
     return {
@@ -125,4 +114,3 @@ export class AlumnoEstadisticasService {
     };
   }
 }
-

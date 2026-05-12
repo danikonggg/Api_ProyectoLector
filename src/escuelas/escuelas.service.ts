@@ -13,17 +13,8 @@ import {
   ConflictException,
   Logger,
 } from '@nestjs/common';
-import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
-import { Repository, DataSource, In } from 'typeorm';
-import { Escuela } from '../personas/entities/escuela.entity';
-import { Alumno } from '../personas/entities/alumno.entity';
-import { Maestro } from '../personas/entities/maestro.entity';
-import { Director } from '../personas/entities/director.entity';
-import { EscuelaLibro } from './entities/escuela-libro.entity';
-import { Libro } from '../libros/entities/libro.entity';
-import { AlumnoLibro } from './entities/alumno-libro.entity';
-import { MaestroGrupo } from './entities/maestro-grupo.entity';
-import { LicenciaLibro } from '../licencias/entities/licencia-libro.entity';
+import { PrismaService } from '../prisma/prisma.service';
+import { Prisma } from '@prisma/client';
 import { grupoCoincide } from '../common/utils/grupo.utils';
 import { LicenciasService } from '../licencias/licencias.service';
 import { CrearEscuelaDto } from './dto/crear-escuela.dto';
@@ -54,26 +45,7 @@ export class EscuelasService {
   private readonly logger = new Logger(EscuelasService.name);
 
   constructor(
-    @InjectRepository(Escuela)
-    private readonly escuelaRepository: Repository<Escuela>,
-    @InjectRepository(Alumno)
-    private readonly alumnoRepository: Repository<Alumno>,
-    @InjectRepository(Maestro)
-    private readonly maestroRepository: Repository<Maestro>,
-    @InjectRepository(Director)
-    private readonly directorRepository: Repository<Director>,
-    @InjectRepository(EscuelaLibro)
-    private readonly escuelaLibroRepository: Repository<EscuelaLibro>,
-    @InjectRepository(Libro)
-    private readonly libroRepository: Repository<Libro>,
-    @InjectRepository(AlumnoLibro)
-    private readonly alumnoLibroRepository: Repository<AlumnoLibro>,
-    @InjectRepository(MaestroGrupo)
-    private readonly maestroGrupoRepository: Repository<MaestroGrupo>,
-    @InjectRepository(LicenciaLibro)
-    private readonly licenciaLibroRepository: Repository<LicenciaLibro>,
-    @InjectDataSource()
-    private readonly dataSource: DataSource,
+    private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
     private readonly licenciasService: LicenciasService,
     private readonly listarLibrosAsignadosAlumnoUseCase: ListarLibrosAsignadosAlumnoUseCase,
@@ -88,49 +60,40 @@ export class EscuelasService {
   async crear(crearEscuelaDto: CrearEscuelaDto, auditContext?: AuditContext) {
     this.logger.log(`Intento de creación de escuela: ${crearEscuelaDto.nombre}`);
 
-    // Verificar si ya existe una escuela con el mismo nombre
-    const escuelaExistente = await this.escuelaRepository.findOne({
+    const escuelaExistente = await this.prisma.escuela.findFirst({
       where: { nombre: crearEscuelaDto.nombre },
     });
 
     if (escuelaExistente) {
-      this.logger.warn(
-        `Creación fallida: Escuela con nombre duplicado - ${crearEscuelaDto.nombre}`,
-      );
+      this.logger.warn(`Creación fallida: Escuela con nombre duplicado - ${crearEscuelaDto.nombre}`);
       throw new ConflictException('Ya existe una escuela con ese nombre');
     }
 
-    // Si se proporciona clave, verificar que no esté duplicada
     if (crearEscuelaDto.clave) {
-      const escuelaConClave = await this.escuelaRepository.findOne({
+      const escuelaConClave = await this.prisma.escuela.findFirst({
         where: { clave: crearEscuelaDto.clave },
       });
 
       if (escuelaConClave) {
-        this.logger.warn(
-          `Creación fallida: Escuela con clave duplicada - ${crearEscuelaDto.clave}`,
-        );
+        this.logger.warn(`Creación fallida: Escuela con clave duplicada - ${crearEscuelaDto.clave}`);
         throw new ConflictException('Ya existe una escuela con esa clave');
       }
     }
 
-    // Crear la escuela
-    const escuela = this.escuelaRepository.create({
-      nombre: crearEscuelaDto.nombre,
-      nivel: crearEscuelaDto.nivel,
-      clave: crearEscuelaDto.clave || null,
-      direccion: crearEscuelaDto.direccion || null,
-      telefono: crearEscuelaDto.telefono || null,
-      estado: crearEscuelaDto.estado || 'activa',
-      ciudad: crearEscuelaDto.ciudad || null,
-      estadoRegion: crearEscuelaDto.estadoRegion || null,
+    const escuelaGuardada = await this.prisma.escuela.create({
+      data: {
+        nombre: crearEscuelaDto.nombre,
+        nivel: crearEscuelaDto.nivel,
+        clave: crearEscuelaDto.clave || null,
+        direccion: crearEscuelaDto.direccion || null,
+        telefono: crearEscuelaDto.telefono || null,
+        estado: crearEscuelaDto.estado || 'activa',
+        ciudad: crearEscuelaDto.ciudad || null,
+        estadoRegion: crearEscuelaDto.estadoRegion || null,
+      },
     });
 
-    const escuelaGuardada = await this.escuelaRepository.save(escuela);
-
-    this.logger.log(
-      `Escuela creada exitosamente: ${escuelaGuardada.nombre} - ID: ${escuelaGuardada.id}`,
-    );
+    this.logger.log(`Escuela creada exitosamente: ${escuelaGuardada.nombre} - ID: ${escuelaGuardada.id}`);
 
     await this.auditService.log('escuela_crear', {
       usuarioId: auditContext?.usuarioId ?? null,
@@ -150,10 +113,10 @@ export class EscuelasService {
    * Solo escuelas activas: { id, nombre }.
    */
   async listarParaRegistro() {
-    const escuelas = await this.escuelaRepository.find({
+    const escuelas = await this.prisma.escuela.findMany({
       where: { estado: 'activa' },
-      select: ['id', 'nombre'],
-      order: { nombre: 'ASC' },
+      select: { id: true, nombre: true },
+      orderBy: { nombre: 'asc' },
     });
     return {
       message: 'Lista de escuelas',
@@ -165,17 +128,15 @@ export class EscuelasService {
    * Obtener todas las escuelas con director(es), alumnos, profesores y grupos.
    */
   async obtenerTodas(page?: number, limit?: number) {
-    const qb = this.escuelaRepository
-      .createQueryBuilder('escuela')
-      .orderBy('escuela.nombre', 'ASC');
+    const total = await this.prisma.escuela.count();
 
-    const total = await qb.getCount();
+    const escuelas = await this.prisma.escuela.findMany({
+      orderBy: { nombre: 'asc' },
+      ...(page != null && limit != null && page >= 1 && limit >= 1
+        ? { skip: (page - 1) * limit, take: limit }
+        : {}),
+    });
 
-    if (page != null && limit != null && page >= 1 && limit >= 1) {
-      qb.skip((page - 1) * limit).take(limit);
-    }
-
-    const escuelas = await qb.getMany();
     const escuelaIds = escuelas.map((e) => e.id);
 
     if (escuelaIds.length === 0) {
@@ -193,34 +154,29 @@ export class EscuelasService {
     }
 
     const [directores, conteoAlumnos, conteoMaestros, conteoGrupos] = await Promise.all([
-      this.directorRepository.find({
-        where: { escuelaId: In(escuelaIds), activo: true },
-        relations: ['persona'],
+      this.prisma.director.findMany({
+        where: { escuelaId: { in: escuelaIds }, activo: true },
+        include: { persona: true },
       }),
-      this.alumnoRepository
-        .createQueryBuilder('a')
-        .select('a.escuela_id', 'escuelaId')
-        .addSelect('COUNT(*)', 'total')
-        .where('a.escuela_id IN (:...ids)', { ids: escuelaIds })
-        .andWhere('a.activo = true')
-        .groupBy('a.escuela_id')
-        .getRawMany(),
-      this.maestroRepository
-        .createQueryBuilder('m')
-        .select('m.escuela_id', 'escuelaId')
-        .addSelect('COUNT(*)', 'total')
-        .where('m.escuela_id IN (:...ids)', { ids: escuelaIds })
-        .groupBy('m.escuela_id')
-        .getRawMany(),
-      this.dataSource
-        .createQueryBuilder()
-        .select('a.escuela_id', 'escuelaId')
-        .addSelect("COUNT(DISTINCT (a.grado::text || '-' || COALESCE(a.grupo, '')))", 'total')
-        .from(Alumno, 'a')
-        .where('a.escuela_id IN (:...ids)', { ids: escuelaIds })
-        .andWhere('a.activo = true')
-        .groupBy('a.escuela_id')
-        .getRawMany(),
+      this.prisma.$queryRaw<Array<{ escuelaId: bigint; total: bigint }>>`
+        SELECT escuela_id AS "escuelaId", COUNT(*) AS total
+        FROM "Alumno"
+        WHERE escuela_id IN (${Prisma.join(escuelaIds)}) AND activo = true
+        GROUP BY escuela_id
+      `,
+      this.prisma.$queryRaw<Array<{ escuelaId: bigint; total: bigint }>>`
+        SELECT escuela_id AS "escuelaId", COUNT(*) AS total
+        FROM "Maestro"
+        WHERE escuela_id IN (${Prisma.join(escuelaIds)})
+        GROUP BY escuela_id
+      `,
+      this.prisma.$queryRaw<Array<{ escuelaId: bigint; total: bigint }>>`
+        SELECT escuela_id AS "escuelaId",
+               COUNT(DISTINCT (grado::text || '-' || COALESCE(grupo, ''))) AS total
+        FROM "Alumno"
+        WHERE escuela_id IN (${Prisma.join(escuelaIds)}) AND activo = true
+        GROUP BY escuela_id
+      `,
     ]);
 
     const mapDirectores = new Map<number, string[]>();
@@ -278,17 +234,16 @@ export class EscuelasService {
   }
 
   /**
-   * Estadísticas del panel de gestión de escuelas (tarjetas del dashboard).
-   * Total escuelas, activas, alumnos, profesores y licencias.
+   * Estadísticas del panel de gestión de escuelas.
    */
   async obtenerEstadisticasPanel() {
     const [totalEscuelas, escuelasActivas, totalAlumnos, totalProfesores, librosListos] =
       await Promise.all([
-        this.escuelaRepository.count(),
-        this.escuelaRepository.count({ where: { estado: 'activa' } }),
-        this.alumnoRepository.count(),
-        this.maestroRepository.count(),
-        this.libroRepository.count({ where: { estado: 'listo' } }),
+        this.prisma.escuela.count(),
+        this.prisma.escuela.count({ where: { estado: 'activa' } }),
+        this.prisma.alumno.count(),
+        this.prisma.maestro.count(),
+        this.prisma.libro.count({ where: { estado: 'listo' } }),
       ]);
 
     return {
@@ -298,38 +253,35 @@ export class EscuelasService {
         escuelasActivas,
         totalAlumnos,
         totalProfesores,
-        licencias: librosListos, // licencias disponibles (libros listos); puede reemplazarse por un valor de configuración
+        licencias: librosListos,
       },
     };
   }
 
   /**
-   * Obtener una escuela por ID (para ver detalle o cargar formulario de edición).
-   * Incluye directores con persona y estadísticas (alumnos, profesores, grupos).
+   * Obtener una escuela por ID.
    */
   async obtenerPorId(id: number) {
-    const escuela = await this.escuelaRepository.findOne({
-      where: { id },
-      relations: ['directores', 'directores.persona'],
+    const escuela = await this.prisma.escuela.findUnique({
+      where: { id: BigInt(id) },
+      include: { directores: { include: { persona: true } } },
     });
 
     if (!escuela) {
       throw new NotFoundException(`No se encontró la escuela con ID ${id}`);
     }
 
-    const [totalAlumnos, totalMaestros, totalGrupos] = await Promise.all([
-      this.alumnoRepository.count({ where: { escuelaId: id } }),
-      this.maestroRepository.count({ where: { escuelaId: id } }),
-      this.alumnoRepository
-        .createQueryBuilder('a')
-        .select(
-          "COUNT(DISTINCT CONCAT(COALESCE(a.grado::text, ''), '-', COALESCE(a.grupo, '')))",
-          'count',
-        )
-        .where('a.escuelaId = :id', { id })
-        .getRawOne()
-        .then((r) => (r?.count ? Number(r.count) : 0)),
+    const [totalAlumnos, totalMaestros, gruposRaw] = await Promise.all([
+      this.prisma.alumno.count({ where: { escuelaId: BigInt(id) } }),
+      this.prisma.maestro.count({ where: { escuelaId: BigInt(id) } }),
+      this.prisma.$queryRaw<Array<{ count: bigint }>>`
+        SELECT COUNT(DISTINCT (grado::text || '-' || COALESCE(grupo, ''))) AS count
+        FROM "Alumno"
+        WHERE escuela_id = ${BigInt(id)}
+      `,
     ]);
+
+    const totalGrupos = gruposRaw[0]?.count ? Number(gruposRaw[0].count) : 0;
 
     const directores = (escuela.directores || []).map((d) => ({
       id: d.id,
@@ -374,60 +326,63 @@ export class EscuelasService {
   ) {
     this.logger.log(`Intento de actualización de escuela ID: ${id}`);
 
-    const escuela = await this.escuelaRepository.findOne({
-      where: { id },
-    });
+    const escuela = await this.prisma.escuela.findUnique({ where: { id: BigInt(id) } });
 
     if (!escuela) {
       throw new NotFoundException(`No se encontró la escuela con ID ${id}`);
     }
 
-    // Verificar si el nuevo nombre ya existe (si se está cambiando)
     if (actualizarEscuelaDto.nombre && actualizarEscuelaDto.nombre !== escuela.nombre) {
-      const escuelaConNombre = await this.escuelaRepository.findOne({
+      const escuelaConNombre = await this.prisma.escuela.findFirst({
         where: { nombre: actualizarEscuelaDto.nombre },
       });
-
       if (escuelaConNombre) {
         throw new ConflictException('Ya existe una escuela con ese nombre');
       }
     }
 
-    // Verificar si la nueva clave ya existe (si se está cambiando)
     if (actualizarEscuelaDto.clave && actualizarEscuelaDto.clave !== escuela.clave) {
-      const escuelaConClave = await this.escuelaRepository.findOne({
+      const escuelaConClave = await this.prisma.escuela.findFirst({
         where: { clave: actualizarEscuelaDto.clave },
       });
-
       if (escuelaConClave) {
         throw new ConflictException('Ya existe una escuela con esa clave');
       }
     }
 
-    // Actualizar los campos
     const estadoAnterior = escuela.estado ?? 'activa';
-    Object.assign(escuela, actualizarEscuelaDto);
 
-    const escuelaActualizada = await this.escuelaRepository.save(escuela);
+    const escuelaActualizada = await this.prisma.escuela.update({
+      where: { id: BigInt(id) },
+      data: {
+        ...(actualizarEscuelaDto.nombre != null && { nombre: actualizarEscuelaDto.nombre }),
+        ...(actualizarEscuelaDto.nivel != null && { nivel: actualizarEscuelaDto.nivel }),
+        ...(actualizarEscuelaDto.clave !== undefined && { clave: actualizarEscuelaDto.clave || null }),
+        ...(actualizarEscuelaDto.direccion !== undefined && { direccion: actualizarEscuelaDto.direccion || null }),
+        ...(actualizarEscuelaDto.telefono !== undefined && { telefono: actualizarEscuelaDto.telefono || null }),
+        ...(actualizarEscuelaDto.estado != null && { estado: actualizarEscuelaDto.estado }),
+        ...(actualizarEscuelaDto.ciudad !== undefined && { ciudad: actualizarEscuelaDto.ciudad || null }),
+        ...(actualizarEscuelaDto.estadoRegion !== undefined && { estadoRegion: actualizarEscuelaDto.estadoRegion || null }),
+      },
+    });
+
     const estadoNuevo = escuelaActualizada.estado ?? 'activa';
-
-    // Cascada: al pasar escuela a inactiva/suspendida se desactivan alumnos, maestros, directores y libros.
-    // Al pasar a activa se reactivan todos.
     const esInactiva = estadoNuevo === 'inactiva' || estadoNuevo === 'suspendida';
-    const activoValor = esInactiva ? false : true;
+    const activoValor = !esInactiva;
+
     if (estadoAnterior !== estadoNuevo) {
-      await this.alumnoRepository.update({ escuelaId: id }, { activo: activoValor });
-      await this.maestroRepository.update({ escuelaId: id }, { activo: activoValor });
-      await this.directorRepository.update({ escuelaId: id }, { activo: activoValor });
-      await this.escuelaLibroRepository.update({ escuelaId: id }, { activo: activoValor });
+      await Promise.all([
+        this.prisma.alumno.updateMany({ where: { escuelaId: BigInt(id) }, data: { activo: activoValor } }),
+        this.prisma.maestro.updateMany({ where: { escuelaId: BigInt(id) }, data: { activo: activoValor } }),
+        this.prisma.director.updateMany({ where: { escuelaId: BigInt(id) }, data: { activo: activoValor } }),
+        this.prisma.escuelaLibro.updateMany({ where: { escuelaId: BigInt(id) }, data: { activo: activoValor } }),
+      ]);
       this.logger.log(
-        `Escuela ID ${id}: cascada ${esInactiva ? 'desactivación' : 'reactivación'} aplicada (alumnos, maestros, directores, libros).`,
+        `Escuela ID ${id}: cascada ${esInactiva ? 'desactivación' : 'reactivación'} aplicada.`,
       );
     }
 
-    this.logger.log(
-      `Escuela actualizada exitosamente: ${escuelaActualizada.nombre} - ID: ${escuelaActualizada.id}`,
-    );
+    this.logger.log(`Escuela actualizada exitosamente: ${escuelaActualizada.nombre} - ID: ${escuelaActualizada.id}`);
 
     await this.auditService.log('escuela_actualizar', {
       usuarioId: auditContext?.usuarioId ?? null,
@@ -448,69 +403,57 @@ export class EscuelasService {
   async eliminar(id: number, auditContext?: AuditContext) {
     this.logger.log(`Intento de eliminación de escuela ID: ${id}`);
 
-    const escuela = await this.escuelaRepository.findOne({ where: { id } });
+    const escuela = await this.prisma.escuela.findUnique({ where: { id: BigInt(id) } });
 
     if (!escuela) {
       throw new NotFoundException(`No se encontró la escuela con ID ${id}`);
     }
 
-    await this.dataSource.transaction(async (manager) => {
+    await this.prisma.$transaction(async (tx) => {
       const [alumnos, maestros, directores] = await Promise.all([
-        manager.query(`SELECT id, persona_id FROM "Alumno" WHERE escuela_id = $1`, [id]),
-        manager.query(`SELECT id, persona_id FROM "Maestro" WHERE escuela_id = $1`, [id]),
-        manager.query(`SELECT id, persona_id FROM "Director" WHERE escuela_id = $1`, [id]),
+        tx.alumno.findMany({ where: { escuelaId: BigInt(id) }, select: { id: true, personaId: true } }),
+        tx.maestro.findMany({ where: { escuelaId: BigInt(id) }, select: { id: true, personaId: true } }),
+        tx.director.findMany({ where: { escuelaId: BigInt(id) }, select: { id: true, personaId: true } }),
       ]);
 
-      const alumnoIds: number[] = alumnos.map((r: { id: number }) => Number(r.id));
-      const maestroIds: number[] = maestros.map((r: { id: number }) => Number(r.id));
-      const personaIds: number[] = [...alumnos, ...maestros, ...directores].map(
-        (r: { persona_id: number }) => Number(r.persona_id),
-      );
+      const alumnoIds = alumnos.map((r) => r.id);
+      const maestroIds = maestros.map((r) => r.id);
+      const personaIds = [...alumnos, ...maestros, ...directores].map((r) => r.personaId);
 
       if (alumnoIds.length > 0) {
-        await manager.query(`DELETE FROM "Sesion_Lectura" WHERE alumno_id = ANY($1::bigint[])`, [
-          alumnoIds,
-        ]);
-        await manager.query(
-          `DELETE FROM "Preferencias_Alumno" WHERE alumno_id = ANY($1::bigint[])`,
-          [alumnoIds],
-        );
-        await manager.query(
-          `DELETE FROM "Alumno_Segmento_Evaluacion" WHERE alumno_id = ANY($1::bigint[])`,
-          [alumnoIds],
-        );
-        await manager.query(`DELETE FROM "Anotacion" WHERE alumno_id = ANY($1::bigint[])`, [
-          alumnoIds,
-        ]);
-        await manager.query(`DELETE FROM "Alumno_Libro" WHERE alumno_id = ANY($1::bigint[])`, [
-          alumnoIds,
-        ]);
+        await tx.sesionLectura.deleteMany({ where: { alumnoId: { in: alumnoIds } } });
+        await tx.preferenciasAlumno.deleteMany({ where: { alumnoId: { in: alumnoIds } } });
+        await tx.alumnoSegmentoEvaluacion.deleteMany({ where: { alumnoId: { in: alumnoIds } } });
+        await tx.anotacion.deleteMany({ where: { alumnoId: { in: alumnoIds } } });
+        await tx.alumnoLibro.deleteMany({ where: { alumnoId: { in: alumnoIds } } });
       }
 
       if (maestroIds.length > 0) {
-        await manager.query(`DELETE FROM "Maestro_Grupo" WHERE maestro_id = ANY($1::bigint[])`, [
-          maestroIds,
-        ]);
+        await tx.maestroGrupo.deleteMany({ where: { maestroId: { in: maestroIds } } });
       }
 
       if (alumnoIds.length > 0 || maestroIds.length > 0) {
-        await manager.query(
-          `DELETE FROM "Alumno_Maestro" WHERE alumno_id = ANY($1::bigint[]) OR maestro_id = ANY($2::bigint[])`,
-          [alumnoIds, maestroIds],
-        );
+        await tx.alumnoMaestro.deleteMany({
+          where: {
+            OR: [
+              ...(alumnoIds.length > 0 ? [{ alumnoId: { in: alumnoIds } }] : []),
+              ...(maestroIds.length > 0 ? [{ maestroId: { in: maestroIds } }] : []),
+            ],
+          },
+        });
       }
 
-      await manager.query(`DELETE FROM "Licencia_Libro" WHERE escuela_id = $1`, [id]);
-      await manager.query(`DELETE FROM "Escuela_Libro" WHERE escuela_id = $1`, [id]);
-      await manager.query(`DELETE FROM "Escuela_Libro_Pendiente" WHERE escuela_id = $1`, [id]);
-      await manager.query(`DELETE FROM "Director" WHERE escuela_id = $1`, [id]);
-      await manager.query(`DELETE FROM "Alumno" WHERE escuela_id = $1`, [id]);
-      await manager.query(`DELETE FROM "Maestro" WHERE escuela_id = $1`, [id]);
-      await manager.query(`DELETE FROM "Grupo" WHERE escuela_id = $1`, [id]);
-      await manager.query(`DELETE FROM "Escuela" WHERE id = $1`, [id]);
+      await tx.licenciaLibro.deleteMany({ where: { escuelaId: BigInt(id) } });
+      await tx.escuelaLibro.deleteMany({ where: { escuelaId: BigInt(id) } });
+      await tx.escuelaLibroPendiente.deleteMany({ where: { escuelaId: BigInt(id) } });
+      await tx.director.deleteMany({ where: { escuelaId: BigInt(id) } });
+      await tx.alumno.deleteMany({ where: { escuelaId: BigInt(id) } });
+      await tx.maestro.deleteMany({ where: { escuelaId: BigInt(id) } });
+      await tx.grupo.deleteMany({ where: { escuelaId: BigInt(id) } });
+      await tx.escuela.delete({ where: { id: BigInt(id) } });
 
       if (personaIds.length > 0) {
-        await manager.query(`DELETE FROM "Persona" WHERE id = ANY($1::bigint[])`, [personaIds]);
+        await tx.persona.deleteMany({ where: { id: { in: personaIds } } });
       }
     });
 
@@ -532,34 +475,28 @@ export class EscuelasService {
    * Verificar si una escuela existe (método interno para otros servicios)
    */
   async existe(id: number): Promise<boolean> {
-    const escuela = await this.escuelaRepository.findOne({
-      where: { id },
-    });
-    return !!escuela;
+    const count = await this.prisma.escuela.count({ where: { id: BigInt(id) } });
+    return count > 0;
   }
 
   /**
    * Obtener una escuela sin relaciones (método interno)
    */
-  async obtenerUna(id: number): Promise<Escuela | null> {
-    return await this.escuelaRepository.findOne({
-      where: { id },
-    });
+  async obtenerUna(id: number) {
+    return await this.prisma.escuela.findUnique({ where: { id: BigInt(id) } });
   }
 
   /**
    * Listar directores activos de una escuela.
    */
   async listarDirectoresDeEscuela(escuelaId: number) {
-    const escuela = await this.escuelaRepository.findOne({
-      where: { id: escuelaId },
-    });
+    const escuela = await this.prisma.escuela.findUnique({ where: { id: BigInt(escuelaId) } });
     if (!escuela) {
       throw new NotFoundException(`No se encontró la escuela con ID ${escuelaId}`);
     }
-    const directoresEntidad = await this.directorRepository.find({
-      where: { escuelaId, activo: true },
-      relations: ['persona'],
+    const directoresEntidad = await this.prisma.director.findMany({
+      where: { escuelaId: BigInt(escuelaId), activo: true },
+      include: { persona: true },
     });
     const directores = directoresEntidad.map((d) => ({
       id: d.id,
@@ -590,23 +527,24 @@ export class EscuelasService {
    * Listar todos los directores activos del sistema con datos de su escuela (solo admin).
    */
   async listarTodosLosDirectores(page?: number, limit?: number) {
-    const qb = this.escuelaRepository
-      .createQueryBuilder('escuela')
-      .leftJoinAndSelect('escuela.directores', 'director', 'director.activo = :activo', {
-        activo: true,
-      })
-      .leftJoinAndSelect('director.persona', 'persona')
-      .orderBy('escuela.nombre', 'ASC')
-      .addOrderBy('director.id', 'ASC');
+    const escuelas = await this.prisma.escuela.findMany({
+      include: {
+        directores: {
+          where: { activo: true },
+          include: { persona: true },
+          orderBy: { id: 'asc' },
+        },
+      },
+      orderBy: { nombre: 'asc' },
+    });
 
-    const escuelas = await qb.getMany();
     const directores: Array<{
-      id: number;
-      personaId: number;
-      escuelaId: number;
+      id: bigint;
+      personaId: bigint;
+      escuelaId: bigint;
       fechaNombramiento: Date | null;
       persona: {
-        id: number;
+        id: bigint;
         nombre: string;
         apellidoPaterno: string;
         apellidoMaterno: string | null;
@@ -614,7 +552,7 @@ export class EscuelasService {
         telefono: string | null;
         genero: string | null;
       } | null;
-      escuela: { id: number; nombre: string; nivel: string; clave: string | null };
+      escuela: { id: bigint; nombre: string; nivel: string; clave: string | null };
     }> = [];
 
     for (const e of escuelas) {
@@ -672,31 +610,28 @@ export class EscuelasService {
    * Listar maestros activos de una escuela con sus grupos asignados.
    */
   async listarMaestrosDeEscuela(escuelaId: number) {
-    const escuela = await this.escuelaRepository.findOne({
-      where: { id: escuelaId },
-    });
+    const escuela = await this.prisma.escuela.findUnique({ where: { id: BigInt(escuelaId) } });
     if (!escuela) {
       throw new NotFoundException(`No se encontró la escuela con ID ${escuelaId}`);
     }
-    const maestrosEntidad = await this.maestroRepository.find({
-      where: { escuelaId, activo: true },
-      relations: ['persona'],
+    const maestrosEntidad = await this.prisma.maestro.findMany({
+      where: { escuelaId: BigInt(escuelaId), activo: true },
+      include: { persona: true },
     });
 
     const maestroIds = maestrosEntidad.map((m) => m.id);
     const gruposPorMaestro = new Map<
-      number,
-      Array<{ id: number; grado: number; nombre: string; cantidadAlumnos: number }>
+      bigint,
+      Array<{ id: bigint; grado: number; nombre: string; cantidadAlumnos: number }>
     >();
-    const cantidadAlumnosPorGrupo = new Map<number, number>();
+    const cantidadAlumnosPorGrupo = new Map<bigint, number>();
 
     if (maestroIds.length > 0) {
-      const asignaciones = await this.maestroGrupoRepository.find({
-        where: { maestroId: In(maestroIds) },
-        relations: ['grupo'],
+      const asignaciones = await this.prisma.maestroGrupo.findMany({
+        where: { maestroId: { in: maestroIds } },
+        include: { grupo: true },
       });
-      const grupoIds = [...new Set(asignaciones.map((a) => a.grupoId).filter(Boolean))];
-      const gruposUnicos: Array<{ id: number; grado: number; nombre: string }> = [];
+      const gruposUnicos: Array<{ id: bigint; grado: number; nombre: string }> = [];
       for (const a of asignaciones) {
         if (!a.grupo || gruposUnicos.some((g) => g.id === a.grupo!.id)) continue;
         gruposUnicos.push({
@@ -706,15 +641,15 @@ export class EscuelasService {
         });
       }
 
-      if (grupoIds.length > 0) {
-        const alumnosEnGrupos = await this.alumnoRepository.find({
-          where: { escuelaId, activo: true },
-          select: ['id', 'grupoId', 'grado', 'grupo'],
+      if (gruposUnicos.length > 0) {
+        const alumnosEnGrupos = await this.prisma.alumno.findMany({
+          where: { escuelaId: BigInt(escuelaId), activo: true },
+          select: { id: true, grupoId: true, grado: true, grupo: true },
         });
         for (const g of gruposUnicos) {
           const count = alumnosEnGrupos.filter(
             (a) =>
-              Number(a.grupoId) === Number(g.id) ||
+              (a.grupoId != null && a.grupoId === g.id) ||
               (a.grupoId == null && grupoCoincide(Number(a.grado), a.grupo, g.grado, g.nombre)),
           ).length;
           cantidadAlumnosPorGrupo.set(g.id, count);
@@ -771,18 +706,15 @@ export class EscuelasService {
 
   /**
    * Listar alumnos activos de una escuela.
-   * Incluye persona y padre (si tiene) para ver de quién es hijo cada alumno.
    */
   async listarAlumnosDeEscuela(escuelaId: number) {
-    const escuela = await this.escuelaRepository.findOne({
-      where: { id: escuelaId },
-    });
+    const escuela = await this.prisma.escuela.findUnique({ where: { id: BigInt(escuelaId) } });
     if (!escuela) {
       throw new NotFoundException(`No se encontró la escuela con ID ${escuelaId}`);
     }
-    const alumnosEntidad = await this.alumnoRepository.find({
-      where: { escuelaId, activo: true },
-      relations: ['persona', 'padre', 'padre.persona'],
+    const alumnosEntidad = await this.prisma.alumno.findMany({
+      where: { escuelaId: BigInt(escuelaId), activo: true },
+      include: { persona: true, padre: { include: { persona: true } } },
     });
     const alumnos = alumnosEntidad.map((a) => ({
       id: a.id,
@@ -837,24 +769,23 @@ export class EscuelasService {
   }
 
   /**
-   * Activar o desactivar un libro solo para una escuela (Escuela_Libro.activo).
+   * Activar o desactivar un libro solo para una escuela.
    */
   async setLibroActivoEnEscuela(escuelaId: number, libroId: number, activo: boolean) {
-    const escuela = await this.escuelaRepository.findOne({ where: { id: escuelaId } });
+    const escuela = await this.prisma.escuela.findUnique({ where: { id: BigInt(escuelaId) } });
     if (!escuela) {
       throw new NotFoundException(`No se encontró la escuela con ID ${escuelaId}`);
     }
-    const el = await this.escuelaLibroRepository.findOne({
-      where: { escuelaId, libroId },
-      relations: ['libro'],
+    const el = await this.prisma.escuelaLibro.findFirst({
+      where: { escuelaId: BigInt(escuelaId), libroId: BigInt(libroId) },
+      include: { libro: true },
     });
     if (!el) {
       throw new NotFoundException(
         `El libro con ID ${libroId} no está asignado a la escuela con ID ${escuelaId}.`,
       );
     }
-    el.activo = activo;
-    await this.escuelaLibroRepository.save(el);
+    await this.prisma.escuelaLibro.update({ where: { id: el.id }, data: { activo } });
     this.logger.log(`Escuela ${escuelaId} / libro ${libroId}: activo=${activo}.`);
     return {
       message: activo
@@ -866,12 +797,11 @@ export class EscuelasService {
 
   /**
    * Listar todas las escuelas con los libros que tiene cada una (admin).
-   * Un mismo libro puede estar asignado a varias escuelas (cada asignación es independiente).
    */
   async listarEscuelasConLibros() {
-    const asignaciones = await this.escuelaLibroRepository.find({
-      relations: ['escuela', 'libro', 'libro.materia'],
-      order: { escuelaId: 'ASC' },
+    const asignaciones = await this.prisma.escuelaLibro.findMany({
+      include: { escuela: true, libro: { include: { materia: true } } },
+      orderBy: { escuelaId: 'asc' },
     });
     const byEscuela = new Map<
       number,
@@ -897,9 +827,10 @@ export class EscuelasService {
     >();
     for (const a of asignaciones) {
       if (!a.escuela) continue;
-      if (!byEscuela.has(a.escuelaId)) {
-        byEscuela.set(a.escuelaId, {
-          escuelaId: a.escuela.id,
+      const escuelaNum = Number(a.escuelaId);
+      if (!byEscuela.has(escuelaNum)) {
+        byEscuela.set(escuelaNum, {
+          escuelaId: Number(a.escuela.id),
           nombreEscuela: a.escuela.nombre,
           ciudad: a.escuela.ciudad ?? null,
           estadoRegion: a.escuela.estadoRegion ?? null,
@@ -907,13 +838,13 @@ export class EscuelasService {
           libros: [],
         });
       }
-      const entry = byEscuela.get(a.escuelaId)!;
+      const entry = byEscuela.get(escuelaNum)!;
       entry.libros.push({
-        escuelaLibroId: a.id,
-        libroId: a.libroId,
+        escuelaLibroId: Number(a.id),
+        libroId: Number(a.libroId),
         titulo: a.libro?.titulo ?? '',
         codigo: a.libro?.codigo ?? '',
-        grado: a.libro?.grado ?? 0,
+        grado: Number(a.libro?.grado ?? 0),
         materia: a.libro?.materia?.nombre ?? null,
         activoEnEscuela: a.activo,
         activoGlobal: a.libro?.activo !== false,
@@ -934,27 +865,24 @@ export class EscuelasService {
   }
 
   /**
-   * Listar todas las asignaciones libro-escuela (activas e inactivas) para que el admin vea y pueda asignar/desasignar (toggle).
-   * Incluye activo en esta escuela y activo global del libro.
+   * Listar todas las asignaciones libro-escuela para que el admin vea y pueda asignar/desasignar.
    */
   async listarAsignacionesLibrosDeEscuela(escuelaId: number) {
-    const escuela = await this.escuelaRepository.findOne({
-      where: { id: escuelaId },
-    });
+    const escuela = await this.prisma.escuela.findUnique({ where: { id: BigInt(escuelaId) } });
     if (!escuela) {
       throw new NotFoundException(`No se encontró la escuela con ID ${escuelaId}`);
     }
-    const asignaciones = await this.escuelaLibroRepository.find({
-      where: { escuelaId },
-      relations: ['libro', 'libro.materia'],
-      order: { fechaInicio: 'DESC' },
+    const asignaciones = await this.prisma.escuelaLibro.findMany({
+      where: { escuelaId: BigInt(escuelaId) },
+      include: { libro: { include: { materia: true } } },
+      orderBy: { fechaInicio: 'desc' },
     });
     const data = asignaciones.map((a) => ({
-      escuelaLibroId: a.id,
-      libroId: a.libroId,
+      escuelaLibroId: Number(a.id),
+      libroId: Number(a.libroId),
       titulo: a.libro?.titulo,
       codigo: a.libro?.codigo,
-      grado: a.libro?.grado,
+      grado: Number(a.libro?.grado ?? 0),
       materia: a.libro?.materia?.nombre ?? null,
       activoEnEscuela: a.activo,
       activoGlobal: a.libro?.activo !== false,
@@ -970,21 +898,18 @@ export class EscuelasService {
   }
 
   /**
-   * Listar los libros asignados a una escuela (los que la escuela puede ver).
-   * Solo libros con activo global (libro.activo) y asignación activa (Escuela_Libro.activo).
+   * Listar los libros asignados a una escuela.
    */
   async listarLibrosDeEscuela(escuelaId: number) {
-    const escuela = await this.escuelaRepository.findOne({
-      where: { id: escuelaId },
-    });
+    const escuela = await this.prisma.escuela.findUnique({ where: { id: BigInt(escuelaId) } });
     if (!escuela) {
       throw new NotFoundException(`No se encontró la escuela con ID ${escuelaId}`);
     }
 
-    const asignaciones = await this.escuelaLibroRepository.find({
-      where: { escuelaId, activo: true },
-      relations: ['libro', 'libro.materia'],
-      order: { fechaInicio: 'DESC' },
+    const asignaciones = await this.prisma.escuelaLibro.findMany({
+      where: { escuelaId: BigInt(escuelaId), activo: true },
+      include: { libro: { include: { materia: true } } },
+      orderBy: { fechaInicio: 'desc' },
     });
 
     const asignacionesActivas = asignaciones.filter((a) => a.libro?.activo !== false);
@@ -993,7 +918,7 @@ export class EscuelasService {
       ...a.libro,
       fechaInicio: a.fechaInicio,
       fechaFin: a.fechaFin,
-      escuelaLibroId: a.id,
+      escuelaLibroId: Number(a.id),
     }));
 
     return {
@@ -1005,8 +930,7 @@ export class EscuelasService {
   }
 
   /**
-   * Listar libros asignados al alumno (Alternativa C: asignación explícita).
-   * El alumno solo ve libros que maestro/director le asignó, con su progreso.
+   * Listar libros asignados al alumno.
    */
   async listarLibrosAsignadosAlAlumno(alumnoId: number) {
     return this.listarLibrosAsignadosAlumnoUseCase.execute(alumnoId);
@@ -1016,9 +940,9 @@ export class EscuelasService {
    * Obtiene el escuelaId de un alumno (para validaciones de director).
    */
   async obtenerEscuelaIdDeAlumno(alumnoId: number): Promise<number> {
-    const alumno = await this.alumnoRepository.findOne({
-      where: { id: alumnoId },
-      select: ['id', 'escuelaId'],
+    const alumno = await this.prisma.alumno.findUnique({
+      where: { id: BigInt(alumnoId) },
+      select: { id: true, escuelaId: true },
     });
     if (!alumno) {
       throw new NotFoundException(`No se encontró el alumno con ID ${alumnoId}`);
@@ -1063,11 +987,11 @@ export class EscuelasService {
   }
 
   /**
-   * Verificar si un libro está asignado al alumno (Alternativa C).
+   * Verificar si un libro está asignado al alumno.
    */
   async libroAsignadoAlAlumno(alumnoId: number, libroId: number): Promise<boolean> {
-    const existe = await this.alumnoLibroRepository.findOne({
-      where: { alumnoId, libroId },
+    const existe = await this.prisma.alumnoLibro.findFirst({
+      where: { alumnoId: BigInt(alumnoId), libroId: BigInt(libroId) },
     });
     if (!existe) return false;
     return this.licenciasService.accesoLibroActivoSegunLicencia(alumnoId, libroId);
@@ -1075,7 +999,6 @@ export class EscuelasService {
 
   /**
    * Desasignar libro de alumno.
-   * @param context - Si director: escuelaIdRestriccion. Si maestro: maestroId. Sin context = admin (sin restricción).
    */
   async desasignarLibroAlAlumno(
     alumnoId: number,
@@ -1086,7 +1009,7 @@ export class EscuelasService {
   }
 
   /**
-   * Actualizar progreso de lectura del alumno en un libro.
+   * Crear anotación del alumno.
    */
   async crearAnotacionAlumno(alumnoId: number, dto: CrearAnotacionDto) {
     return this.alumnoAnotacionesProgresoService.crearAnotacionAlumno(alumnoId, dto);

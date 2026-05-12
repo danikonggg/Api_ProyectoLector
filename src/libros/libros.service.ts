@@ -9,14 +9,7 @@
 import { Injectable, NotFoundException, ConflictException, Logger, Optional } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Libro } from './entities/libro.entity';
-import { Unidad } from './entities/unidad.entity';
-import { Segmento } from './entities/segmento.entity';
-import { Materia } from '../personas/entities/materia.entity';
-import { EscuelaLibro } from '../escuelas/entities/escuela-libro.entity';
-import { EscuelaLibroPendiente } from '../escuelas/entities/escuela-libro-pendiente.entity';
+import { PrismaService } from '../prisma/prisma.service';
 import { LibroProcesamientoService } from './libro-procesamiento.service';
 import { LibroUploadValidationService } from './libro-upload-validation.service';
 import { LibrosPdfImagenesService } from './libros-pdf-imagenes.service';
@@ -41,16 +34,7 @@ export class LibrosService {
   private readonly logger = new Logger(LibrosService.name);
 
   constructor(
-    @InjectRepository(Libro)
-    private readonly libroRepository: Repository<Libro>,
-    @InjectRepository(Unidad)
-    private readonly unidadRepository: Repository<Unidad>,
-    @InjectRepository(Materia)
-    private readonly materiaRepository: Repository<Materia>,
-    @InjectRepository(EscuelaLibro)
-    private readonly escuelaLibroRepository: Repository<EscuelaLibro>,
-    @InjectRepository(EscuelaLibroPendiente)
-    private readonly escuelaLibroPendienteRepository: Repository<EscuelaLibroPendiente>,
+    private readonly prisma: PrismaService,
     private readonly libroProcesamientoService: LibroProcesamientoService,
     private readonly uploadValidation: LibroUploadValidationService,
     private readonly librosPdfImagenesService: LibrosPdfImagenesService,
@@ -73,7 +57,7 @@ export class LibrosService {
   ): Promise<{
     message: string;
     description?: string;
-    data: Libro;
+    data: any;
     async?: boolean;
     jobId?: string;
   }> {
@@ -84,8 +68,8 @@ export class LibrosService {
     await this.uploadValidation.validarBuffer(buffer);
 
     if (dto.materiaId != null) {
-      const materia = await this.materiaRepository.findOne({
-        where: { id: dto.materiaId },
+      const materia = await this.prisma.materia.findUnique({
+        where: { id: BigInt(dto.materiaId) },
       });
       if (!materia) {
         throw new NotFoundException(`No se encontró la materia con ID ${dto.materiaId}`);
@@ -93,72 +77,77 @@ export class LibrosService {
     }
 
     const codigo = dto.codigo?.trim() || `LIB-${Date.now()}-${uuidv4().slice(0, 8)}`;
-    const existente = await this.libroRepository.findOne({ where: { codigo } });
+    const existente = await this.prisma.libro.findFirst({ where: { codigo } });
     if (existente) {
       throw new ConflictException(
         'Ya existe un libro con ese código. Usa otro o deja codigo vacío para auto-generar.',
       );
     }
 
-    const libro = this.libroRepository.create({
-      titulo: dto.titulo,
-      materiaId: dto.materiaId ?? null,
-      codigo,
-      grado: dto.grado,
-      autor: dto.autor ?? null,
-      editorial: dto.editorial ?? null,
-      descripcion: dto.descripcion ?? null,
-      estado: LIBRO_ESTADO.PROCESANDO,
-      numPaginas: null,
+    const libro = await this.prisma.libro.create({
+      data: {
+        titulo: dto.titulo,
+        materiaId: dto.materiaId != null ? BigInt(dto.materiaId) : null,
+        codigo,
+        grado: BigInt(dto.grado),
+        autor: dto.autor ?? null,
+        editorial: dto.editorial ?? null,
+        descripcion: dto.descripcion ?? null,
+        estado: LIBRO_ESTADO.PROCESANDO,
+        numPaginas: null,
+      },
     });
-    await this.libroRepository.save(libro);
     this.logger.log(
       `Libro creado (procesando): id=${libro.id}, titulo="${libro.titulo}", codigo=${codigo}`,
     );
 
+    const libroId = Number(libro.id);
     const useAsync = this.redisService.enabled && this.librosImportQueue != null;
 
     if (useAsync) {
-      const rutaPdfRelativa = await this.pdfStorageService.guardar(buffer, libro.id, codigo);
+      const rutaPdfRelativa = await this.pdfStorageService.guardar(buffer, libroId, codigo);
       const payload: LibrosImportJobPayload = {
-        libroId: libro.id,
+        libroId,
         codigo,
         rutaPdfRelativa,
         auditContext,
         traceContext: injectTraceContextForJob(),
       };
-      const job = await this.librosImportQueue.add('import', payload, {
-        jobId: librosImportJobId(libro.id),
+      const job = await this.librosImportQueue!.add('import', payload, {
+        jobId: librosImportJobId(libroId),
         attempts: 3,
         backoff: { type: 'exponential', delay: 5000 },
         removeOnComplete: { count: 2000 },
       });
       const jobIdStr = job.id != null ? String(job.id) : '';
-      await this.libroRepository.update(libro.id, { jobId: jobIdStr || null });
-      const data = await this.libroRepository.findOne({
+      await this.prisma.libro.update({
         where: { id: libro.id },
-        relations: ['materia', 'unidades'],
+        data: { jobId: jobIdStr || null },
+      });
+      const data = await this.prisma.libro.findUnique({
+        where: { id: libro.id },
+        include: { materia: true, unidades: true },
       });
       return {
         message: 'Libro encolado para procesamiento.',
-        description: `Job ${job.id}. Consulta GET /libros/${libro.id}/estado`,
+        description: `Job ${job.id}. Consulta GET /libros/${libroId}/estado`,
         jobId: jobIdStr,
         async: true,
-        data: data!,
+        data,
       };
     }
 
     try {
       const resultado = await this.libroProcesamientoService.procesar({
         buffer,
-        libroId: libro.id,
+        libroId,
         codigo,
         usarUnidadesReales: true,
       });
 
-      const final = await this.libroRepository.findOne({
+      const final = await this.prisma.libro.findUnique({
         where: { id: libro.id },
-        relations: ['materia', 'unidades'],
+        include: { materia: true, unidades: true },
       });
 
       this.logger.log(
@@ -178,10 +167,10 @@ export class LibrosService {
       };
     } catch (e) {
       await this.libroProcesamientoService.marcarError(
-        libro.id,
+        libroId,
         (e as Error)?.message ?? String(e),
       );
-      this.logger.error(`Libro id=${libro.id} falló: ${(e as Error)?.message ?? e}`);
+      this.logger.error(`Libro id=${libroId} falló: ${(e as Error)?.message ?? e}`);
       throw e;
     }
   }
@@ -200,9 +189,9 @@ export class LibrosService {
       numPaginas?: number | null;
     };
   }> {
-    const libro = await this.libroRepository.findOne({
-      where: { id },
-      select: ['id', 'titulo', 'estado', 'mensajeError', 'jobId', 'numPaginas'],
+    const libro = await this.prisma.libro.findUnique({
+      where: { id: BigInt(id) },
+      select: { id: true, titulo: true, estado: true, mensajeError: true, jobId: true, numPaginas: true },
     });
     if (!libro) {
       throw new NotFoundException(`No se encontró el libro con ID ${id}`);
@@ -210,12 +199,12 @@ export class LibrosService {
     return {
       message: 'Estado obtenido correctamente.',
       data: {
-        id: libro.id,
+        id: Number(libro.id),
         titulo: libro.titulo,
         estado: libro.estado,
         mensajeError: libro.mensajeError,
         jobId: libro.jobId,
-        numPaginas: libro.numPaginas,
+        numPaginas: libro.numPaginas != null ? Number(libro.numPaginas) : null,
       },
     };
   }
@@ -229,19 +218,16 @@ export class LibrosService {
   ): Promise<{
     message: string;
     total: number;
-    data: Libro[];
+    data: any[];
     meta?: { page: number; limit: number; totalPages: number };
   }> {
-    const qb = this.libroRepository
-      .createQueryBuilder('libro')
-      .leftJoinAndSelect('libro.materia', 'materia')
-      .orderBy('libro.id', 'DESC');
-
-    const total = await qb.getCount();
-    const data = await qb
-      .skip((page - 1) * limit)
-      .take(limit)
-      .getMany();
+    const total = await this.prisma.libro.count();
+    const data = await this.prisma.libro.findMany({
+      include: { materia: true },
+      orderBy: { id: 'desc' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
 
     this.logger.log(
       `GET /libros → page=${page}, limit=${limit}, total=${total}, returned=${data.length}`,
@@ -262,9 +248,15 @@ export class LibrosService {
    * Obtener un libro por ID con unidades y segmentos (contenido listo para front).
    */
   async obtenerPorId(id: number) {
-    const libro = await this.libroRepository.findOne({
-      where: { id },
-      relations: ['materia', 'unidades', 'unidades.segmentos'],
+    const libro = await this.prisma.libro.findUnique({
+      where: { id: BigInt(id) },
+      include: {
+        materia: true,
+        unidades: {
+          include: { segmentos: true },
+          orderBy: { orden: 'asc' },
+        },
+      },
     });
 
     if (!libro) {
@@ -278,16 +270,12 @@ export class LibrosService {
       `GET /libros/${id} → "${libro.titulo}", ${libro.unidades?.length ?? 0} unidades, ${numSegmentos} segmentos`,
     );
 
-    if (libro.unidades?.length) {
-      libro.unidades.sort((a, b) => Number(a.orden) - Number(b.orden));
-      for (const u of libro.unidades) {
-        if (u.segmentos?.length) {
-          u.segmentos.sort((a, b) => Number(a.orden) - Number(b.orden));
-        }
+    for (const u of libro.unidades ?? []) {
+      if (u.segmentos?.length) {
+        (u.segmentos as any[]).sort((a, b) => Number(a.orden) - Number(b.orden));
       }
     }
 
-    // Preguntas por segmento desactivadas (se agregarán después)
     const preguntasVacias = {
       basico: [] as string[],
       intermedio: [] as string[],
@@ -296,7 +284,7 @@ export class LibrosService {
     const idsSegmentos: number[] = [];
     for (const u of libro.unidades ?? []) {
       for (const seg of u.segmentos ?? []) {
-        idsSegmentos.push(seg.id);
+        idsSegmentos.push(Number(seg.id));
       }
     }
     const mapaGlosario =
@@ -304,8 +292,8 @@ export class LibrosService {
 
     for (const u of libro.unidades ?? []) {
       for (const seg of u.segmentos ?? []) {
-        (seg as Segmento & { preguntas?: object; glosario?: object }).preguntas = preguntasVacias;
-        (seg as Segmento & { glosario?: object }).glosario = mapaGlosario.get(seg.id) ?? [];
+        (seg as any).preguntas = preguntasVacias;
+        (seg as any).glosario = mapaGlosario.get(Number(seg.id)) ?? [];
       }
     }
 
@@ -320,17 +308,17 @@ export class LibrosService {
    * unidades, segmentos y el registro del libro.
    */
   async eliminar(id: number, auditContext?: AuditContext): Promise<{ message: string }> {
-    const libro = await this.libroRepository.findOne({
-      where: { id },
-      select: ['id', 'titulo', 'codigo', 'rutaPdf'],
+    const libro = await this.prisma.libro.findUnique({
+      where: { id: BigInt(id) },
+      select: { id: true, titulo: true, codigo: true, rutaPdf: true },
     });
 
     if (!libro) {
       throw new NotFoundException(`No se encontró el libro con ID ${id}`);
     }
 
-    await this.escuelaLibroRepository.delete({ libroId: id });
-    await this.escuelaLibroPendienteRepository.delete({ libroId: id });
+    await this.prisma.escuelaLibro.deleteMany({ where: { libroId: BigInt(id) } });
+    await this.prisma.escuelaLibroPendiente.deleteMany({ where: { libroId: BigInt(id) } });
 
     if (libro.rutaPdf) {
       await this.pdfStorageService.eliminarArchivo(libro.rutaPdf);
@@ -339,7 +327,7 @@ export class LibrosService {
       await this.librosPdfImagenesService.eliminarImagenesLibro(id, libro.codigo);
     }
 
-    await this.libroRepository.delete(id);
+    await this.prisma.libro.delete({ where: { id: BigInt(id) } });
 
     this.logger.log(`Libro eliminado: id=${id}, titulo="${libro.titulo}"`);
 
@@ -356,17 +344,16 @@ export class LibrosService {
 
   /**
    * Activar o desactivar un libro globalmente.
-   * Si se desactiva, se desactiva también en todas las escuelas (Escuela_Libro.activo = false).
+   * Si se desactiva, se desactiva también en todas las escuelas.
    */
   async setActivoGlobal(id: number, activo: boolean, auditContext?: AuditContext) {
-    const libro = await this.libroRepository.findOne({ where: { id } });
+    const libro = await this.prisma.libro.findUnique({ where: { id: BigInt(id) } });
     if (!libro) {
       throw new NotFoundException(`No se encontró el libro con ID ${id}`);
     }
-    libro.activo = activo;
-    await this.libroRepository.save(libro);
+    await this.prisma.libro.update({ where: { id: BigInt(id) }, data: { activo } });
     if (!activo) {
-      await this.escuelaLibroRepository.update({ libroId: id }, { activo: false });
+      await this.prisma.escuelaLibro.updateMany({ where: { libroId: BigInt(id) }, data: { activo: false } });
       this.logger.log(
         `Libro id=${id} desactivado globalmente; asignaciones en escuelas desactivadas.`,
       );
@@ -380,30 +367,29 @@ export class LibrosService {
       message: activo
         ? 'Libro activado globalmente.'
         : 'Libro desactivado globalmente y en todas las escuelas.',
-      data: { id: libro.id, titulo: libro.titulo, activo: libro.activo },
+      data: { id: Number(libro.id), titulo: libro.titulo, activo },
     };
   }
 
   /**
-   * Listar escuelas que tienen este libro (para gestionar desde la pantalla del libro).
-   * Devuelve todas las asignaciones con activoEnEscuela para poder asignar/desasignar desde el front de libros.
+   * Listar escuelas que tienen este libro.
    */
   async listarEscuelasDeLibro(libroId: number) {
-    const libro = await this.libroRepository.findOne({
-      where: { id: libroId },
-      select: ['id', 'titulo', 'codigo'],
+    const libro = await this.prisma.libro.findUnique({
+      where: { id: BigInt(libroId) },
+      select: { id: true, titulo: true, codigo: true },
     });
     if (!libro) {
       throw new NotFoundException(`No se encontró el libro con ID ${libroId}`);
     }
-    const asignaciones = await this.escuelaLibroRepository.find({
-      where: { libroId },
-      relations: ['escuela'],
-      order: { fechaInicio: 'DESC' },
+    const asignaciones = await this.prisma.escuelaLibro.findMany({
+      where: { libroId: BigInt(libroId) },
+      include: { escuela: true },
+      orderBy: { fechaInicio: 'desc' },
     });
     const data = asignaciones.map((a) => ({
-      escuelaLibroId: a.id,
-      escuelaId: a.escuelaId,
+      escuelaLibroId: Number(a.id),
+      escuelaId: Number(a.escuelaId),
       nombreEscuela: a.escuela?.nombre ?? null,
       ciudad: a.escuela?.ciudad ?? null,
       estadoRegion: a.escuela?.estadoRegion ?? null,
@@ -414,34 +400,33 @@ export class LibrosService {
     return {
       message: 'Escuelas del libro obtenidas correctamente.',
       description: `Este libro está asignado a ${data.length} escuela(s). Activa o desactiva el acceso por escuela.`,
-      libro: { id: libro.id, titulo: libro.titulo, codigo: libro.codigo },
+      libro: { id: Number(libro.id), titulo: libro.titulo, codigo: libro.codigo },
       total: data.length,
       data,
     };
   }
 
   /**
-   * Activar o desactivar este libro en una escuela concreta (desde la pantalla del libro).
+   * Activar o desactivar este libro en una escuela concreta.
    */
   async setLibroActivoEnEscuela(libroId: number, escuelaId: number, activo: boolean) {
-    const libro = await this.libroRepository.findOne({
-      where: { id: libroId },
-      select: ['id', 'titulo'],
+    const libro = await this.prisma.libro.findUnique({
+      where: { id: BigInt(libroId) },
+      select: { id: true, titulo: true },
     });
     if (!libro) {
       throw new NotFoundException(`No se encontró el libro con ID ${libroId}`);
     }
-    const el = await this.escuelaLibroRepository.findOne({
-      where: { libroId, escuelaId },
-      relations: ['escuela'],
+    const el = await this.prisma.escuelaLibro.findFirst({
+      where: { libroId: BigInt(libroId), escuelaId: BigInt(escuelaId) },
+      include: { escuela: true },
     });
     if (!el) {
       throw new NotFoundException(
         `El libro con ID ${libroId} no está asignado a la escuela con ID ${escuelaId}.`,
       );
     }
-    el.activo = activo;
-    await this.escuelaLibroRepository.save(el);
+    await this.prisma.escuelaLibro.update({ where: { id: el.id }, data: { activo } });
     this.logger.log(`Libro ${libroId} / escuela ${escuelaId}: activo=${activo}.`);
     return {
       message: activo
@@ -459,12 +444,11 @@ export class LibrosService {
 
   /**
    * Verifica si un libro está asignado a una escuela (para alumnos).
-   * Considera libro.activo global y EscuelaLibro.activo.
    */
   async libroPerteneceAEscuela(libroId: number, escuelaId: number): Promise<boolean> {
-    const el = await this.escuelaLibroRepository.findOne({
-      where: { libroId, escuelaId, activo: true },
-      relations: ['libro'],
+    const el = await this.prisma.escuelaLibro.findFirst({
+      where: { libroId: BigInt(libroId), escuelaId: BigInt(escuelaId), activo: true },
+      include: { libro: true },
     });
     return !!(el && el.libro?.activo !== false);
   }
@@ -473,23 +457,23 @@ export class LibrosService {
    * Obtiene id y codigo del libro (para servir imágenes de páginas).
    */
   async obtenerLibroBasico(id: number): Promise<{ id: number; codigo: string }> {
-    const libro = await this.libroRepository.findOne({
-      where: { id },
-      select: ['id', 'codigo'],
+    const libro = await this.prisma.libro.findUnique({
+      where: { id: BigInt(id) },
+      select: { id: true, codigo: true },
     });
     if (!libro) {
       throw new NotFoundException(`No se encontró el libro con ID ${id}`);
     }
-    return { id: libro.id, codigo: libro.codigo };
+    return { id: Number(libro.id), codigo: libro.codigo };
   }
 
   /**
    * Obtiene la URL pública del PDF guardado para un libro.
    */
   async obtenerUrlPdf(id: number): Promise<string | null> {
-    const libro = await this.libroRepository.findOne({
-      where: { id },
-      select: ['id', 'rutaPdf'],
+    const libro = await this.prisma.libro.findUnique({
+      where: { id: BigInt(id) },
+      select: { id: true, rutaPdf: true },
     });
     if (!libro?.rutaPdf) return null;
     return this.pdfStorageService.obtenerUrl(libro.rutaPdf);

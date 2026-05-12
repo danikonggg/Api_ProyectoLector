@@ -1,8 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { AuditLog } from './entities/audit-log.entity';
-import { Persona } from '../personas/entities/persona.entity';
+import { PrismaService } from '../prisma/prisma.service';
 
 export interface AuditContext {
   usuarioId?: number | null;
@@ -14,43 +11,34 @@ export interface AuditContext {
 export class AuditService {
   private readonly logger = new Logger(AuditService.name);
 
-  constructor(
-    @InjectRepository(AuditLog)
-    private readonly auditRepository: Repository<AuditLog>,
-    @InjectRepository(Persona)
-    private readonly personaRepository: Repository<Persona>,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
-  /**
-   * Registra una acción en el log de auditoría
-   */
   async log(accion: string, context?: AuditContext): Promise<void> {
     try {
-      const entry = this.auditRepository.create({
-        accion,
-        usuarioId: context?.usuarioId ?? null,
-        ip: context?.ip ?? null,
-        detalles: context?.detalles ?? null,
+      await this.prisma.auditLog.create({
+        data: {
+          accion,
+          usuarioId: context?.usuarioId != null ? BigInt(context.usuarioId) : null,
+          ip: context?.ip ?? null,
+          detalles: context?.detalles ?? null,
+        },
       });
-      await this.auditRepository.save(entry);
     } catch (e) {
       this.logger.error(`Error al registrar auditoría: ${accion}`, e);
     }
   }
 
-  /**
-   * Obtiene los logs de auditoría con paginación (solo admin)
-   */
   async findAll(page?: number, limit?: number) {
-    const qb = this.auditRepository.createQueryBuilder('audit').orderBy('audit.fecha', 'DESC');
+    const total = await this.prisma.auditLog.count();
 
-    const total = await qb.getCount();
+    const skip =
+      page != null && limit != null && page >= 1 && limit >= 1 ? (page - 1) * limit : undefined;
+    const take = skip != null ? limit : undefined;
 
-    if (page != null && limit != null && page >= 1 && limit >= 1) {
-      qb.skip((page - 1) * limit).take(limit);
-    }
-
-    const data = await qb.getMany();
+    const data = await this.prisma.auditLog.findMany({
+      orderBy: { fecha: 'desc' },
+      ...(skip != null && { skip, take }),
+    });
 
     const meta =
       page != null && limit != null
@@ -66,22 +54,18 @@ export class AuditService {
     };
   }
 
-  /**
-   * Últimas conexiones (solo eventos login).
-   */
   async findUltimasConexiones(page?: number, limit?: number) {
-    const qb = this.auditRepository
-      .createQueryBuilder('audit')
-      .where('audit.accion = :accion', { accion: 'login' })
-      .orderBy('audit.fecha', 'DESC');
+    const total = await this.prisma.auditLog.count({ where: { accion: 'login' } });
 
-    const total = await qb.getCount();
+    const skip =
+      page != null && limit != null && page >= 1 && limit >= 1 ? (page - 1) * limit : undefined;
+    const take = skip != null ? limit : undefined;
 
-    if (page != null && limit != null && page >= 1 && limit >= 1) {
-      qb.skip((page - 1) * limit).take(limit);
-    }
-
-    const data = await qb.getMany();
+    const data = await this.prisma.auditLog.findMany({
+      where: { accion: 'login' },
+      orderBy: { fecha: 'desc' },
+      ...(skip != null && { skip, take }),
+    });
 
     const meta =
       page != null && limit != null
@@ -97,9 +81,6 @@ export class AuditService {
     };
   }
 
-  /**
-   * Métricas de conexiones: horas conectado vs sin conexión por rol.
-   */
   async getMetricasConexiones() {
     const ahora = new Date();
     const hace24h = new Date(ahora.getTime() - 24 * 60 * 60 * 1000);
@@ -107,68 +88,26 @@ export class AuditService {
     const hace7d = new Date(ahora.getTime() - 7 * 24 * 60 * 60 * 1000);
     const hace30d = new Date(ahora.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-    const personas = await this.personaRepository.find({
-      where: [
-        { tipoPersona: 'administrador' },
-        { tipoPersona: 'director' },
-        { tipoPersona: 'maestro' },
-        { tipoPersona: 'alumno' },
-        { tipoPersona: 'padre' },
-      ],
-      select: ['id', 'tipoPersona', 'nombre', 'apellidoPaterno', 'correo', 'ultimaConexion'],
+    const personas = await this.prisma.persona.findMany({
+      where: {
+        tipoPersona: { in: ['administrador', 'director', 'maestro', 'alumno', 'padre'] },
+      },
+      select: {
+        id: true,
+        tipoPersona: true,
+        nombre: true,
+        apellidoPaterno: true,
+        correo: true,
+        ultimaConexion: true,
+      },
     });
 
     const porRol = {
-      administrador: {
-        conectados24h: 0,
-        conectados48h: 0,
-        conectados7d: 0,
-        conectados30d: 0,
-        sinConexionNunca: 0,
-        sinConexionMas7d: 0,
-        sinConexionMas30d: 0,
-        total: 0,
-      },
-      director: {
-        conectados24h: 0,
-        conectados48h: 0,
-        conectados7d: 0,
-        conectados30d: 0,
-        sinConexionNunca: 0,
-        sinConexionMas7d: 0,
-        sinConexionMas30d: 0,
-        total: 0,
-      },
-      maestro: {
-        conectados24h: 0,
-        conectados48h: 0,
-        conectados7d: 0,
-        conectados30d: 0,
-        sinConexionNunca: 0,
-        sinConexionMas7d: 0,
-        sinConexionMas30d: 0,
-        total: 0,
-      },
-      alumno: {
-        conectados24h: 0,
-        conectados48h: 0,
-        conectados7d: 0,
-        conectados30d: 0,
-        sinConexionNunca: 0,
-        sinConexionMas7d: 0,
-        sinConexionMas30d: 0,
-        total: 0,
-      },
-      padre: {
-        conectados24h: 0,
-        conectados48h: 0,
-        conectados7d: 0,
-        conectados30d: 0,
-        sinConexionNunca: 0,
-        sinConexionMas7d: 0,
-        sinConexionMas30d: 0,
-        total: 0,
-      },
+      administrador: { conectados24h: 0, conectados48h: 0, conectados7d: 0, conectados30d: 0, sinConexionNunca: 0, sinConexionMas7d: 0, sinConexionMas30d: 0, total: 0 },
+      director: { conectados24h: 0, conectados48h: 0, conectados7d: 0, conectados30d: 0, sinConexionNunca: 0, sinConexionMas7d: 0, sinConexionMas30d: 0, total: 0 },
+      maestro: { conectados24h: 0, conectados48h: 0, conectados7d: 0, conectados30d: 0, sinConexionNunca: 0, sinConexionMas7d: 0, sinConexionMas30d: 0, total: 0 },
+      alumno: { conectados24h: 0, conectados48h: 0, conectados7d: 0, conectados30d: 0, sinConexionNunca: 0, sinConexionMas7d: 0, sinConexionMas30d: 0, total: 0 },
+      padre: { conectados24h: 0, conectados48h: 0, conectados7d: 0, conectados30d: 0, sinConexionNunca: 0, sinConexionMas7d: 0, sinConexionMas30d: 0, total: 0 },
     };
 
     for (const p of personas) {

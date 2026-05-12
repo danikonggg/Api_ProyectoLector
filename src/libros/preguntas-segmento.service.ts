@@ -11,11 +11,8 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
 import Groq from 'groq-sdk';
-import { Segmento } from './entities/segmento.entity';
-import { PreguntaSegmento } from './entities/pregunta-segmento.entity';
+import { PrismaService } from '../prisma/prisma.service';
 
 export type NivelPregunta = 'basico' | 'intermedio' | 'avanzado';
 
@@ -68,10 +65,7 @@ export class PreguntasSegmentoService {
   private readonly logger = new Logger(PreguntasSegmentoService.name);
 
   constructor(
-    @InjectRepository(Segmento)
-    private readonly segmentoRepository: Repository<Segmento>,
-    @InjectRepository(PreguntaSegmento)
-    private readonly preguntaSegmentoRepository: Repository<PreguntaSegmento>,
+    private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
   ) {}
 
@@ -95,18 +89,13 @@ export class PreguntasSegmentoService {
     preguntas?: string[];
     error?: string;
   }> {
-    const segmento = await this.segmentoRepository.findOne({
-      where: { id: segmentoId },
-      select: ['id', 'contenido'],
+    const segmento = await this.prisma.segmento.findUnique({
+      where: { id: BigInt(segmentoId) },
+      select: { id: true, contenido: true },
     });
 
     if (!segmento) {
-      return {
-        success: false,
-        segmentoId,
-        nivel,
-        error: 'Segmento no encontrado.',
-      };
+      return { success: false, segmentoId, nivel, error: 'Segmento no encontrado.' };
     }
 
     const apiKey = this.configService.get<string>('GROQ_API_KEY');
@@ -132,52 +121,54 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto extra, con esta 
 
     const userPrompt = `Fragmento del libro:\n\n${contenidoCorto}`;
 
-    try {
-      const groq = new Groq({ apiKey });
-      const chatCompletion = await groq.chat.completions.create({
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        model: 'llama-3.1-8b-instant',
-        max_tokens: 600,
-        temperature: 0.5,
-      });
+    for (let intento = 0; intento < MAX_REINTENTOS; intento++) {
+      try {
+        const groq = new Groq({ apiKey });
+        const chatCompletion = await groq.chat.completions.create({
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          model: 'llama-3.1-8b-instant',
+          max_tokens: 600,
+          temperature: 0.5,
+        });
 
-      const raw = chatCompletion.choices[0]?.message?.content?.trim() ?? '';
-      const preguntas = this.extraerPreguntasDeJson(raw);
+        const raw = chatCompletion.choices[0]?.message?.content?.trim() ?? '';
+        const preguntas = this.extraerPreguntasDeJson(raw);
 
-      if (preguntas.length === 0) {
-        this.logger.warn(
-          `Groq no devolvió preguntas válidas para segmento ${segmentoId}. Raw: ${raw.slice(0, 200)}`,
+        if (preguntas.length === 0) {
+          this.logger.warn(
+            `Groq no devolvió preguntas válidas para segmento ${segmentoId}. Raw: ${raw.slice(0, 200)}`,
+          );
+          return {
+            success: false,
+            segmentoId,
+            nivel,
+            error: 'No se pudieron generar preguntas. Intenta de nuevo.',
+          };
+        }
+
+        this.logger.log(
+          `Preguntas generadas: segmento=${segmentoId}, nivel=${nivel}, cantidad=${preguntas.length}`,
         );
-        return {
-          success: false,
-          segmentoId,
-          nivel,
-          error: 'No se pudieron generar preguntas. Intenta de nuevo.',
-        };
+        return { success: true, segmentoId, nivel, preguntas };
+      } catch (error: unknown) {
+        const err = error as { status?: number };
+        if (err?.status === 429 && intento < MAX_REINTENTOS - 1) {
+          const delay = RETRY_DELAY_BASE_MS * Math.pow(2, intento);
+          this.logger.warn(
+            `Rate limit (429) segmento ${segmentoId}. Reintento ${intento + 2}/${MAX_REINTENTOS} en ${delay}ms`,
+          );
+          await sleep(delay);
+        } else {
+          const message = error instanceof Error ? error.message : String(error);
+          this.logger.error(`Groq error segmento ${segmentoId}: ${message}`);
+          return { success: false, segmentoId, nivel, error: message };
+        }
       }
-
-      this.logger.log(
-        `Preguntas generadas: segmento=${segmentoId}, nivel=${nivel}, cantidad=${preguntas.length}`,
-      );
-      return {
-        success: true,
-        segmentoId,
-        nivel,
-        preguntas,
-      };
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Groq error segmento ${segmentoId}: ${message}`);
-      return {
-        success: false,
-        segmentoId,
-        nivel,
-        error: message,
-      };
     }
+    return { success: false, segmentoId, nivel, error: 'Máximo de reintentos alcanzado.' };
   }
 
   /**
@@ -190,9 +181,9 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto extra, con esta 
     avanzado?: string[];
     error?: string;
   }> {
-    const segmento = await this.segmentoRepository.findOne({
-      where: { id: segmentoId },
-      select: ['id', 'contenido'],
+    const segmento = await this.prisma.segmento.findUnique({
+      where: { id: BigInt(segmentoId) },
+      select: { id: true, contenido: true },
     });
 
     if (!segmento) {
@@ -209,16 +200,9 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto extra, con esta 
         ? segmento.contenido.slice(0, 2500) + '...'
         : segmento.contenido;
 
-    const systemPrompt = `Eres un profesor que crea preguntas de lectura. Dado un fragmento de libro, genera exactamente 9 preguntas en total (3 por nivel):
-
-1. BÁSICO (recuerdo): hechos, fechas, nombres, conceptos explícitos. Fáciles, respuesta directa.
-2. INTERMEDIO (comprensión/aplicación): explicar, resumir, comparar o aplicar a un ejemplo.
-3. AVANZADO (análisis/evaluación): analizar causas, argumentar, criticar o relacionar ideas.
-
-Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto extra:
-{"basico": ["pregunta1", "pregunta2", "pregunta3"], "intermedio": ["pregunta1", "pregunta2", "pregunta3"], "avanzado": ["pregunta1", "pregunta2", "pregunta3"]}`;
-
-    const userPrompt = `Fragmento del libro:\n\n${contenidoCorto}`;
+    const systemPrompt = `Eres un profesor que crea preguntas de lectura en 3 niveles. Dado un fragmento, genera exactamente 3 preguntas por nivel (básico, intermedio, avanzado).
+Responde ÚNICAMENTE con un JSON válido sin markdown:
+{"basico": ["p1","p2","p3"], "intermedio": ["p1","p2","p3"], "avanzado": ["p1","p2","p3"]}`;
 
     for (let intento = 0; intento < MAX_REINTENTOS; intento++) {
       try {
@@ -226,7 +210,7 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto extra:
         const chatCompletion = await groq.chat.completions.create({
           messages: [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
+            { role: 'user', content: `Fragmento:\n\n${contenidoCorto}` },
           ],
           model: 'llama-3.1-8b-instant',
           max_tokens: 1200,
@@ -234,28 +218,18 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto extra:
         });
 
         const raw = chatCompletion.choices[0]?.message?.content?.trim() ?? '';
-        const parsed = this.extraerPreguntas3NivelesDeJson(raw);
-
-        if (!parsed) {
-          this.logger.warn(
-            `Groq no devolvió JSON válido para segmento ${segmentoId}. Raw: ${raw.slice(0, 200)}`,
-          );
-          return { success: false, error: 'No se pudieron generar preguntas válidas.' };
+        const resultado = this.extraerPreguntas3NivelesDeJson(raw);
+        if (!resultado) {
+          return { success: false, error: 'No se pudieron parsear preguntas.' };
         }
-
-        this.logger.log(`Preguntas generadas (1 llamada): segmento=${segmentoId}`);
-        return { success: true, ...parsed };
+        return { success: true, ...resultado };
       } catch (error: unknown) {
         const err = error as { status?: number };
         if (err?.status === 429 && intento < MAX_REINTENTOS - 1) {
           const delay = RETRY_DELAY_BASE_MS * Math.pow(2, intento);
-          this.logger.warn(
-            `Rate limit (429) segmento ${segmentoId}. Reintento ${intento + 2}/${MAX_REINTENTOS} en ${delay}ms`,
-          );
           await sleep(delay);
         } else {
           const message = error instanceof Error ? error.message : String(error);
-          this.logger.error(`Groq error segmento ${segmentoId}: ${message}`);
           return { success: false, error: message };
         }
       }
@@ -263,9 +237,6 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto extra:
     return { success: false, error: 'Máximo de reintentos alcanzado.' };
   }
 
-  /**
-   * Parsea JSON con preguntas de los 3 niveles.
-   */
   private extraerPreguntas3NivelesDeJson(
     raw: string,
   ): { basico: string[]; intermedio: string[]; avanzado: string[] } | null {
@@ -288,7 +259,7 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto extra:
   }
 
   /**
-   * Genera las preguntas para un segmento (3 niveles en 1 llamada) y las guarda en BD.
+   * Genera y guarda preguntas para un segmento (3 niveles en 1 llamada).
    */
   async generarYGuardarPreguntasParaSegmento(
     segmentoId: number,
@@ -304,16 +275,15 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto extra:
     for (const nivel of NIVELES_VALIDOS) {
       const preguntas = resultado[nivel] ?? [];
       if (preguntas.length > 0) {
-        const entidades = preguntas.map((texto, idx) =>
-          this.preguntaSegmentoRepository.create({
-            segmentoId,
+        await this.prisma.preguntaSegmento.createMany({
+          data: preguntas.map((texto, idx) => ({
+            segmentoId: BigInt(segmentoId),
             nivel,
             textoPregunta: texto,
             orden: idx + 1,
-          }),
-        );
-        await this.preguntaSegmentoRepository.save(entidades);
-        guardadas += entidades.length;
+          })),
+        });
+        guardadas += preguntas.length;
       } else {
         errores += 1;
       }
@@ -323,13 +293,12 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto extra:
 
   /**
    * Genera y guarda preguntas para todos los segmentos de un libro.
-   * Procesa segmentos en paralelo (límite de concurrencia) y usa 1 llamada IA por segmento.
    */
   async generarPreguntasParaLibro(libroId: number): Promise<void> {
-    const segmentos = await this.segmentoRepository.find({
-      where: { libroId },
-      select: ['id'],
-      order: { orden: 'ASC' },
+    const segmentos = await this.prisma.segmento.findMany({
+      where: { libroId: BigInt(libroId) },
+      select: { id: true },
+      orderBy: { orden: 'asc' },
     });
     if (segmentos.length === 0) {
       this.logger.log(`Libro ${libroId}: sin segmentos, no se generan preguntas.`);
@@ -343,7 +312,7 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto extra:
     const resultados = await runWithLimit(segmentos, CONCURRENCIA_SEGMENTOS, async (seg, i) => {
       if (i > 0) await sleep(DELAY_ENTRE_LOTES_MS);
       this.logger.log(`Libro ${libroId}: segmento ${i + 1}/${segmentos.length} (id=${seg.id})`);
-      return this.generarYGuardarPreguntasParaSegmento(seg.id);
+      return this.generarYGuardarPreguntasParaSegmento(Number(seg.id));
     });
 
     const totalGuardadas = resultados.reduce((a, r) => a + r.guardadas, 0);
@@ -359,17 +328,17 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto extra:
   async getPreguntasPorLibro(
     libroId: number,
   ): Promise<Record<number, { basico: string[]; intermedio: string[]; avanzado: string[] }>> {
-    const segmentos = await this.segmentoRepository.find({
-      where: { libroId },
-      select: ['id'],
+    const segmentos = await this.prisma.segmento.findMany({
+      where: { libroId: BigInt(libroId) },
+      select: { id: true },
     });
     const segmentoIds = segmentos.map((s) => s.id);
     if (segmentoIds.length === 0) return {};
 
-    const todas = await this.preguntaSegmentoRepository.find({
-      where: { segmentoId: In(segmentoIds) },
-      order: { segmentoId: 'ASC', nivel: 'ASC', orden: 'ASC' },
-      select: ['segmentoId', 'nivel', 'textoPregunta'],
+    const todas = await this.prisma.preguntaSegmento.findMany({
+      where: { segmentoId: { in: segmentoIds } },
+      orderBy: [{ segmentoId: 'asc' }, { nivel: 'asc' }, { orden: 'asc' }],
+      select: { segmentoId: true, nivel: true, textoPregunta: true },
     });
 
     const porSegmento: Record<
@@ -377,12 +346,13 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto extra:
       { basico: string[]; intermedio: string[]; avanzado: string[] }
     > = {};
     for (const segId of segmentoIds) {
-      porSegmento[segId] = { basico: [], intermedio: [], avanzado: [] };
+      porSegmento[Number(segId)] = { basico: [], intermedio: [], avanzado: [] };
     }
     for (const p of todas) {
       const nivel = p.nivel as NivelPregunta;
-      if (porSegmento[p.segmentoId] && NIVELES_VALIDOS.includes(nivel)) {
-        porSegmento[p.segmentoId][nivel].push(p.textoPregunta);
+      const key = Number(p.segmentoId);
+      if (porSegmento[key] && NIVELES_VALIDOS.includes(nivel)) {
+        porSegmento[key][nivel].push(p.textoPregunta);
       }
     }
     return porSegmento;
@@ -392,10 +362,10 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto extra:
    * Obtiene las preguntas desde BD para un segmento y nivel.
    */
   async getPreguntasDesdeDb(segmentoId: number, nivel: NivelPregunta): Promise<string[]> {
-    const filas = await this.preguntaSegmentoRepository.find({
-      where: { segmentoId, nivel },
-      order: { orden: 'ASC' },
-      select: ['textoPregunta'],
+    const filas = await this.prisma.preguntaSegmento.findMany({
+      where: { segmentoId: BigInt(segmentoId), nivel },
+      orderBy: { orden: 'asc' },
+      select: { textoPregunta: true },
     });
     return filas.map((r) => r.textoPregunta);
   }
@@ -415,31 +385,22 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto extra:
   }> {
     const desdeDb = await this.getPreguntasDesdeDb(segmentoId, nivel);
     if (desdeDb.length > 0) {
-      return {
-        success: true,
-        segmentoId,
-        nivel,
-        preguntas: desdeDb,
-      };
+      return { success: true, segmentoId, nivel, preguntas: desdeDb };
     }
     const generado = await this.generarPreguntas(segmentoId, nivel);
     if (generado.success && generado.preguntas?.length) {
-      const entidades = generado.preguntas.map((texto, idx) =>
-        this.preguntaSegmentoRepository.create({
-          segmentoId,
+      await this.prisma.preguntaSegmento.createMany({
+        data: generado.preguntas.map((texto, idx) => ({
+          segmentoId: BigInt(segmentoId),
           nivel,
           textoPregunta: texto,
           orden: idx + 1,
-        }),
-      );
-      await this.preguntaSegmentoRepository.save(entidades);
+        })),
+      });
     }
     return generado;
   }
 
-  /**
-   * Parsea la respuesta de Groq para extraer el array de preguntas.
-   */
   private extraerPreguntasDeJson(raw: string): string[] {
     try {
       let jsonStr = raw;

@@ -13,15 +13,9 @@ import {
   ConflictException,
   Logger,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
 import { AuditService } from '../audit/audit.service';
-import { Repository } from 'typeorm';
-import { LicenciaLibro } from './entities/licencia-libro.entity';
-import { Libro } from '../libros/entities/libro.entity';
-import { Escuela } from '../personas/entities/escuela.entity';
-import { Alumno } from '../personas/entities/alumno.entity';
-import { EscuelaLibro } from '../escuelas/entities/escuela-libro.entity';
-import { AlumnoLibro } from '../escuelas/entities/alumno-libro.entity';
+import { PrismaService } from '../prisma/prisma.service';
+import { Prisma } from '@prisma/client';
 import PDFDocument from 'pdfkit';
 import { ListarLibrosDisponiblesUseCase } from './application/listar-libros-disponibles.use-case';
 
@@ -45,18 +39,7 @@ export class LicenciasService {
   private readonly logger = new Logger(LicenciasService.name);
 
   constructor(
-    @InjectRepository(LicenciaLibro)
-    private readonly licenciaRepo: Repository<LicenciaLibro>,
-    @InjectRepository(Libro)
-    private readonly libroRepo: Repository<Libro>,
-    @InjectRepository(Escuela)
-    private readonly escuelaRepo: Repository<Escuela>,
-    @InjectRepository(Alumno)
-    private readonly alumnoRepo: Repository<Alumno>,
-    @InjectRepository(EscuelaLibro)
-    private readonly escuelaLibroRepo: Repository<EscuelaLibro>,
-    @InjectRepository(AlumnoLibro)
-    private readonly alumnoLibroRepo: Repository<AlumnoLibro>,
+    private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
     private readonly listarLibrosDisponiblesUseCase: ListarLibrosDisponiblesUseCase,
   ) {}
@@ -65,12 +48,12 @@ export class LicenciasService {
    * Generar lote de licencias. Crea Escuela_Libro si no existe.
    */
   async generar(escuelaId: number, libroId: number, cantidad: number, fechaVencimiento: string) {
-    const escuela = await this.escuelaRepo.findOne({ where: { id: escuelaId } });
+    const escuela = await this.prisma.escuela.findUnique({ where: { id: BigInt(escuelaId) } });
     if (!escuela) throw new NotFoundException(`No se encontró la escuela con ID ${escuelaId}`);
 
-    const libro = await this.libroRepo.findOne({
-      where: { id: libroId },
-      select: ['id', 'titulo', 'codigo', 'grado'],
+    const libro = await this.prisma.libro.findUnique({
+      where: { id: BigInt(libroId) },
+      select: { id: true, titulo: true, codigo: true, grado: true, activo: true },
     });
     if (!libro) throw new NotFoundException(`No se encontró el libro con ID ${libroId}`);
     if (libro.activo === false) {
@@ -83,7 +66,15 @@ export class LicenciasService {
     }
 
     const clavesUsadas = new Set<string>();
-    const licencias: LicenciaLibro[] = [];
+    const licenciasData: Array<{
+      clave: string;
+      libroId: bigint;
+      escuelaId: bigint;
+      alumnoId: null;
+      fechaVencimiento: Date;
+      activa: boolean;
+      fechaAsignacion: null;
+    }> = [];
 
     for (let i = 0; i < cantidad; i++) {
       let clave: string;
@@ -91,7 +82,7 @@ export class LicenciasService {
       do {
         clave = generarClave();
         if (clavesUsadas.has(clave)) continue;
-        const existe = await this.licenciaRepo.findOne({ where: { clave } });
+        const existe = await this.prisma.licenciaLibro.findUnique({ where: { clave } });
         if (!existe) break;
         clavesUsadas.add(clave);
         intentos++;
@@ -102,41 +93,38 @@ export class LicenciasService {
       } while (true);
       clavesUsadas.add(clave);
 
-      const lic = this.licenciaRepo.create({
+      licenciasData.push({
         clave,
-        libroId,
-        escuelaId,
+        libroId: BigInt(libroId),
+        escuelaId: BigInt(escuelaId),
         alumnoId: null,
         fechaVencimiento: ven,
         activa: true,
         fechaAsignacion: null,
       });
-      licencias.push(lic);
     }
 
-    await this.licenciaRepo.save(licencias);
+    await this.prisma.licenciaLibro.createMany({ data: licenciasData });
 
-    // Crear Escuela_Libro si no existe (para que el libro aparezca en la escuela)
-    let el = await this.escuelaLibroRepo.findOne({
-      where: { escuelaId, libroId },
+    let el = await this.prisma.escuelaLibro.findFirst({
+      where: { escuelaId: BigInt(escuelaId), libroId: BigInt(libroId) },
     });
     if (!el) {
       const hoy = new Date();
       hoy.setHours(0, 0, 0, 0);
-      el = this.escuelaLibroRepo.create({
-        escuelaId,
-        libroId,
-        activo: true,
-        fechaInicio: hoy,
-        fechaFin: ven,
-        grupo: null,
+      el = await this.prisma.escuelaLibro.create({
+        data: {
+          escuelaId: BigInt(escuelaId),
+          libroId: BigInt(libroId),
+          activo: true,
+          fechaInicio: hoy,
+          fechaFin: ven,
+          grupo: null,
+        },
       });
-      await this.escuelaLibroRepo.save(el);
     }
 
     this.logger.log(`Generadas ${cantidad} licencias para escuela ${escuelaId}, libro ${libroId}`);
-
-    const claves = licencias.map((l) => l.clave);
 
     return {
       message: `Se generaron ${cantidad} licencias correctamente.`,
@@ -147,14 +135,13 @@ export class LicenciasService {
         titulo: libro.titulo,
         cantidad,
         fechaVencimiento,
-        claves,
+        claves: licenciasData.map((l) => l.clave),
       },
     };
   }
 
   /**
    * Canjear licencia: alumno (o director/maestro en nombre) activa la licencia.
-   * @param auditContext - Opcional. Si se pasa, se registra en auditoría (solo cuando se llama desde POST /licencias/canjear).
    */
   async canjear(
     clave: string,
@@ -164,98 +151,111 @@ export class LicenciasService {
     auditContext?: { usuarioId?: number | null; ip?: string | null },
   ) {
     const claveNorm = clave.trim().replace(/\s+/g, '');
-    const resultado = await this.licenciaRepo.manager.transaction(async (manager) => {
-      const licRepo = manager.getRepository(LicenciaLibro);
-      const alumnoRepo = manager.getRepository(Alumno);
-      const alumnoLibroRepo = manager.getRepository(AlumnoLibro);
 
-      const lic = await licRepo
-        .createQueryBuilder('lic')
-        .leftJoinAndSelect('lic.libro', 'libro')
-        .leftJoinAndSelect('lic.escuela', 'escuela')
-        .where("UPPER(REPLACE(lic.clave, ' ', '')) = UPPER(:clave)", {
-          clave: claveNorm,
-        })
-        .getOne();
-      if (!lic) {
+    const resultado = await this.prisma.$transaction(async (tx) => {
+      const lics = await tx.$queryRaw<
+        Array<{
+          id: bigint;
+          clave: string;
+          libroId: bigint;
+          escuelaId: bigint;
+          alumnoId: bigint | null;
+          fechaVencimiento: Date;
+          activa: boolean;
+          fechaAsignacion: Date | null;
+        }>
+      >`
+        SELECT id, clave, libro_id as "libroId", escuela_id as "escuelaId",
+               alumno_id as "alumnoId", fecha_vencimiento as "fechaVencimiento",
+               activa, fecha_asignacion as "fechaAsignacion"
+        FROM "Licencia_Libro"
+        WHERE UPPER(REPLACE(clave, ' ', '')) = UPPER(${claveNorm})
+        LIMIT 1
+      `;
+
+      const licRow = lics[0];
+      if (!licRow) {
         throw new NotFoundException('Licencia no encontrada. Verifica la clave.');
       }
 
-      if (lic.alumnoId != null) {
+      if (licRow.alumnoId != null) {
         throw new ConflictException('Esta licencia ya fue canjeada por otro alumno.');
       }
-      if (!lic.activa) {
+      if (!licRow.activa) {
         throw new BadRequestException('Esta licencia está desactivada.');
       }
 
       const hoy = new Date();
       hoy.setHours(0, 0, 0, 0);
-      const ven = new Date(lic.fechaVencimiento);
+      const ven = new Date(licRow.fechaVencimiento);
       ven.setHours(0, 0, 0, 0);
       if (ven < hoy) {
         throw new BadRequestException('Esta licencia ha vencido.');
       }
 
-      const alumno = await alumnoRepo.findOne({
-        where: { id: alumnoId },
-        relations: ['persona'],
+      const alumno = await tx.alumno.findUnique({
+        where: { id: BigInt(alumnoId) },
+        include: { persona: true },
       });
       if (!alumno) {
         throw new NotFoundException(`No se encontró el alumno con ID ${alumnoId}`);
       }
-      if (Number(alumno.escuelaId) !== Number(lic.escuelaId)) {
+      if (Number(alumno.escuelaId) !== Number(licRow.escuelaId)) {
         throw new BadRequestException('Esta licencia no corresponde a tu escuela.');
       }
 
-      const asignacionExistente = await alumnoLibroRepo.findOne({
-        where: { alumnoId, libroId: lic.libroId },
+      const asignacionExistente = await tx.alumnoLibro.findFirst({
+        where: { alumnoId: BigInt(alumnoId), libroId: licRow.libroId },
       });
       if (asignacionExistente) {
-        const tieneAccesoVigente = await this.accesoLibroActivoSegunLicencia(alumnoId, lic.libroId);
+        const tieneAccesoVigente = await this.accesoLibroActivoSegunLicencia(alumnoId, Number(licRow.libroId));
         if (tieneAccesoVigente) {
           throw new ConflictException('El alumno ya tiene asignado este libro.');
         }
       }
 
-      const claim = await licRepo
-        .createQueryBuilder()
-        .update(LicenciaLibro)
-        .set({
-          alumnoId,
-          fechaAsignacion: new Date(),
-        })
-        .where('id = :id', { id: lic.id })
-        .andWhere('alumnoId IS NULL')
-        .andWhere('activa = true')
-        .andWhere('fechaVencimiento >= CURRENT_DATE')
-        .execute();
+      const claimed = await tx.$executeRaw`
+        UPDATE "Licencia_Libro"
+        SET alumno_id = ${BigInt(alumnoId)}, fecha_asignacion = NOW()
+        WHERE id = ${licRow.id}
+          AND alumno_id IS NULL
+          AND activa = true
+          AND fecha_vencimiento >= CURRENT_DATE
+      `;
 
-      if ((claim.affected ?? 0) !== 1) {
+      if (claimed !== 1) {
         throw new ConflictException('Esta licencia ya fue canjeada por otro alumno.');
       }
 
       if (asignacionExistente) {
-        asignacionExistente.asignadoPorTipo = asignadoPorTipo;
-        asignacionExistente.asignadoPorId = asignadoPorId;
-        await alumnoLibroRepo.save(asignacionExistente);
-      } else {
-        const asignacion = alumnoLibroRepo.create({
-          alumnoId,
-          libroId: lic.libroId,
-          porcentaje: 0,
-          ultimoSegmentoId: null,
-          ultimaLectura: null,
-          fechaAsignacion: new Date(),
-          asignadoPorTipo,
-          asignadoPorId,
+        await tx.alumnoLibro.update({
+          where: { id: asignacionExistente.id },
+          data: { asignadoPorTipo, asignadoPorId: BigInt(asignadoPorId) },
         });
-        await alumnoLibroRepo.save(asignacion);
+      } else {
+        await tx.alumnoLibro.create({
+          data: {
+            alumnoId: BigInt(alumnoId),
+            libroId: licRow.libroId,
+            porcentaje: 0,
+            ultimoSegmentoId: null,
+            ultimaLectura: null,
+            fechaAsignacion: new Date(),
+            asignadoPorTipo,
+            asignadoPorId: BigInt(asignadoPorId),
+          },
+        });
       }
 
+      const libroData = await tx.libro.findUnique({
+        where: { id: licRow.libroId },
+        select: { titulo: true },
+      });
+
       return {
-        libroId: lic.libroId,
-        titulo: lic.libro?.titulo,
-        clave: lic.clave,
+        libroId: Number(licRow.libroId),
+        titulo: libroData?.titulo,
+        clave: licRow.clave,
       };
     });
 
@@ -282,7 +282,6 @@ export class LicenciasService {
 
   /**
    * Consumir una licencia para asignar libro a alumno (director/maestro).
-   * Usado por asignarLibroAlAlumno cuando el flujo es por licencias.
    */
   async consumirLicenciaParaAlumno(
     escuelaId: number,
@@ -291,20 +290,20 @@ export class LicenciasService {
     asignadoPorTipo: 'director' | 'maestro',
     asignadoPorId: number,
   ) {
-    const alumno = await this.alumnoRepo.findOne({ where: { id: alumnoId } });
+    const alumno = await this.prisma.alumno.findUnique({ where: { id: BigInt(alumnoId) } });
     if (!alumno) throw new NotFoundException(`No se encontró el alumno con ID ${alumnoId}`);
     if (Number(alumno.escuelaId) !== Number(escuelaId)) {
       throw new BadRequestException('El alumno no pertenece a esta escuela.');
     }
 
-    const lic = await this.licenciaRepo.findOne({
+    const lic = await this.prisma.licenciaLibro.findFirst({
       where: {
-        escuelaId,
-        libroId,
+        escuelaId: BigInt(escuelaId),
+        libroId: BigInt(libroId),
         activa: true,
         alumnoId: null,
       },
-      relations: ['libro'],
+      include: { libro: true },
     });
     if (!lic) {
       throw new BadRequestException(
@@ -335,17 +334,17 @@ export class LicenciasService {
   async tieneLicenciasDisponibles(escuelaId: number, libroId: number): Promise<boolean> {
     const hoy = new Date();
     hoy.setHours(0, 0, 0, 0);
-    const count = await this.licenciaRepo.count({
+    const count = await this.prisma.licenciaLibro.count({
       where: {
-        escuelaId,
-        libroId,
+        escuelaId: BigInt(escuelaId),
+        libroId: BigInt(libroId),
         activa: true,
         alumnoId: null,
       },
     });
     if (count === 0) return false;
-    const lic = await this.licenciaRepo.findOne({
-      where: { escuelaId, libroId, activa: true, alumnoId: null },
+    const lic = await this.prisma.licenciaLibro.findFirst({
+      where: { escuelaId: BigInt(escuelaId), libroId: BigInt(libroId), activa: true, alumnoId: null },
     });
     if (!lic) return false;
     const ven = new Date(lic.fechaVencimiento);
@@ -354,15 +353,13 @@ export class LicenciasService {
   }
 
   /**
-   * Acceso al libro si existe al menos una licencia **activa** (activa=true), **no vencida**,
-   * asignada a ese alumno para ese libro. Así, una licencia revocada no bloquea una nueva
-   * licencia del mismo libro (pueden coexistir filas viejas revocadas y una nueva vigente).
+   * Acceso al libro si existe al menos una licencia activa y no vencida para ese alumno.
    */
   async accesoLibroActivoSegunLicencia(alumnoId: number, libroId: number): Promise<boolean> {
     const hoy = new Date();
     hoy.setHours(0, 0, 0, 0);
-    const lic = await this.licenciaRepo.findOne({
-      where: { alumnoId, libroId, activa: true },
+    const lic = await this.prisma.licenciaLibro.findFirst({
+      where: { alumnoId: BigInt(alumnoId), libroId: BigInt(libroId), activa: true },
     });
     if (!lic) return false;
     const ven = new Date(lic.fechaVencimiento);
@@ -380,39 +377,31 @@ export class LicenciasService {
     page?: number,
     limit?: number,
   ) {
-    const qb = this.licenciaRepo
-      .createQueryBuilder('lic')
-      .leftJoinAndSelect('lic.libro', 'libro')
-      .leftJoinAndSelect('lic.escuela', 'escuela')
-      .leftJoinAndSelect('lic.alumno', 'alumno')
-      .leftJoinAndSelect('alumno.persona', 'persona')
-      .orderBy('lic.createdAt', 'DESC');
-
-    if (escuelaId) qb.andWhere('lic.escuelaId = :escuelaId', { escuelaId });
-    if (libroId) qb.andWhere('lic.libroId = :libroId', { libroId });
-
     const hoy = new Date();
     hoy.setHours(0, 0, 0, 0);
 
+    const where: Prisma.LicenciaLibroWhereInput = {};
+    if (escuelaId) where.escuelaId = BigInt(escuelaId);
+    if (libroId) where.libroId = BigInt(libroId);
+
     if (estado == null) {
-      // Cuando no se manda `estado`, no mostramos vencidas (ni desactivadas).
-      qb.andWhere('lic.activa = true');
-      qb.andWhere('lic.fechaVencimiento >= :hoy', { hoy: hoy.toISOString().slice(0, 10) });
+      where.activa = true;
+      where.fechaVencimiento = { gte: hoy };
     } else if (estado === 'disponible') {
-      qb.andWhere('lic.alumnoId IS NULL');
-      qb.andWhere('lic.activa = true');
-      qb.andWhere('lic.fechaVencimiento >= :hoy', { hoy: hoy.toISOString().slice(0, 10) });
+      where.alumnoId = null;
+      where.activa = true;
+      where.fechaVencimiento = { gte: hoy };
     } else if (estado === 'usada') {
-      qb.andWhere('lic.alumnoId IS NOT NULL');
-      qb.andWhere('lic.activa = true');
-      qb.andWhere('lic.fechaVencimiento >= :hoy', { hoy: hoy.toISOString().slice(0, 10) });
+      where.alumnoId = { not: null };
+      where.activa = true;
+      where.fechaVencimiento = { gte: hoy };
     } else if (estado === 'vencida') {
-      qb.andWhere('lic.fechaVencimiento < :hoy', { hoy: hoy.toISOString().slice(0, 10) });
+      where.fechaVencimiento = { lt: hoy };
     } else if (estado === 'desactivada' || estado === 'baja') {
-      qb.andWhere('lic.activa = false');
+      where.activa = false;
     }
 
-    const total = await qb.getCount();
+    const total = await this.prisma.licenciaLibro.count({ where });
 
     const pageSafe =
       page != null && Number.isInteger(Number(page)) ? Math.max(1, Number(page)) : undefined;
@@ -421,11 +410,19 @@ export class LicenciasService {
         ? Math.max(1, Math.min(Number(limit), 500))
         : undefined;
 
-    if (pageSafe != null && limitSafe != null) {
-      qb.skip((pageSafe - 1) * limitSafe).take(limitSafe);
-    }
+    const licencias = await this.prisma.licenciaLibro.findMany({
+      where,
+      include: {
+        libro: true,
+        escuela: true,
+        alumno: { include: { persona: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      ...(pageSafe != null && limitSafe != null
+        ? { skip: (pageSafe - 1) * limitSafe, take: limitSafe }
+        : {}),
+    });
 
-    const licencias = await qb.getMany();
     const data = licencias.map((l) => {
       let estadoEtiqueta: string;
       if (!l.activa) {
@@ -487,10 +484,6 @@ export class LicenciasService {
 
   /**
    * Totales de licencias por escuela y desglose por libro.
-   *
-   * "Disponibles" = alumnoId IS NULL AND activa=true AND fechaVencimiento >= hoy
-   * "En uso"      = alumnoId IS NOT NULL
-   * "Vencidas"    = alumnoId IS NULL AND fechaVencimiento < hoy
    */
   async obtenerTotalesPorEscuela(escuelaId: number): Promise<{
     message: string;
@@ -514,39 +507,38 @@ export class LicenciasService {
     hoy.setHours(0, 0, 0, 0);
     const hoyStr = hoy.toISOString().slice(0, 10);
 
-    const rows = await this.licenciaRepo
-      .createQueryBuilder('lic')
-      .leftJoinAndSelect('lic.libro', 'libro')
-      .where('lic.escuelaId = :escuelaId', { escuelaId })
-      .select('lic.libroId', 'libroId')
-      .addSelect('libro.titulo', 'titulo')
-      .addSelect('COUNT(*)', 'total')
-      .addSelect(
-        `SUM(CASE
-          WHEN lic.alumnoId IS NULL
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        libroId: bigint;
+        titulo: string | null;
+        total: bigint;
+        disponibles: bigint;
+        enUso: bigint;
+        vencidas: bigint;
+      }>
+    >`
+      SELECT
+        lic.libro_id AS "libroId",
+        libro.titulo,
+        COUNT(*) AS total,
+        SUM(CASE
+          WHEN lic.alumno_id IS NULL
            AND lic.activa = true
-           AND lic.fechaVencimiento >= :hoy
-          THEN 1 ELSE 0 END)`,
-        'disponibles',
-      )
-      .addSelect(
-        `SUM(CASE
-          WHEN lic.alumnoId IS NOT NULL
-          THEN 1 ELSE 0 END)`,
-        'enUso',
-      )
-      .addSelect(
-        `SUM(CASE
-          WHEN lic.alumnoId IS NULL
-           AND lic.fechaVencimiento < :hoy
-          THEN 1 ELSE 0 END)`,
-        'vencidas',
-      )
-      .groupBy('lic.libroId')
-      .addGroupBy('libro.titulo')
-      .setParameter('hoy', hoyStr)
-      .orderBy('total', 'DESC')
-      .getRawMany();
+           AND lic.fecha_vencimiento >= ${hoyStr}::date
+          THEN 1 ELSE 0 END) AS disponibles,
+        SUM(CASE
+          WHEN lic.alumno_id IS NOT NULL
+          THEN 1 ELSE 0 END) AS "enUso",
+        SUM(CASE
+          WHEN lic.alumno_id IS NULL
+           AND lic.fecha_vencimiento < ${hoyStr}::date
+          THEN 1 ELSE 0 END) AS vencidas
+      FROM "Licencia_Libro" lic
+      LEFT JOIN "Libro" libro ON libro.id = lic.libro_id
+      WHERE lic.escuela_id = ${BigInt(escuelaId)}
+      GROUP BY lic.libro_id, libro.titulo
+      ORDER BY total DESC
+    `;
 
     const porLibro = rows.map((r) => ({
       libroId: Number(r.libroId),
@@ -577,70 +569,51 @@ export class LicenciasService {
 
   /**
    * Archiva (mueve) licencias vencidas a una tabla histórica.
-   * Se borran de la tabla activa para que "no salgan" en listados por defecto.
    */
   async archivarLicenciasVencidas(escuelaId?: number, libroId?: number) {
-    const archivadasYEliminadas = await this.licenciaRepo.manager.transaction(async (manager) => {
-      const params: any[] = [];
+    const where: Prisma.LicenciaLibroWhereInput = { fechaVencimiento: { lt: new Date() } };
+    if (escuelaId != null) where.escuelaId = BigInt(escuelaId);
+    if (libroId != null) where.libroId = BigInt(libroId);
 
-      // Se compara contra fecha (date) en DB.
-      let idx = 1;
-      let whereSql = `lic.fecha_vencimiento < CURRENT_DATE`;
+    const totalAArchivar = await this.prisma.licenciaLibro.count({ where });
+    if (totalAArchivar === 0) {
+      return { message: 'No hay licencias vencidas para archivar.', archivadas: 0, eliminadas: 0 };
+    }
 
-      if (escuelaId != null) {
-        whereSql += ` AND lic.escuela_id = $${idx}`;
-        params.push(escuelaId);
-        idx++;
-      }
-      if (libroId != null) {
-        whereSql += ` AND lic.libro_id = $${idx}`;
-        params.push(libroId);
-        idx++;
-      }
+    const params: any[] = [];
+    let whereSql = `lic.fecha_vencimiento < CURRENT_DATE`;
+    let idx = 1;
+    if (escuelaId != null) {
+      whereSql += ` AND lic.escuela_id = $${idx}`;
+      params.push(escuelaId);
+      idx++;
+    }
+    if (libroId != null) {
+      whereSql += ` AND lic.libro_id = $${idx}`;
+      params.push(libroId);
+      idx++;
+    }
 
-      const repo = manager.getRepository(LicenciaLibro);
-      let qb = repo.createQueryBuilder('lic').where('lic.fechaVencimiento < CURRENT_DATE');
+    const insertSql = `
+      INSERT INTO "Licencia_Libro_Archivada"
+        (licencia_id, clave, libro_id, escuela_id, alumno_id, fecha_vencimiento, activa, fecha_asignacion, motivo)
+      SELECT
+        lic.id, lic.clave, lic.libro_id, lic.escuela_id, lic.alumno_id,
+        lic.fecha_vencimiento, lic.activa, lic.fecha_asignacion, 'vencida'
+      FROM "Licencia_Libro" lic
+      WHERE ${whereSql}
+    `;
+    const deleteSql = `DELETE FROM "Licencia_Libro" lic WHERE ${whereSql}`;
 
-      if (escuelaId != null) qb = qb.andWhere('lic.escuelaId = :escuelaId', { escuelaId });
-      if (libroId != null) qb = qb.andWhere('lic.libroId = :libroId', { libroId });
-
-      const totalAArchivar = await qb.getCount();
-      if (totalAArchivar === 0) {
-        return { totalAArchivar: 0, totalEliminadas: 0 };
-      }
-
-      const insertSql = `
-        INSERT INTO "Licencia_Libro_Archivada"
-          (licencia_id, clave, libro_id, escuela_id, alumno_id, fecha_vencimiento, activa, fecha_asignacion, motivo)
-        SELECT
-          lic.id,
-          lic.clave,
-          lic.libro_id,
-          lic.escuela_id,
-          lic.alumno_id,
-          lic.fecha_vencimiento,
-          lic.activa,
-          lic.fecha_asignacion,
-          'vencida'
-        FROM "Licencia_Libro" lic
-        WHERE ${whereSql}
-      `;
-
-      const deleteSql = `
-        DELETE FROM "Licencia_Libro" lic
-        WHERE ${whereSql}
-      `;
-
-      await manager.query(insertSql, params);
-      await manager.query(deleteSql, params);
-
-      return { totalAArchivar, totalEliminadas: totalAArchivar };
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(insertSql, ...params);
+      await tx.$executeRawUnsafe(deleteSql, ...params);
     });
 
     return {
       message: 'Licencias vencidas archivadas correctamente.',
-      archivadas: archivadasYEliminadas.totalAArchivar,
-      eliminadas: archivadasYEliminadas.totalEliminadas,
+      archivadas: totalAArchivar,
+      eliminadas: totalAArchivar,
     };
   }
 
@@ -654,12 +627,12 @@ export class LicenciasService {
   ): Promise<Buffer> {
     const licenciaResult = await this.listar(escuelaId, libroId, estado);
     const data: Array<{
-      id: number;
+      id: any;
       clave: string;
       titulo?: string;
-      libroId: number;
-      escuelaId: number;
-      alumnoId: number | null;
+      libroId: any;
+      escuelaId: any;
+      alumnoId: any;
       alumno?: string | null;
       fechaVencimiento: Date;
       activa: boolean;
@@ -667,15 +640,14 @@ export class LicenciasService {
       fechaAsignacion: Date | null;
     }> = licenciaResult?.data ?? [];
 
-    const escuela = await this.escuelaRepo.findOne({
-      where: { id: escuelaId },
-      select: ['id', 'nombre'],
+    const escuela = await this.prisma.escuela.findUnique({
+      where: { id: BigInt(escuelaId) },
+      select: { id: true, nombre: true },
     });
     const nombreEscuela = escuela?.nombre ?? `Escuela ${escuelaId}`;
     const estadoFiltro = estado ? ` (${estado})` : '';
     const tituloLibroFiltro = libroId ? ` | Libro ${libroId}` : '';
 
-    // Totales derivados del filtro (se alinea con el campo `estado` del listar()).
     const disponibles = data.filter((x) => x.estado === 'disponible').length;
     const enUso = data.filter((x) => x.estado === 'usada').length;
     const vencidas = data.filter((x) => x.estado === 'vencida').length;
@@ -693,21 +665,8 @@ export class LicenciasService {
     const incluirAlumno = data.some((x) => x.alumnoId != null);
 
     const col = incluirAlumno
-      ? {
-          idx: 30,
-          clave: 145,
-          libro: 215,
-          estado: 75,
-          alumno: 190,
-          venc: 90,
-        }
-      : {
-          idx: 30,
-          clave: 145,
-          libro: 215,
-          estado: 75,
-          venc: 90,
-        };
+      ? { idx: 30, clave: 145, libro: 215, estado: 75, alumno: 190, venc: 90 }
+      : { idx: 30, clave: 145, libro: 215, estado: 75, venc: 90 };
 
     const rowH = incluirAlumno ? 20 : 18;
     const headerH = incluirAlumno ? 26 : 22;
@@ -719,9 +678,9 @@ export class LicenciasService {
     };
 
     const estadoColorBg = (estadoTxt: string) => {
-      if (estadoTxt === 'usada') return '#065f46'; // verde
-      if (estadoTxt === 'vencida') return '#b91c1c'; // rojo
-      return '#0f766e'; // disponible (teal)
+      if (estadoTxt === 'usada') return '#065f46';
+      if (estadoTxt === 'vencida') return '#b91c1c';
+      return '#0f766e';
     };
 
     const estadoColorText = () => '#ffffff';
@@ -772,83 +731,40 @@ export class LicenciasService {
       const xAlumno = incluirAlumno ? xEstado + col.estado : null;
       const xVenc = incluirAlumno ? xAlumno! + col.alumno : xEstado + col.estado;
 
-      doc
-        .fontSize(8)
-        .fillColor('#111827')
-        .text(String(lineIdx), xIdx, y + 5, { width: col.idx, align: 'left' });
-
+      doc.fontSize(8).fillColor('#111827').text(String(lineIdx), xIdx, y + 5, { width: col.idx, align: 'left' });
       doc.text(trunc(String(l.clave), 22), xClave, y + 5, { width: col.clave, align: 'left' });
-      doc.text(trunc(String(l.titulo ?? l.libroId), 26), xLibro, y + 5, {
-        width: col.libro,
-        align: 'left',
-      });
+      doc.text(trunc(String(l.titulo ?? l.libroId), 26), xLibro, y + 5, { width: col.libro, align: 'left' });
 
       const bg = estadoColorBg(l.estado);
       doc.rect(xEstado, y, col.estado, rowH).fill(bg);
       doc.fillColor(estadoColorText());
-      doc.fontSize(8).text(String(l.estado).toUpperCase(), xEstado + 4, y + 6, {
-        width: col.estado - 8,
-        align: 'left',
-      });
+      doc.fontSize(8).text(String(l.estado).toUpperCase(), xEstado + 4, y + 6, { width: col.estado - 8, align: 'left' });
       doc.fillColor('#111827');
 
       if (incluirAlumno) {
         const alumnoTxt = l.alumno ?? (l.alumnoId != null ? String(l.alumnoId) : '—');
-        doc.text(trunc(String(alumnoTxt), 24), xAlumno!, y + 5, {
-          width: col.alumno,
-          align: 'left',
-        });
+        doc.text(trunc(String(alumnoTxt), 24), xAlumno!, y + 5, { width: col.alumno, align: 'left' });
       }
       doc.text(formatDate(l.fechaVencimiento), xVenc, y + 5, { width: col.venc, align: 'left' });
 
       doc.y = y + rowH;
     };
 
-    // --- Resumen/Encabezado ---
-    doc
-      .fontSize(18)
-      .fillColor('#111827')
-      .font('Helvetica-Bold')
-      .text('Licencias por escuela', { align: 'left' });
+    doc.fontSize(18).fillColor('#111827').font('Helvetica-Bold').text('Licencias por escuela', { align: 'left' });
     doc.moveDown(0.2);
-
     doc.fontSize(10).fillColor('#374151').font('Helvetica');
     doc.text(`Escuela: ${nombreEscuela}`);
     doc.text(`Generado en: ${new Date().toISOString()}`);
     doc.text(`Filtro: ${estadoFiltro}${tituloLibroFiltro}`);
     doc.moveDown(0.4);
+    doc.fontSize(11).fillColor('#111827').font('Helvetica-Bold').text(
+      `Total: ${data.length} | Disponibles: ${disponibles} | En uso: ${enUso} | Vencidas: ${vencidas}`,
+    );
 
-    doc
-      .fontSize(11)
-      .fillColor('#111827')
-      .font('Helvetica-Bold')
-      .text(
-        `Total: ${data.length} | Disponibles: ${disponibles} | En uso: ${enUso} | Vencidas: ${vencidas}`,
-      );
-
-    // Totales por libro (derivados del filtro actual)
-    const resumenPorLibro = new Map<
-      number,
-      {
-        libroId: number;
-        titulo: string;
-        total: number;
-        disponibles: number;
-        enUso: number;
-        vencidas: number;
-      }
-    >();
-
+    const resumenPorLibro = new Map<number, { libroId: number; titulo: string; total: number; disponibles: number; enUso: number; vencidas: number }>();
     for (const l of data) {
       const key = Number(l.libroId);
-      const item = resumenPorLibro.get(key) ?? {
-        libroId: key,
-        titulo: String(l.titulo ?? key),
-        total: 0,
-        disponibles: 0,
-        enUso: 0,
-        vencidas: 0,
-      };
+      const item = resumenPorLibro.get(key) ?? { libroId: key, titulo: String(l.titulo ?? key), total: 0, disponibles: 0, enUso: 0, vencidas: 0 };
       item.total += 1;
       if (l.estado === 'disponible') item.disponibles += 1;
       if (l.estado === 'usada') item.enUso += 1;
@@ -860,25 +776,15 @@ export class LicenciasService {
     const maxLibrosRes = 8;
     const porLibroTxt = porLibroSorted
       .slice(0, maxLibrosRes)
-      .map(
-        (x) =>
-          `${trunc(x.titulo, 18)}: ${x.total} (Disp ${x.disponibles}, Uso ${x.enUso}, Venc ${x.vencidas})`,
-      )
+      .map((x) => `${trunc(x.titulo, 18)}: ${x.total} (Disp ${x.disponibles}, Uso ${x.enUso}, Venc ${x.vencidas})`)
       .join('\n');
 
     doc.moveDown(0.25);
     doc.fontSize(9).fillColor('#111827').font('Helvetica-Bold').text('Totales por libro:');
-    doc
-      .fontSize(9)
-      .fillColor('#374151')
-      .font('Helvetica')
-      .text(
-        porLibroTxt +
-          (porLibroSorted.length > maxLibrosRes
-            ? `\n... (+${porLibroSorted.length - maxLibrosRes} libros)`
-            : ''),
-      );
-    // Leyenda de estados
+    doc.fontSize(9).fillColor('#374151').font('Helvetica').text(
+      porLibroTxt + (porLibroSorted.length > maxLibrosRes ? `\n... (+${porLibroSorted.length - maxLibrosRes} libros)` : ''),
+    );
+
     doc.moveDown(0.15);
     doc.fontSize(8).fillColor('#111827').font('Helvetica-Bold').text('Leyenda:');
     const legendTop = doc.y + 1;
@@ -891,29 +797,18 @@ export class LicenciasService {
     ];
     legendItems.forEach((it, idx) => {
       const x = marginX + idx * legendGap;
-      doc
-        .fillColor(estadoColorBg(it.estado))
-        .rect(x, legendTop, legendSq, legendSq)
-        .fill(estadoColorBg(it.estado));
-      doc
-        .fillColor('#374151')
-        .fontSize(8)
-        .font('Helvetica')
-        .text(it.label, x + legendSq + 4, legendTop - 2);
+      doc.fillColor(estadoColorBg(it.estado)).rect(x, legendTop, legendSq, legendSq).fill(estadoColorBg(it.estado));
+      doc.fillColor('#374151').fontSize(8).font('Helvetica').text(it.label, x + legendSq + 4, legendTop - 2);
     });
     doc.moveDown(0.25);
 
-    // --- Tabla ---
     doc.fontSize(9).fillColor('#111827').font('Helvetica');
-
-    // Evita PDF infinito: si hay miles, recortamos y avisamos.
     const max = 2000;
     const slice = data.slice(0, max);
 
     drawTableHeader();
 
     for (let i = 0; i < slice.length; i++) {
-      // Asegura espacio para la fila
       if (doc.y + rowH > pageHeight - marginBottom) {
         doc.addPage();
         drawTableHeader();
@@ -923,11 +818,9 @@ export class LicenciasService {
 
     if (data.length > max) {
       doc.moveDown(0.3);
-      doc
-        .fontSize(10)
-        .fillColor('#4b5563')
-        .font('Helvetica')
-        .text(`(Se muestran los primeros ${max} registros; total filtrado=${data.length}).`);
+      doc.fontSize(10).fillColor('#4b5563').font('Helvetica').text(
+        `(Se muestran los primeros ${max} registros; total filtrado=${data.length}).`,
+      );
     }
 
     doc.end();
@@ -949,10 +842,9 @@ export class LicenciasService {
    * Activar/desactivar licencia.
    */
   async setActiva(id: number, activa: boolean) {
-    const lic = await this.licenciaRepo.findOne({ where: { id } });
+    const lic = await this.prisma.licenciaLibro.findUnique({ where: { id: BigInt(id) } });
     if (!lic) throw new NotFoundException(`No se encontró la licencia con ID ${id}`);
-    lic.activa = activa;
-    await this.licenciaRepo.save(lic);
+    await this.prisma.licenciaLibro.update({ where: { id: BigInt(id) }, data: { activa } });
     return {
       message: activa ? 'Licencia activada.' : 'Licencia desactivada.',
       data: { id, clave: lic.clave, activa },
@@ -964,7 +856,7 @@ export class LicenciasService {
    * Se archiva en Licencia_Libro_Archivada con motivo 'eliminada_admin' antes de borrar.
    */
   async eliminarLicencia(id: number) {
-    const lic = await this.licenciaRepo.findOne({ where: { id } });
+    const lic = await this.prisma.licenciaLibro.findUnique({ where: { id: BigInt(id) } });
     if (!lic) {
       throw new NotFoundException(`No se encontró la licencia con ID ${id}`);
     }
@@ -974,25 +866,13 @@ export class LicenciasService {
       );
     }
 
-    await this.licenciaRepo.manager.transaction(async (manager) => {
-      await manager.query(
-        `
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`
         INSERT INTO "Licencia_Libro_Archivada"
           (licencia_id, clave, libro_id, escuela_id, alumno_id, fecha_vencimiento, activa, fecha_asignacion, motivo)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'eliminada_admin')
-        `,
-        [
-          lic.id,
-          lic.clave,
-          lic.libroId,
-          lic.escuelaId,
-          lic.alumnoId,
-          lic.fechaVencimiento,
-          lic.activa,
-          lic.fechaAsignacion,
-        ],
-      );
-      await manager.delete(LicenciaLibro, { id: lic.id });
+        VALUES (${lic.id}, ${lic.clave}, ${lic.libroId}, ${lic.escuelaId}, ${lic.alumnoId}, ${lic.fechaVencimiento}, ${lic.activa}, ${lic.fechaAsignacion}, 'eliminada_admin')
+      `;
+      await tx.licenciaLibro.delete({ where: { id: lic.id } });
     });
 
     this.logger.log(`Licencia ${lic.clave} (id=${id}) eliminada por admin`);
@@ -1005,35 +885,25 @@ export class LicenciasService {
 
   /**
    * Eliminar licencias disponibles en lote (por error al generar).
-   * Solo elimina licencias con alumnoId IS NULL, activa=true y no vencidas.
-   * Se archivan antes de borrar para auditoría.
-   * - Sin escuelaId: todas las escuelas
-   * - Sin libroId: todos los libros
-   * - Sin cantidad: todas las que coincidan
    */
   async eliminarLicenciasDisponibles(escuelaId?: number, libroId?: number, cantidad?: number) {
     const hoy = new Date();
     hoy.setHours(0, 0, 0, 0);
-    const hoyStr = hoy.toISOString().slice(0, 10);
 
-    const qb = this.licenciaRepo
-      .createQueryBuilder('lic')
-      .where('lic.alumnoId IS NULL')
-      .andWhere('lic.activa = true')
-      .andWhere('lic.fechaVencimiento >= :hoy', { hoy: hoyStr })
-      .orderBy('lic.createdAt', 'ASC');
+    const where: Prisma.LicenciaLibroWhereInput = {
+      alumnoId: null,
+      activa: true,
+      fechaVencimiento: { gte: hoy },
+    };
+    if (escuelaId != null) where.escuelaId = BigInt(escuelaId);
+    if (libroId != null) where.libroId = BigInt(libroId);
 
-    if (escuelaId != null) {
-      qb.andWhere('lic.escuelaId = :escuelaId', { escuelaId });
-    }
-    if (libroId != null) {
-      qb.andWhere('lic.libroId = :libroId', { libroId });
-    }
-    if (cantidad != null && cantidad > 0) {
-      qb.take(Math.min(cantidad, 10000));
-    }
+    const licencias = await this.prisma.licenciaLibro.findMany({
+      where,
+      orderBy: { createdAt: 'asc' },
+      ...(cantidad != null && cantidad > 0 ? { take: Math.min(cantidad, 10000) } : {}),
+    });
 
-    const licencias = await qb.getMany();
     if (licencias.length === 0) {
       return {
         message: 'No hay licencias disponibles para eliminar.',
@@ -1046,26 +916,14 @@ export class LicenciasService {
       };
     }
 
-    await this.licenciaRepo.manager.transaction(async (manager) => {
+    await this.prisma.$transaction(async (tx) => {
       for (const lic of licencias) {
-        await manager.query(
-          `
+        await tx.$executeRaw`
           INSERT INTO "Licencia_Libro_Archivada"
             (licencia_id, clave, libro_id, escuela_id, alumno_id, fecha_vencimiento, activa, fecha_asignacion, motivo)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'eliminada_admin')
-          `,
-          [
-            lic.id,
-            lic.clave,
-            lic.libroId,
-            lic.escuelaId,
-            lic.alumnoId,
-            lic.fechaVencimiento,
-            lic.activa,
-            lic.fechaAsignacion,
-          ],
-        );
-        await manager.delete(LicenciaLibro, { id: lic.id });
+          VALUES (${lic.id}, ${lic.clave}, ${lic.libroId}, ${lic.escuelaId}, ${lic.alumnoId}, ${lic.fechaVencimiento}, ${lic.activa}, ${lic.fechaAsignacion}, 'eliminada_admin')
+        `;
+        await tx.licenciaLibro.delete({ where: { id: lic.id } });
       }
     });
 

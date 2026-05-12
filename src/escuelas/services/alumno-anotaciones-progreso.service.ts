@@ -4,32 +4,20 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Alumno } from '../../personas/entities/alumno.entity';
-import { Segmento } from '../../libros/entities/segmento.entity';
-import { AlumnoLibro } from '../entities/alumno-libro.entity';
-import { Anotacion } from '../entities/anotacion.entity';
+import { PrismaService } from '../../prisma/prisma.service';
 import { CrearAnotacionDto } from '../dto/crear-anotacion.dto';
 import { LicenciasService } from '../../licencias/licencias.service';
 
 @Injectable()
 export class AlumnoAnotacionesProgresoService {
   constructor(
-    @InjectRepository(Alumno)
-    private readonly alumnoRepository: Repository<Alumno>,
-    @InjectRepository(AlumnoLibro)
-    private readonly alumnoLibroRepository: Repository<AlumnoLibro>,
-    @InjectRepository(Segmento)
-    private readonly segmentoRepository: Repository<Segmento>,
-    @InjectRepository(Anotacion)
-    private readonly anotacionRepository: Repository<Anotacion>,
+    private readonly prisma: PrismaService,
     private readonly licenciasService: LicenciasService,
   ) {}
 
   private async libroAsignadoAlAlumno(alumnoId: number, libroId: number): Promise<boolean> {
-    const existe = await this.alumnoLibroRepository.findOne({
-      where: { alumnoId, libroId },
+    const existe = await this.prisma.alumnoLibro.findFirst({
+      where: { alumnoId: BigInt(alumnoId), libroId: BigInt(libroId) },
     });
     if (!existe) return false;
     return this.licenciasService.accesoLibroActivoSegunLicencia(alumnoId, libroId);
@@ -40,24 +28,19 @@ export class AlumnoAnotacionesProgresoService {
       throw new BadRequestException('offsetFin debe ser mayor a offsetInicio.');
     }
 
+    const alumnoIdBig = BigInt(alumnoId);
     const [alumno, tieneLibro, segmento] = await Promise.all([
-      this.alumnoRepository.findOne({ where: { id: alumnoId }, select: ['id'] }),
+      this.prisma.alumno.findUnique({ where: { id: alumnoIdBig }, select: { id: true } }),
       this.libroAsignadoAlAlumno(alumnoId, dto.libroId),
-      this.segmentoRepository.findOne({
-        where: { id: dto.segmentoId },
-        select: ['id', 'libroId', 'contenido'],
+      this.prisma.segmento.findUnique({
+        where: { id: BigInt(dto.segmentoId) },
+        select: { id: true, libroId: true, contenido: true },
       }),
     ]);
 
-    if (!alumno) {
-      throw new NotFoundException('Alumno no encontrado.');
-    }
-    if (!tieneLibro) {
-      throw new ForbiddenException('No tienes asignado este libro.');
-    }
-    if (!segmento) {
-      throw new NotFoundException('Segmento no encontrado.');
-    }
+    if (!alumno) throw new NotFoundException('Alumno no encontrado.');
+    if (!tieneLibro) throw new ForbiddenException('No tienes asignado este libro.');
+    if (!segmento) throw new NotFoundException('Segmento no encontrado.');
     if (Number(segmento.libroId) !== Number(dto.libroId)) {
       throw new BadRequestException('El segmento no pertenece al libro enviado.');
     }
@@ -74,60 +57,47 @@ export class AlumnoAnotacionesProgresoService {
       throw new BadRequestException('Para tipo "comentario" debes enviar comentario.');
     }
 
-    const anotacion = this.anotacionRepository.create({
-      alumnoId,
-      libroId: dto.libroId,
-      segmentoId: dto.segmentoId,
-      tipo: dto.tipo,
-      textoSeleccionado: dto.textoSeleccionado,
-      offsetInicio: dto.offsetInicio,
-      offsetFin: dto.offsetFin,
-      color: dto.tipo === 'highlight' ? (dto.color ?? null) : null,
-      comentario: dto.tipo === 'comentario' ? (dto.comentario ?? '').trim() : null,
+    const guardada = await this.prisma.anotacion.create({
+      data: {
+        alumnoId: alumnoIdBig,
+        libroId: BigInt(dto.libroId),
+        segmentoId: BigInt(dto.segmentoId),
+        tipo: dto.tipo,
+        textoSeleccionado: dto.textoSeleccionado,
+        offsetInicio: dto.offsetInicio,
+        offsetFin: dto.offsetFin,
+        color: dto.tipo === 'highlight' ? (dto.color ?? null) : null,
+        comentario: dto.tipo === 'comentario' ? (dto.comentario ?? '').trim() : null,
+      },
     });
-    const guardada = await this.anotacionRepository.save(anotacion);
 
-    return {
-      message: 'Anotación guardada correctamente.',
-      data: guardada,
-    };
+    return { message: 'Anotación guardada correctamente.', data: guardada };
   }
 
   async eliminarAnotacionAlumno(alumnoId: number, anotacionId: number) {
-    const anotacion = await this.anotacionRepository.findOne({
-      where: { id: anotacionId },
-      select: ['id', 'alumnoId'],
+    const anotacion = await this.prisma.anotacion.findUnique({
+      where: { id: BigInt(anotacionId) },
+      select: { id: true, alumnoId: true },
     });
-    if (!anotacion) {
-      throw new NotFoundException('Anotación no encontrada.');
-    }
-    if (Number(anotacion.alumnoId) !== Number(alumnoId)) {
+    if (!anotacion) throw new NotFoundException('Anotación no encontrada.');
+    if (Number(anotacion.alumnoId) !== alumnoId) {
       throw new ForbiddenException('No puedes eliminar anotaciones de otro alumno.');
     }
 
-    await this.anotacionRepository.delete({ id: anotacionId });
-    return {
-      message: 'Anotación eliminada correctamente.',
-      data: { id: anotacionId },
-    };
+    await this.prisma.anotacion.delete({ where: { id: BigInt(anotacionId) } });
+    return { message: 'Anotación eliminada correctamente.', data: { id: anotacionId } };
   }
 
   async listarAnotacionesAlumnoPorLibro(alumnoId: number, libroId: number) {
     const tieneLibro = await this.libroAsignadoAlAlumno(alumnoId, libroId);
-    if (!tieneLibro) {
-      throw new ForbiddenException('No tienes asignado este libro.');
-    }
+    if (!tieneLibro) throw new ForbiddenException('No tienes asignado este libro.');
 
-    const data = await this.anotacionRepository.find({
-      where: { alumnoId, libroId },
-      order: { creadoEn: 'ASC' },
+    const data = await this.prisma.anotacion.findMany({
+      where: { alumnoId: BigInt(alumnoId), libroId: BigInt(libroId) },
+      orderBy: { creadoEn: 'asc' },
     });
 
-    return {
-      message: 'Anotaciones obtenidas correctamente.',
-      total: data.length,
-      data,
-    };
+    return { message: 'Anotaciones obtenidas correctamente.', total: data.length, data };
   }
 
   async actualizarProgresoLibro(
@@ -136,34 +106,35 @@ export class AlumnoAnotacionesProgresoService {
     dto: { porcentaje?: number; ultimoSegmentoId?: number },
   ) {
     const permitido = await this.libroAsignadoAlAlumno(alumnoId, libroId);
-    if (!permitido) {
-      throw new NotFoundException('No tienes asignado este libro.');
-    }
-    const asignacion = await this.alumnoLibroRepository.findOne({
-      where: { alumnoId, libroId },
-      relations: ['libro'],
-    });
-    if (!asignacion) {
-      throw new NotFoundException('No tienes asignado este libro.');
-    }
+    if (!permitido) throw new NotFoundException('No tienes asignado este libro.');
 
-    if (dto.porcentaje !== undefined) {
-      asignacion.porcentaje = Math.max(0, Math.min(100, dto.porcentaje));
-    }
-    if (dto.ultimoSegmentoId !== undefined) {
-      asignacion.ultimoSegmentoId = dto.ultimoSegmentoId;
-    }
-    asignacion.ultimaLectura = new Date();
-    await this.alumnoLibroRepository.save(asignacion);
+    const asignacion = await this.prisma.alumnoLibro.findFirst({
+      where: { alumnoId: BigInt(alumnoId), libroId: BigInt(libroId) },
+      include: { libro: true },
+    });
+    if (!asignacion) throw new NotFoundException('No tienes asignado este libro.');
+
+    const updated = await this.prisma.alumnoLibro.update({
+      where: { id: asignacion.id },
+      data: {
+        ...(dto.porcentaje !== undefined && {
+          porcentaje: Math.max(0, Math.min(100, dto.porcentaje)),
+        }),
+        ...(dto.ultimoSegmentoId !== undefined && {
+          ultimoSegmentoId: dto.ultimoSegmentoId != null ? BigInt(dto.ultimoSegmentoId) : null,
+        }),
+        ultimaLectura: new Date(),
+      },
+    });
 
     return {
       message: 'Progreso actualizado correctamente.',
       data: {
-        alumnoLibroId: asignacion.id,
+        alumnoLibroId: Number(updated.id),
         libroId,
-        progreso: asignacion.porcentaje,
-        ultimoSegmentoId: asignacion.ultimoSegmentoId,
-        ultimaLectura: asignacion.ultimaLectura,
+        progreso: updated.porcentaje,
+        ultimoSegmentoId: updated.ultimoSegmentoId != null ? Number(updated.ultimoSegmentoId) : null,
+        ultimaLectura: updated.ultimaLectura,
       },
     };
   }

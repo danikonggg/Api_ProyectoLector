@@ -2,14 +2,11 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { JwtPersonaLoaderService } from './services/jwt-persona-loader.service';
-import { Persona } from '../personas/entities/persona.entity';
-import { Administrador } from '../personas/entities/administrador.entity';
 
 @Module({
   imports: [
@@ -24,7 +21,6 @@ import { Administrador } from '../personas/entities/administrador.entity';
       }),
       inject: [ConfigService],
     }),
-    TypeOrmModule.forFeature([Persona, Administrador]),
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, JwtAuthGuard, JwtPersonaLoaderService],

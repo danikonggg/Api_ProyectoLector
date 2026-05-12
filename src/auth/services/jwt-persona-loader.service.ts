@@ -1,30 +1,41 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
-import { instanceToPlain, plainToInstance } from 'class-transformer';
-import { Persona } from '../../personas/entities/persona.entity';
+import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../infra/redis/redis.service';
 
-const RELATIONS_BY_TIPO: Record<string, string[]> = {
-  administrador: ['administrador'],
-  alumno: ['alumno'],
-  director: ['director'],
-  maestro: ['maestro'],
-  padre: ['padre'],
+const RELATIONS_BY_TIPO: Record<string, Record<string, boolean>> = {
+  administrador: { administrador: true },
+  alumno: { alumno: true },
+  director: { director: true },
+  maestro: { maestro: true },
+  padre: { padre: true },
 };
 
 const CACHE_PREFIX = 'lector:jwt:persona:';
 
+export type PersonaPrincipal = {
+  id: bigint;
+  nombre: string;
+  apellidoPaterno: string;
+  apellidoMaterno: string | null;
+  correo: string | null;
+  tipoPersona: string | null;
+  activo: boolean | null;
+  ultimaConexion: Date | null;
+  administrador?: unknown;
+  alumno?: unknown;
+  director?: unknown;
+  maestro?: unknown;
+  padre?: unknown;
+};
+
 @Injectable()
 export class JwtPersonaLoaderService {
   private readonly ttlMs: number;
-  /** Fallback local si Redis deshabilitado */
-  private readonly mem = new Map<number, { persona: Persona; exp: number }>();
+  private readonly mem = new Map<number, { persona: PersonaPrincipal; exp: number }>();
 
   constructor(
-    @InjectRepository(Persona)
-    private readonly personaRepository: Repository<Persona>,
+    private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     private readonly redis: RedisService,
   ) {
@@ -35,18 +46,16 @@ export class JwtPersonaLoaderService {
     return `${CACHE_PREFIX}${personaId}`;
   }
 
-  private async getCached(personaId: number): Promise<Persona | null> {
+  private async getCached(personaId: number): Promise<PersonaPrincipal | null> {
     if (this.ttlMs <= 0) return null;
 
     if (this.redis.enabled && this.redis.raw) {
       const raw = await this.redis.get(this.cacheKey(personaId));
       if (!raw) return null;
       try {
-        const plain = JSON.parse(raw) as Record<string, unknown>;
-        return plainToInstance(Persona, plain, {
-          enableImplicitConversion: true,
-          excludeExtraneousValues: false,
-        });
+        const plain = JSON.parse(raw) as PersonaPrincipal;
+        if (plain.id != null) plain.id = BigInt(plain.id as unknown as string | number);
+        return plain;
       } catch {
         await this.redis.del(this.cacheKey(personaId));
         return null;
@@ -58,11 +67,10 @@ export class JwtPersonaLoaderService {
     return null;
   }
 
-  private async setCached(personaId: number, persona: Persona): Promise<void> {
+  private async setCached(personaId: number, persona: PersonaPrincipal): Promise<void> {
     if (this.ttlMs <= 0) return;
 
-    const plain = instanceToPlain(persona, { excludeExtraneousValues: false });
-    const payload = JSON.stringify(plain);
+    const payload = JSON.stringify(persona);
     const ttlSec = Math.max(1, Math.ceil(this.ttlMs / 1000));
 
     if (this.redis.enabled && this.redis.raw) {
@@ -73,13 +81,12 @@ export class JwtPersonaLoaderService {
     this.mem.set(personaId, { persona, exp: Date.now() + this.ttlMs });
   }
 
-  async loadPrincipal(personaId: number): Promise<Persona> {
+  async loadPrincipal(personaId: number): Promise<PersonaPrincipal> {
     const cached = await this.getCached(personaId);
 
-    /** Siempre comprobar activo/tipo en BD antes de devolver cache (evita usuario desactivado con JWT válido). */
-    const authRow = await this.personaRepository.findOne({
-      where: { id: personaId },
-      select: ['id', 'activo', 'tipoPersona'],
+    const authRow = await this.prisma.persona.findUnique({
+      where: { id: BigInt(personaId) },
+      select: { id: true, activo: true, tipoPersona: true },
     });
 
     if (!authRow) {
@@ -95,25 +102,21 @@ export class JwtPersonaLoaderService {
     const tipoDb = (authRow.tipoPersona ?? '').trim();
     if (cached) {
       const tipoCached = (cached.tipoPersona ?? '').trim();
-      if (tipoDb === tipoCached) {
-        return cached;
-      }
+      if (tipoDb === tipoCached) return cached;
       await this.invalidate(personaId);
     }
 
-    const relations = RELATIONS_BY_TIPO[tipoDb] ?? [];
+    const include = RELATIONS_BY_TIPO[tipoDb] ?? {};
 
-    const persona = await this.personaRepository.findOne({
-      where: { id: personaId },
-      relations: relations.length ? relations : [],
+    const persona = await this.prisma.persona.findUnique({
+      where: { id: BigInt(personaId) },
+      include: Object.keys(include).length > 0 ? include : undefined,
     });
 
-    if (!persona) {
-      throw new UnauthorizedException('Usuario no encontrado');
-    }
+    if (!persona) throw new UnauthorizedException('Usuario no encontrado');
 
-    await this.setCached(personaId, persona);
-    return persona;
+    await this.setCached(personaId, persona as PersonaPrincipal);
+    return persona as PersonaPrincipal;
   }
 
   async invalidate(personaId: number): Promise<void> {

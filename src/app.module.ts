@@ -2,7 +2,7 @@ import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerGuard } from '@nestjs/throttler';
-import { TypeOrmModule } from '@nestjs/typeorm';
+import { PrismaModule } from './prisma/prisma.module';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
 import { AppController } from './app.controller';
@@ -22,7 +22,6 @@ import { GroqModule } from './groq/groq.module';
 import { AlumnoModule } from './alumno/alumno.module';
 import { ProfesorModule } from './profesor/profesor.module';
 import { AuditHttpInterceptor } from './audit/interceptors/audit-http.interceptor';
-import { createTypeOrmConfig } from './config/typeorm-root.factory';
 import { RedisModule } from './infra/redis/redis.module';
 import { QueuesModule } from './queues/queues.module';
 import { NoopQueuesModule } from './queues/noop-queues.module';
@@ -67,11 +66,7 @@ import { buildLoggerParams } from './config/pino-logger.config';
       inject: [ConfigService],
     }),
 
-    TypeOrmModule.forRootAsync({
-      imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => createTypeOrmConfig(configService),
-      inject: [ConfigService],
-    }),
+    PrismaModule,
 
     RedisModule,
     ...(isRedisConfigured() ? [QueuesModule] : [NoopQueuesModule]),

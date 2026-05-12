@@ -13,6 +13,11 @@ import './infra/telemetry/prometheus-metrics';
 /** Límite de tamaño del body para evitar payloads enormes (DoS) */
 const BODY_LIMIT = '1mb';
 
+// Serialización de BigInt para JSON (Prisma devuelve bigint en IDs)
+(BigInt.prototype as unknown as { toJSON: () => number }).toJSON = function () {
+  return Number(this);
+};
+
 async function bootstrap() {
   await initOpenTelemetry();
   validateEnv();

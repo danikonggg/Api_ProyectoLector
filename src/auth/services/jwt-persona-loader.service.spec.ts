@@ -34,7 +34,7 @@ describe('JwtPersonaLoaderService', () => {
 
     expect(findOne).toHaveBeenCalledTimes(2);
     expect(findOne.mock.calls[1][0].relations).toEqual(['alumno']);
-    expect((p as Persona).alumno?.id).toBe(99);
+    expect((p as any).alumno?.id).toBe(99);
   });
 
   it('falla si usuario no existe en auth row', async () => {

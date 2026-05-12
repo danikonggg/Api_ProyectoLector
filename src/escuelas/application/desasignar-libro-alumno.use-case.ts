@@ -1,9 +1,5 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, IsNull, Repository } from 'typeorm';
-import { AlumnoLibro } from '../entities/alumno-libro.entity';
-import { MaestroGrupo } from '../entities/maestro-grupo.entity';
-import { AlumnoMaestro } from '../../personas/entities/alumno-maestro.entity';
+import { PrismaService } from '../../prisma/prisma.service';
 import { alumnoPerteneceAGrupos } from '../../common/utils/grupo.utils';
 import { AuditService } from '../../audit/audit.service';
 
@@ -21,50 +17,44 @@ export interface DesasignarLibroContext {
 @Injectable()
 export class DesasignarLibroAlumnoUseCase {
   constructor(
-    @InjectRepository(AlumnoLibro)
-    private readonly alumnoLibroRepository: Repository<AlumnoLibro>,
-    @InjectRepository(MaestroGrupo)
-    private readonly maestroGrupoRepository: Repository<MaestroGrupo>,
-    @InjectDataSource()
-    private readonly dataSource: DataSource,
+    private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
   ) {}
 
   async execute(alumnoId: number, libroId: number, context?: DesasignarLibroContext) {
-    const asignacion = await this.alumnoLibroRepository.findOne({
-      where: { alumnoId, libroId },
-      relations: ['alumno'],
+    const alumnoIdBig = BigInt(alumnoId);
+    const libroIdBig = BigInt(libroId);
+
+    const asignacion = await this.prisma.alumnoLibro.findFirst({
+      where: { alumnoId: alumnoIdBig, libroId: libroIdBig },
+      include: { alumno: true },
     });
-    if (!asignacion) {
-      throw new NotFoundException('No se encontró la asignación libro-alumno.');
-    }
+    if (!asignacion) throw new NotFoundException('No se encontró la asignación libro-alumno.');
 
     if (context?.escuelaIdRestriccion != null) {
-      if (Number(asignacion.alumno?.escuelaId) !== Number(context.escuelaIdRestriccion)) {
+      if (Number(asignacion.alumno?.escuelaId) !== context.escuelaIdRestriccion) {
         throw new ForbiddenException('Solo puedes desasignar libros de alumnos de tu escuela.');
       }
     }
 
     if (context?.maestroId != null) {
-      const enClase = await this.dataSource.getRepository(AlumnoMaestro).findOne({
-        where: {
-          maestroId: context.maestroId,
-          alumnoId,
-          fechaFin: IsNull(),
-        },
+      const maestroIdBig = BigInt(context.maestroId);
+      const enClase = await this.prisma.alumnoMaestro.findFirst({
+        where: { maestroId: maestroIdBig, alumnoId: alumnoIdBig, fechaFin: null },
       });
       if (!enClase) {
-        const mgList = await this.maestroGrupoRepository.find({
-          where: { maestroId: context.maestroId },
-          relations: ['grupo'],
+        const mgList = await this.prisma.maestroGrupo.findMany({
+          where: { maestroId: maestroIdBig },
+          include: { grupo: true },
         });
-        if (!asignacion.alumno || !alumnoPerteneceAGrupos(asignacion.alumno, mgList)) {
+        if (!asignacion.alumno || !alumnoPerteneceAGrupos(asignacion.alumno as any, mgList as any)) {
           throw new ForbiddenException('Solo puedes desasignar libros de alumnos de tus grupos.');
         }
       }
     }
 
-    await this.alumnoLibroRepository.remove(asignacion);
+    await this.prisma.alumnoLibro.delete({ where: { id: asignacion.id } });
+
     const accion =
       context?.escuelaIdRestriccion != null
         ? 'director_desasignar_libro'

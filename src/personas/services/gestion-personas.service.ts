@@ -5,17 +5,8 @@ import {
   ConflictException,
   ForbiddenException,
 } from '@nestjs/common';
-import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
 import * as bcrypt from 'bcrypt';
-import { Persona } from '../entities/persona.entity';
-import { Administrador } from '../entities/administrador.entity';
-import { Padre } from '../entities/padre.entity';
-import { Alumno } from '../entities/alumno.entity';
-import { Maestro } from '../entities/maestro.entity';
-import { Director } from '../entities/director.entity';
-import { AlumnoMaestro } from '../entities/alumno-maestro.entity';
-import { Grupo } from '../../escuelas/entities/grupo.entity';
+import { PrismaService } from '../../prisma/prisma.service';
 import { ActualizarUsuarioDto } from '../dto/actualizar-usuario.dto';
 import { AuditService } from '../../audit/audit.service';
 import { JwtPersonaLoaderService } from '../../auth/services/jwt-persona-loader.service';
@@ -31,23 +22,16 @@ export class GestionPersonasService {
   private readonly logger = new Logger(GestionPersonasService.name);
 
   constructor(
-    @InjectRepository(Persona)
-    private readonly personaRepository: Repository<Persona>,
-    @InjectRepository(Alumno)
-    private readonly alumnoRepository: Repository<Alumno>,
-    @InjectRepository(Grupo)
-    private readonly grupoRepository: Repository<Grupo>,
-    @InjectDataSource()
-    private readonly dataSource: DataSource,
+    private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
     private readonly jwtPersonaLoader: JwtPersonaLoaderService,
     private readonly consultaPersonasService: ConsultaPersonasService,
   ) {}
 
   async actualizarUsuarioPorId(id: number, dto: ActualizarUsuarioDto, auditContext?: AuditContext) {
-    const persona = await this.personaRepository.findOne({
-      where: { id },
-      relations: ['administrador', 'director', 'maestro', 'alumno', 'padre'],
+    const persona = await this.prisma.persona.findUnique({
+      where: { id: BigInt(id) },
+      include: { administrador: true, director: true, maestro: true, alumno: true, padre: true },
     });
 
     if (!persona) throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
@@ -55,63 +39,53 @@ export class GestionPersonasService {
     if (dto.correo != null && dto.correo.trim() !== '') {
       const correoObj = dto.correo.trim();
       if (correoObj !== persona.correo) {
-        const otro = await this.personaRepository.findOne({
+        const otro = await this.prisma.persona.findFirst({
           where: { correo: correoObj },
-          select: ['id'],
+          select: { id: true },
         });
         if (otro) throw new ConflictException('El correo ya está en uso por otro usuario');
       }
     }
 
-    if (dto.nombre != null) persona.nombre = dto.nombre.trim();
-    if (dto.apellidoPaterno != null) persona.apellidoPaterno = dto.apellidoPaterno.trim();
-    if (dto.apellidoMaterno != null) persona.apellidoMaterno = dto.apellidoMaterno.trim() || null;
-    if (dto.apellido != null) persona.apellidoPaterno = dto.apellido.trim(); // Compatibilidad
-    if (dto.correo != null) persona.correo = dto.correo.trim() || null;
-    if (dto.telefono != null) persona.telefono = dto.telefono.trim() || null;
-    if (dto.fechaNacimiento != null) persona.fechaNacimiento = new Date(dto.fechaNacimiento);
-    if (dto.genero != null) persona.genero = dto.genero.trim() || null;
-    if (dto.activo != null) persona.activo = dto.activo;
+    const data: Record<string, any> = {};
+    if (dto.nombre != null) data.nombre = dto.nombre.trim();
+    if (dto.apellidoPaterno != null) data.apellidoPaterno = dto.apellidoPaterno.trim();
+    if (dto.apellidoMaterno != null) data.apellidoMaterno = dto.apellidoMaterno.trim() || null;
+    if (dto.apellido != null) data.apellidoPaterno = dto.apellido.trim();
+    if (dto.correo != null) data.correo = dto.correo.trim() || null;
+    if (dto.telefono != null) data.telefono = dto.telefono.trim() || null;
+    if (dto.fechaNacimiento != null) data.fechaNacimiento = new Date(dto.fechaNacimiento);
+    if (dto.genero != null) data.genero = dto.genero.trim() || null;
+    if (dto.activo != null) data.activo = dto.activo;
 
     if (dto.password != null && dto.password.trim() !== '') {
-      persona.password = await bcrypt.hash(dto.password, 10);
+      data.password = await bcrypt.hash(dto.password, 10);
     }
 
-    await this.personaRepository.save(persona);
+    await this.prisma.persona.update({ where: { id: BigInt(id) }, data });
     await this.jwtPersonaLoader.invalidate(id);
 
     await this.auditService.log('actualizar_usuario', {
       usuarioId: auditContext?.usuarioId ?? null,
       ip: auditContext?.ip ?? null,
-      detalles: `personaId: ${id} | ${persona.correo ?? ''}`,
+      detalles: `personaId: ${id} | ${data.correo ?? persona.correo ?? ''}`,
     });
 
-    const resultado = await this.personaRepository.findOne({
-      where: { id },
-      relations: [
-        'administrador',
-        'director',
-        'director.escuela',
-        'maestro',
-        'maestro.escuela',
-        'alumno',
-        'alumno.escuela',
-        'padre',
-      ],
-      select: [
-        'id',
-        'nombre',
-        'apellidoPaterno',
-        'apellidoMaterno',
-        'correo',
-        'telefono',
-        'fechaNacimiento',
-        'genero',
-        'tipoPersona',
-        'activo',
-      ],
+    const resultado = await this.prisma.persona.findUnique({
+      where: { id: BigInt(id) },
+      include: {
+        administrador: true,
+        director: { include: { escuela: true } },
+        maestro: { include: { escuela: true } },
+        alumno: { include: { escuela: true } },
+        padre: true,
+      },
     });
-    return { message: 'Usuario actualizado correctamente', data: resultado };
+
+    const resultadoSinPassword = { ...(resultado as any) };
+    delete resultadoSinPassword.password;
+
+    return { message: 'Usuario actualizado correctamente', data: resultadoSinPassword };
   }
 
   async actualizarAlumno(
@@ -133,9 +107,9 @@ export class GestionPersonasService {
     );
 
     if (grupoId !== undefined) {
-      const alumno = await this.alumnoRepository.findOne({
-        where: { id: alumnoId },
-        relations: ['persona'],
+      const alumno = await this.prisma.alumno.findUnique({
+        where: { id: BigInt(alumnoId) },
+        include: { persona: true },
       });
       if (!alumno) return resultado;
       const escuelaId = Number(alumno.escuelaId);
@@ -143,18 +117,20 @@ export class GestionPersonasService {
         throw new ForbiddenException('No puedes modificar alumnos de otra escuela');
 
       if (grupoId == null) {
-        alumno.grupoId = null;
-        alumno.grupo = null;
+        await this.prisma.alumno.update({
+          where: { id: alumno.id },
+          data: { grupoId: null, grupo: null },
+        });
       } else {
-        const grupo = await this.grupoRepository.findOne({ where: { id: grupoId } });
+        const grupo = await this.prisma.grupo.findUnique({ where: { id: BigInt(grupoId) } });
         if (!grupo) throw new NotFoundException('Grupo no encontrado');
         if (Number(grupo.escuelaId) !== escuelaId)
           throw new ForbiddenException('El grupo no pertenece a la escuela del alumno');
-        alumno.grupoId = grupo.id;
-        alumno.grado = Number(grupo.grado);
-        alumno.grupo = grupo.nombre;
+        await this.prisma.alumno.update({
+          where: { id: alumno.id },
+          data: { grupoId: grupo.id, grado: grupo.grado, grupo: grupo.nombre },
+        });
       }
-      await this.alumnoRepository.save(alumno);
 
       await this.auditService.log('actualizar_alumno_grupo', {
         usuarioId: auditContext?.usuarioId ?? null,
@@ -162,42 +138,28 @@ export class GestionPersonasService {
         detalles: `alumnoId=${alumnoId} nuevoGrupoId=${grupoId ?? 'null'}`,
       });
 
-      const resultadoActualizado = await this.personaRepository.findOne({
-        where: { id: alumnoData.personaId },
-        relations: [
-          'administrador',
-          'director',
-          'director.escuela',
-          'maestro',
-          'maestro.escuela',
-          'alumno',
-          'alumno.escuela',
-          'padre',
-        ],
-        select: [
-          'id',
-          'nombre',
-          'apellidoPaterno',
-          'apellidoMaterno',
-          'correo',
-          'telefono',
-          'fechaNacimiento',
-          'genero',
-          'tipoPersona',
-          'activo',
-        ],
+      const resultadoActualizado = await this.prisma.persona.findUnique({
+        where: { id: BigInt(alumnoData.personaId) },
+        include: {
+          administrador: true,
+          director: { include: { escuela: true } },
+          maestro: { include: { escuela: true } },
+          alumno: { include: { escuela: true } },
+          padre: true,
+        },
       });
-      return { ...resultado, data: resultadoActualizado };
+      const sinPassword = { ...(resultadoActualizado as any) };
+      delete sinPassword.password;
+      return { ...resultado, data: sinPassword };
     }
 
     return resultado;
   }
 
   async eliminarUsuarioPorId(id: number, auditContext?: AuditContext) {
-    const persona = await this.personaRepository.findOne({
-      where: { id },
-      relations: ['administrador', 'director', 'maestro', 'alumno', 'padre'],
-      select: ['id', 'nombre', 'apellidoPaterno', 'apellidoMaterno', 'correo', 'tipoPersona'],
+    const persona = await this.prisma.persona.findUnique({
+      where: { id: BigInt(id) },
+      include: { administrador: true, director: true, maestro: true, alumno: true, padre: true },
     });
 
     if (!persona) throw new NotFoundException(`No se encontró el usuario con ID ${id}`);
@@ -206,30 +168,22 @@ export class GestionPersonasService {
     if (!tipo || !validTipos.includes(tipo))
       throw new NotFoundException(`No se encontró el usuario con ID ${id}`);
 
-    await this.dataSource.transaction(async (manager) => {
-      const personaRepo = manager.getRepository(Persona);
-      const adminRepo = manager.getRepository(Administrador);
-      const directorRepo = manager.getRepository(Director);
-      const maestroRepo = manager.getRepository(Maestro);
-      const alumnoRepo = manager.getRepository(Alumno);
-      const padreRepo = manager.getRepository(Padre);
-      const alumnoMaestroRepo = manager.getRepository(AlumnoMaestro);
-
+    await this.prisma.$transaction(async (tx) => {
       if (tipo === 'padre' && persona.padre) {
-        await alumnoRepo.update({ padreId: persona.padre.id }, { padreId: null });
-        await padreRepo.delete({ id: persona.padre.id });
+        await tx.alumno.updateMany({ where: { padreId: persona.padre.id }, data: { padreId: null } });
+        await tx.padre.delete({ where: { id: persona.padre.id } });
       } else if (tipo === 'alumno' && persona.alumno) {
-        await alumnoMaestroRepo.delete({ alumnoId: persona.alumno.id });
-        await alumnoRepo.delete({ id: persona.alumno.id });
+        await tx.alumnoMaestro.deleteMany({ where: { alumnoId: persona.alumno.id } });
+        await tx.alumno.delete({ where: { id: persona.alumno.id } });
       } else if (tipo === 'maestro' && persona.maestro) {
-        await maestroRepo.delete({ id: persona.maestro.id });
+        await tx.maestro.delete({ where: { id: persona.maestro.id } });
       } else if (tipo === 'director' && persona.director) {
-        await directorRepo.delete({ id: persona.director.id });
+        await tx.director.delete({ where: { id: persona.director.id } });
       } else if (tipo === 'administrador' && persona.administrador) {
-        await adminRepo.delete({ id: persona.administrador.id });
+        await tx.administrador.delete({ where: { id: persona.administrador.id } });
       }
 
-      await personaRepo.delete({ id });
+      await tx.persona.delete({ where: { id: BigInt(id) } });
     });
 
     await this.jwtPersonaLoader.invalidate(id);

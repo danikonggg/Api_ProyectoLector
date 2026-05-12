@@ -1,13 +1,11 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
 import { LoggerModule } from 'nestjs-pino';
-import { createTypeOrmConfig } from '../config/typeorm-root.factory';
+import { PrismaModule } from '../prisma/prisma.module';
 import { RedisModule } from '../infra/redis/redis.module';
 import { QueuesModule } from '../queues/queues.module';
 import { LibrosImportProcessor } from '../queues/libros-import.processor';
 import { LibrosCoreModule } from '../libros/libros-core.module';
-import { Libro } from '../libros/entities/libro.entity';
 import { AuditModule } from '../audit/audit.module';
 import { buildLoggerParams } from '../config/pino-logger.config';
 
@@ -26,16 +24,11 @@ import { buildLoggerParams } from '../config/pino-logger.config';
       inject: [ConfigService],
       useFactory: (config: ConfigService) => buildLoggerParams(config, { http: false }),
     }),
-    TypeOrmModule.forRootAsync({
-      imports: [ConfigModule],
-      useFactory: (config: ConfigService) => createTypeOrmConfig(config),
-      inject: [ConfigService],
-    }),
+    PrismaModule,
     RedisModule,
     QueuesModule,
     AuditModule,
     LibrosCoreModule,
-    TypeOrmModule.forFeature([Libro]),
   ],
   providers: [LibrosImportProcessor],
 })

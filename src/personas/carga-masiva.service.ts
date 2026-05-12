@@ -10,14 +10,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import * as XLSX from 'xlsx';
 import * as ExcelJS from 'exceljs';
 import * as bcrypt from 'bcrypt';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Persona } from './entities/persona.entity';
-import { Alumno } from './entities/alumno.entity';
-import { AlumnoVinculacionPadre } from './entities/alumno-vinculacion-padre.entity';
-import { Maestro } from './entities/maestro.entity';
-import { Escuela } from './entities/escuela.entity';
-import { Grupo } from '../escuelas/entities/grupo.entity';
+import { randomBytes } from 'crypto';
+import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import type { AuditContext } from './services/registro-personas.service';
 
@@ -119,18 +113,7 @@ export class CargaMasivaService {
   }
 
   constructor(
-    @InjectRepository(Persona)
-    private readonly personaRepository: Repository<Persona>,
-    @InjectRepository(Alumno)
-    private readonly alumnoRepository: Repository<Alumno>,
-    @InjectRepository(AlumnoVinculacionPadre)
-    private readonly alumnoVinculacionPadreRepository: Repository<AlumnoVinculacionPadre>,
-    @InjectRepository(Maestro)
-    private readonly maestroRepository: Repository<Maestro>,
-    @InjectRepository(Escuela)
-    private readonly escuelaRepository: Repository<Escuela>,
-    @InjectRepository(Grupo)
-    private readonly grupoRepository: Repository<Grupo>,
+    private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
   ) {}
 
@@ -276,7 +259,7 @@ export class CargaMasivaService {
     filas: FilaAlumno[],
     auditContext?: AuditContext,
   ): Promise<ResultadoCarga> {
-    const escuela = await this.escuelaRepository.findOne({ where: { id: escuelaId } });
+    const escuela = await this.prisma.escuela.findUnique({ where: { id: BigInt(escuelaId) } });
     if (!escuela) throw new Error('Escuela no encontrada');
 
     const credenciales: ResultadoCarga['credenciales'] = [];
@@ -302,20 +285,20 @@ export class CargaMasivaService {
         password = generarPassword(8);
       }
 
-      const existente = await this.personaRepository.findOne({ where: { correo: email } });
+      const existente = await this.prisma.persona.findFirst({ where: { correo: email } });
       if (existente) {
         errores.push({ fila: filaNum, email, mensaje: 'Email ya registrado' });
         continue;
       }
 
-      let grupoId: number | null = null;
+      let grupoId: bigint | null = null;
       let gradoFinal = f.grado ?? 1;
       let grupoNombre: string | null = null;
 
       if (f.grado != null && f.grupo != null && normalizarGrupo(f.grupo) !== '') {
         const grupoNorm = normalizarGrupo(f.grupo);
-        const gruposDelGrado = await this.grupoRepository.find({
-          where: { escuelaId, grado: f.grado, activo: true },
+        const gruposDelGrado = await this.prisma.grupo.findMany({
+          where: { escuelaId: BigInt(escuelaId), grado: BigInt(f.grado), activo: true },
         });
         const grupoMatch = gruposDelGrado.find((g) => normalizarGrupo(g.nombre) === grupoNorm);
         if (!grupoMatch) {
@@ -336,29 +319,30 @@ export class CargaMasivaService {
 
       try {
         const hashed = await bcrypt.hash(password, 10);
-        const persona = this.personaRepository.create({
-          nombre: f.nombre,
-          apellidoPaterno: f.apellidoPaterno || f.nombre,
-          apellidoMaterno: f.apellidoMaterno?.trim() || null,
-          correo: email,
-          password: hashed,
-          tipoPersona: 'alumno',
-          activo: true,
+        const personaGuardada = await this.prisma.persona.create({
+          data: {
+            nombre: f.nombre,
+            apellidoPaterno: f.apellidoPaterno || f.nombre,
+            apellidoMaterno: f.apellidoMaterno?.trim() || null,
+            correo: email,
+            password: hashed,
+            tipoPersona: 'alumno',
+            activo: true,
+          },
         });
-        const personaGuardada = await this.personaRepository.save(persona);
 
-        const alumno = this.alumnoRepository.create({
-          personaId: personaGuardada.id,
-          escuelaId,
-          grado: gradoFinal,
-          grupo: grupoNombre,
-          grupoId,
-          cicloEscolar: f.cicloEscolar ?? null,
-          padreId: null,
+        const alumnoGuardado = await this.prisma.alumno.create({
+          data: {
+            personaId: personaGuardada.id,
+            escuelaId: BigInt(escuelaId),
+            grado: BigInt(gradoFinal),
+            grupo: grupoNombre,
+            grupoId,
+            cicloEscolar: f.cicloEscolar ?? null,
+            padreId: null,
+          },
         });
-        const alumnoGuardado = await this.alumnoRepository.save(alumno);
 
-        // Crear código de vinculación padre–alumno (una vez por alumno creado en carga masiva)
         await this.crearCodigoVinculacionParaAlumno(alumnoGuardado.id);
 
         credenciales.push({
@@ -387,32 +371,19 @@ export class CargaMasivaService {
   /**
    * Crea un código de vinculación para un alumno (fuera de transacción).
    */
-  private async crearCodigoVinculacionParaAlumno(
-    alumnoId: number,
-  ): Promise<AlumnoVinculacionPadre> {
+  private async crearCodigoVinculacionParaAlumno(alumnoId: bigint): Promise<void> {
     const codigo = this.generarCodigoVinculacion();
     const ahora = new Date();
-    const expiraEn = new Date(ahora.getTime() + 100 * 24 * 60 * 60 * 1000); // 100 días
-
-    const entidad = this.alumnoVinculacionPadreRepository.create({
-      alumnoId,
-      codigo,
-      usado: false,
-      usadoEn: null,
-      expiraEn,
-    });
+    const expiraEn = new Date(ahora.getTime() + 100 * 24 * 60 * 60 * 1000);
 
     try {
-      return await this.alumnoVinculacionPadreRepository.save(entidad);
-    } catch (e) {
-      const entidadRetry = this.alumnoVinculacionPadreRepository.create({
-        alumnoId,
-        codigo: this.generarCodigoVinculacion(),
-        usado: false,
-        usadoEn: null,
-        expiraEn,
+      await this.prisma.alumnoVinculacionPadre.create({
+        data: { alumnoId, codigo, usado: false, usadoEn: null, expiraEn },
       });
-      return await this.alumnoVinculacionPadreRepository.save(entidadRetry);
+    } catch {
+      await this.prisma.alumnoVinculacionPadre.create({
+        data: { alumnoId, codigo: this.generarCodigoVinculacion(), usado: false, usadoEn: null, expiraEn },
+      });
     }
   }
 
@@ -420,8 +391,6 @@ export class CargaMasivaService {
    * Genera un código aleatorio, no predecible, para vinculación padre–alumno.
    */
   private generarCodigoVinculacion(): string {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { randomBytes } = require('crypto') as typeof import('crypto');
     return randomBytes(16).toString('hex');
   }
 
@@ -433,7 +402,7 @@ export class CargaMasivaService {
     filas: FilaMaestro[],
     auditContext?: AuditContext,
   ): Promise<ResultadoCarga> {
-    const escuela = await this.escuelaRepository.findOne({ where: { id: escuelaId } });
+    const escuela = await this.prisma.escuela.findUnique({ where: { id: BigInt(escuelaId) } });
     if (!escuela) throw new Error('Escuela no encontrada');
 
     const credenciales: ResultadoCarga['credenciales'] = [];
@@ -459,7 +428,7 @@ export class CargaMasivaService {
         password = generarPassword(8);
       }
 
-      const existente = await this.personaRepository.findOne({ where: { correo: email } });
+      const existente = await this.prisma.persona.findFirst({ where: { correo: email } });
       if (existente) {
         errores.push({ fila: filaNum, email, mensaje: 'Email ya registrado' });
         continue;
@@ -467,23 +436,25 @@ export class CargaMasivaService {
 
       try {
         const hashed = await bcrypt.hash(password, 10);
-        const persona = this.personaRepository.create({
-          nombre: f.nombre,
-          apellidoPaterno: f.apellidoPaterno || f.nombre,
-          apellidoMaterno: f.apellidoMaterno?.trim() || null,
-          correo: email,
-          password: hashed,
-          tipoPersona: 'maestro',
-          activo: true,
+        const personaGuardada = await this.prisma.persona.create({
+          data: {
+            nombre: f.nombre,
+            apellidoPaterno: f.apellidoPaterno || f.nombre,
+            apellidoMaterno: f.apellidoMaterno?.trim() || null,
+            correo: email,
+            password: hashed,
+            tipoPersona: 'maestro',
+            activo: true,
+          },
         });
-        const personaGuardada = await this.personaRepository.save(persona);
 
-        const maestro = this.maestroRepository.create({
-          personaId: personaGuardada.id,
-          escuelaId,
-          especialidad: f.especialidad ?? null,
+        await this.prisma.maestro.create({
+          data: {
+            personaId: personaGuardada.id,
+            escuelaId: BigInt(escuelaId),
+            especialidad: f.especialidad ?? null,
+          },
         });
-        await this.maestroRepository.save(maestro);
 
         credenciales.push({
           nombre: f.nombre,

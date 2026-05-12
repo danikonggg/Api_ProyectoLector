@@ -5,11 +5,7 @@
 
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
-import { Segmento } from './entities/segmento.entity';
-import { Glosario } from './entities/glosario.entity';
-import { SeccionGlosario } from './entities/seccion-glosario.entity';
+import { PrismaService } from '../prisma/prisma.service';
 import { GroqService } from '../groq/groq.service';
 
 @Injectable()
@@ -17,39 +13,29 @@ export class GlosarioSegmentoService {
   private readonly logger = new Logger(GlosarioSegmentoService.name);
 
   constructor(
-    @InjectRepository(Segmento)
-    private readonly segmentoRepository: Repository<Segmento>,
-    @InjectRepository(Glosario)
-    private readonly glosarioRepository: Repository<Glosario>,
-    @InjectRepository(SeccionGlosario)
-    private readonly seccionGlosarioRepository: Repository<SeccionGlosario>,
+    private readonly prisma: PrismaService,
     private readonly groqService: GroqService,
     private readonly configService: ConfigService,
   ) {}
 
-  /**
-   * Tras guardar segmentos del libro: genera glosario en BD para cada segmento (no bloquea HTTP si se llama con void).
-   */
   async precargarGlosarioLibro(libroId: number): Promise<void> {
     const enabled = this.configService.get<string>('GLOSSARY_PRELOAD_ON_IMPORT', 'true');
     if (enabled === 'false' || enabled === '0') {
-      this.logger.log(
-        `Precarga glosario desactivada (GLOSSARY_PRELOAD_ON_IMPORT), libro ${libroId}`,
-      );
+      this.logger.log(`Precarga glosario desactivada (GLOSSARY_PRELOAD_ON_IMPORT), libro ${libroId}`);
       return;
     }
 
-    const segmentos = await this.segmentoRepository.find({
-      where: { libroId },
-      select: ['id'],
-      order: { id: 'ASC' },
+    const segmentos = await this.prisma.segmento.findMany({
+      where: { libroId: BigInt(libroId) },
+      select: { id: true },
+      orderBy: { id: 'asc' },
     });
 
     this.logger.log(`Precargando glosario: libro ${libroId}, ${segmentos.length} segmentos`);
 
     for (const s of segmentos) {
       try {
-        await this.obtenerGlosarioPorSegmento(s.id);
+        await this.obtenerGlosarioPorSegmento(Number(s.id));
       } catch (e) {
         this.logger.warn(
           `Glosario segmento ${s.id} (libro ${libroId}): ${(e as Error)?.message ?? String(e)}`,
@@ -60,26 +46,23 @@ export class GlosarioSegmentoService {
     this.logger.log(`Precarga glosario terminada: libro ${libroId}`);
   }
 
-  /**
-   * Para adjuntar en GET /libros/:id — palabras ya cacheadas por segmento.
-   */
   async obtenerMapaGlosarioPorSegmentos(
     segmentoIds: number[],
   ): Promise<Map<number, Array<{ palabra: string; definicion: string | null }>>> {
     const map = new Map<number, Array<{ palabra: string; definicion: string | null }>>();
     if (segmentoIds.length === 0) return map;
 
-    const rows = await this.seccionGlosarioRepository.find({
-      where: { segmentoId: In(segmentoIds) },
-      order: { segmentoId: 'ASC', palabra: 'ASC' },
+    const rows = await this.prisma.seccionGlosario.findMany({
+      where: { segmentoId: { in: segmentoIds.map(BigInt) } },
+      orderBy: [{ segmentoId: 'asc' }, { palabra: 'asc' }],
     });
     for (const id of segmentoIds) {
       map.set(id, []);
     }
     for (const r of rows) {
-      const list = map.get(r.segmentoId);
+      const list = map.get(Number(r.segmentoId));
       if (list) {
-        list.push({ palabra: r.palabra, definicion: r.definicion });
+        list.push({ palabra: r.palabra, definicion: r.definicion ?? null });
       }
     }
     return map;
@@ -90,26 +73,23 @@ export class GlosarioSegmentoService {
     cache: boolean;
     palabras: Array<{ palabra: string; definicion: string | null }>;
   }> {
-    const segmento = await this.segmentoRepository.findOne({
-      where: { id: segmentoId },
-      select: ['id', 'contenido'],
+    const segmento = await this.prisma.segmento.findUnique({
+      where: { id: BigInt(segmentoId) },
+      select: { id: true, contenido: true },
     });
     if (!segmento) {
       throw new NotFoundException(`No se encontró el segmento con ID ${segmentoId}`);
     }
 
-    const cache = await this.seccionGlosarioRepository.find({
-      where: { segmentoId },
-      order: { palabra: 'ASC' },
+    const cache = await this.prisma.seccionGlosario.findMany({
+      where: { segmentoId: BigInt(segmentoId) },
+      orderBy: { palabra: 'asc' },
     });
     if (cache.length > 0) {
       return {
         segmentoId,
         cache: true,
-        palabras: cache.map((r) => ({
-          palabra: r.palabra,
-          definicion: r.definicion,
-        })),
+        palabras: cache.map((r) => ({ palabra: r.palabra, definicion: r.definicion ?? null })),
       };
     }
 
@@ -122,68 +102,31 @@ export class GlosarioSegmentoService {
     }
 
     if (payload.length > 0) {
-      await this.seccionGlosarioRepository.insert(
-        payload.map((p) => ({
-          segmentoId,
+      await this.prisma.seccionGlosario.createMany({
+        data: payload.map((p) => ({
+          segmentoId: BigInt(segmentoId),
           palabra: p.palabra,
           definicion: p.definicion,
         })),
-      );
+        skipDuplicates: true,
+      });
     }
 
-    return {
-      segmentoId,
-      cache: false,
-      palabras: payload,
-    };
+    return { segmentoId, cache: false, palabras: payload };
   }
 
   private extraerPalabrasClave(texto: string): string[] {
     const sinAcentos = texto
       .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[̀-ͯ]/g, '')
       .toLowerCase();
     const tokens = sinAcentos.match(/[a-zñ]{4,}/g) ?? [];
     const stopwords = new Set([
-      'para',
-      'como',
-      'porque',
-      'sobre',
-      'entre',
-      'desde',
-      'hasta',
-      'donde',
-      'estos',
-      'estas',
-      'esta',
-      'este',
-      'libro',
-      'lectura',
-      'texto',
-      'tambien',
-      'puede',
-      'tiene',
-      'cuando',
-      'ellos',
-      'ellas',
-      'nosotros',
-      'ustedes',
-      'dicho',
-      'dicha',
-      'mismo',
-      'misma',
-      'alguna',
-      'algunas',
-      'alguno',
-      'algunos',
-      'adulta',
-      'adulto',
-      'adultos',
-      'vida',
-      'cosas',
-      'persona',
-      'personas',
-      'nombre',
+      'para', 'como', 'porque', 'sobre', 'entre', 'desde', 'hasta', 'donde',
+      'estos', 'estas', 'esta', 'este', 'libro', 'lectura', 'texto', 'tambien',
+      'puede', 'tiene', 'cuando', 'ellos', 'ellas', 'nosotros', 'ustedes',
+      'dicho', 'dicha', 'mismo', 'misma', 'alguna', 'algunas', 'alguno', 'algunos',
+      'adulta', 'adulto', 'adultos', 'vida', 'cosas', 'persona', 'personas', 'nombre',
     ]);
     const exclusiones = new Set(['alberto', 'alfonso', 'beatriz', 'concha', 'lomejordetuvida']);
 
@@ -206,9 +149,6 @@ export class GlosarioSegmentoService {
       .map(([palabra]) => palabra);
   }
 
-  /**
-   * Registra una palabra en el glosario global: si ya está en BD devuelve cache; si no, busca en fuentes web y Groq.
-   */
   async registrarPalabraEnGlosario(entrada: string): Promise<{
     palabra: string;
     definicion: string | null;
@@ -222,7 +162,7 @@ export class GlosarioSegmentoService {
       throw new BadRequestException('La palabra excede la longitud permitida.');
     }
 
-    const existente = await this.glosarioRepository.findOne({ where: { palabra } });
+    const existente = await this.prisma.glosario.findUnique({ where: { palabra } });
     if (existente?.definicion) {
       return { palabra, definicion: existente.definicion, origen: 'cache' };
     }
@@ -236,15 +176,13 @@ export class GlosarioSegmentoService {
     return texto
       .trim()
       .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[̀-ͯ]/g, '')
       .toLowerCase();
   }
 
   private async obtenerDefinicionPalabra(palabra: string): Promise<string | null> {
-    const existente = await this.glosarioRepository.findOne({ where: { palabra } });
-    if (existente?.definicion) {
-      return existente.definicion;
-    }
+    const existente = await this.prisma.glosario.findUnique({ where: { palabra } });
+    if (existente?.definicion) return existente.definicion;
 
     const definicion = await this.buscarDefinicionRemota(palabra);
     await this.persistirDefinicionGlosario(palabra, definicion, existente?.id ?? null);
@@ -254,13 +192,13 @@ export class GlosarioSegmentoService {
   private async persistirDefinicionGlosario(
     palabra: string,
     definicion: string | null,
-    existenteId: number | null,
+    existenteId: bigint | null,
   ): Promise<void> {
     if (existenteId != null) {
-      await this.glosarioRepository.update({ id: existenteId }, { definicion });
+      await this.prisma.glosario.update({ where: { id: existenteId }, data: { definicion } });
       return;
     }
-    await this.glosarioRepository.insert({ palabra, definicion });
+    await this.prisma.glosario.create({ data: { palabra, definicion } });
   }
 
   private async buscarDefinicionRemota(palabra: string): Promise<string | null> {
@@ -291,68 +229,40 @@ export class GlosarioSegmentoService {
   private async buscarDefinicionWiktionaryRest(palabra: string): Promise<string | null> {
     try {
       const url = `https://es.wiktionary.org/api/rest_v1/page/definition/${encodeURIComponent(palabra)}`;
-      const resp = await fetch(url, {
-        method: 'GET',
-        headers: { 'user-agent': 'ApiLector/1.0 glosario-mvp' },
-      });
+      const resp = await fetch(url, { method: 'GET', headers: { 'user-agent': 'ApiLector/1.0 glosario-mvp' } });
       if (!resp.ok) return null;
 
-      const data = (await resp.json()) as Record<
-        string,
-        Array<{ definitions?: Array<{ definition?: string }> }>
-      >;
-      const esEntries = data.es ?? [];
-      for (const entry of esEntries) {
+      const data = (await resp.json()) as Record<string, Array<{ definitions?: Array<{ definition?: string }> }>>;
+      for (const entry of data.es ?? []) {
         for (const def of entry.definitions ?? []) {
           const texto = def.definition?.trim();
-          if (texto) {
-            return this.limpiarDefinicion(texto, palabra);
-          }
+          if (texto) return this.limpiarDefinicion(texto, palabra);
         }
       }
       return null;
     } catch (error) {
-      this.logger.warn(
-        `Wiktionary REST falló para "${palabra}": ${(error as Error)?.message ?? String(error)}`,
-      );
+      this.logger.warn(`Wiktionary REST falló para "${palabra}": ${(error as Error)?.message ?? String(error)}`);
       return null;
     }
   }
 
   private async buscarDefinicionWiktionaryApi(palabra: string): Promise<string | null> {
     try {
-      const url = `https://es.wiktionary.org/w/api.php?action=query&prop=extracts&explaintext=1&exintro=1&format=json&titles=${encodeURIComponent(
-        palabra,
-      )}`;
-      const resp = await fetch(url, {
-        method: 'GET',
-        headers: { 'user-agent': 'ApiLector/1.0 glosario-mvp' },
-      });
+      const url = `https://es.wiktionary.org/w/api.php?action=query&prop=extracts&explaintext=1&exintro=1&format=json&titles=${encodeURIComponent(palabra)}`;
+      const resp = await fetch(url, { method: 'GET', headers: { 'user-agent': 'ApiLector/1.0 glosario-mvp' } });
       if (!resp.ok) return null;
 
-      const data = (await resp.json()) as {
-        query?: {
-          pages?: Record<string, { extract?: string; missing?: string }>;
-        };
-      };
-      const pages = data.query?.pages ?? {};
-      for (const page of Object.values(pages)) {
+      const data = (await resp.json()) as { query?: { pages?: Record<string, { extract?: string; missing?: string }> } };
+      for (const page of Object.values(data.query?.pages ?? {})) {
         if (page.missing != null) continue;
         const extract = page.extract?.trim();
         if (!extract) continue;
-
-        const lineaUtil = extract
-          .split('\n')
-          .map((l) => l.trim())
-          .find((l) => l.length > 20);
+        const lineaUtil = extract.split('\n').map((l) => l.trim()).find((l) => l.length > 20);
         if (lineaUtil) return this.limpiarDefinicion(lineaUtil, palabra);
       }
-
       return null;
     } catch (error) {
-      this.logger.warn(
-        `Wiktionary API falló para "${palabra}": ${(error as Error)?.message ?? String(error)}`,
-      );
+      this.logger.warn(`Wiktionary API falló para "${palabra}": ${(error as Error)?.message ?? String(error)}`);
       return null;
     }
   }
@@ -360,17 +270,10 @@ export class GlosarioSegmentoService {
   private async buscarDefinicionDictionaryApi(palabra: string): Promise<string | null> {
     try {
       const url = `https://api.dictionaryapi.dev/api/v2/entries/es/${encodeURIComponent(palabra)}`;
-      const resp = await fetch(url, {
-        method: 'GET',
-        headers: { 'user-agent': 'ApiLector/1.0 glosario-mvp' },
-      });
+      const resp = await fetch(url, { method: 'GET', headers: { 'user-agent': 'ApiLector/1.0 glosario-mvp' } });
       if (!resp.ok) return null;
 
-      const data = (await resp.json()) as Array<{
-        meanings?: Array<{
-          definitions?: Array<{ definition?: string }>;
-        }>;
-      }>;
+      const data = (await resp.json()) as Array<{ meanings?: Array<{ definitions?: Array<{ definition?: string }> }> }>;
       for (const entry of data ?? []) {
         for (const meaning of entry.meanings ?? []) {
           for (const def of meaning.definitions ?? []) {
@@ -381,9 +284,7 @@ export class GlosarioSegmentoService {
       }
       return null;
     } catch (error) {
-      this.logger.warn(
-        `DictionaryAPI falló para "${palabra}": ${(error as Error)?.message ?? String(error)}`,
-      );
+      this.logger.warn(`DictionaryAPI falló para "${palabra}": ${(error as Error)?.message ?? String(error)}`);
       return null;
     }
   }
@@ -391,10 +292,7 @@ export class GlosarioSegmentoService {
   private async buscarDefinicionWikipedia(palabra: string): Promise<string | null> {
     try {
       const url = `https://es.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(palabra)}`;
-      const resp = await fetch(url, {
-        method: 'GET',
-        headers: { 'user-agent': 'ApiLector/1.0 glosario-mvp' },
-      });
+      const resp = await fetch(url, { method: 'GET', headers: { 'user-agent': 'ApiLector/1.0 glosario-mvp' } });
       if (!resp.ok) return null;
 
       const data = (await resp.json()) as { extract?: string };
@@ -402,9 +300,7 @@ export class GlosarioSegmentoService {
       if (!extract || extract.length < 20) return null;
       return this.limpiarDefinicion(extract, palabra);
     } catch (error) {
-      this.logger.warn(
-        `Wikipedia summary falló para "${palabra}": ${(error as Error)?.message ?? String(error)}`,
-      );
+      this.logger.warn(`Wikipedia summary falló para "${palabra}": ${(error as Error)?.message ?? String(error)}`);
       return null;
     }
   }
@@ -426,13 +322,8 @@ export class GlosarioSegmentoService {
     const variantes = new Set<string>();
     variantes.add(palabra);
 
-    if (palabra.endsWith('es') && palabra.length > 5) {
-      variantes.add(palabra.slice(0, -2));
-    }
-    if (palabra.endsWith('s') && palabra.length > 4) {
-      variantes.add(palabra.slice(0, -1));
-    }
-
+    if (palabra.endsWith('es') && palabra.length > 5) variantes.add(palabra.slice(0, -2));
+    if (palabra.endsWith('s') && palabra.length > 4) variantes.add(palabra.slice(0, -1));
     if (palabra.endsWith('as') && palabra.length > 5) {
       variantes.add(`${palabra.slice(0, -2)}a`);
       variantes.add(`${palabra.slice(0, -2)}o`);
@@ -441,14 +332,10 @@ export class GlosarioSegmentoService {
       variantes.add(`${palabra.slice(0, -2)}o`);
       variantes.add(`${palabra.slice(0, -2)}a`);
     }
-
     if (palabra.endsWith('idades') && palabra.length > 8) {
       variantes.add(`${palabra.slice(0, -6)}idad`);
     }
-
-    if (palabra === 'capitulo') {
-      variantes.add('capítulo');
-    }
+    if (palabra === 'capitulo') variantes.add('capítulo');
 
     return [...variantes];
   }

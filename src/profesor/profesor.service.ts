@@ -1,11 +1,6 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { MaestroGrupo } from '../escuelas/entities/maestro-grupo.entity';
-import { Grupo } from '../escuelas/entities/grupo.entity';
-import { Alumno } from '../personas/entities/alumno.entity';
-import { AlumnoLibro } from '../escuelas/entities/alumno-libro.entity';
-import { SesionLectura } from '../alumno/entities/sesion-lectura.entity';
+import { PrismaService } from '../prisma/prisma.service';
+import { Prisma } from '@prisma/client';
 
 function estadoActividad(ultimaActividad: Date | null): 'active' | 'warning' | 'alert' {
   if (!ultimaActividad) return 'alert';
@@ -18,50 +13,37 @@ function estadoActividad(ultimaActividad: Date | null): 'active' | 'warning' | '
 
 @Injectable()
 export class ProfesorService {
-  constructor(
-    @InjectRepository(MaestroGrupo)
-    private readonly maestroGrupoRepository: Repository<MaestroGrupo>,
-    @InjectRepository(Grupo)
-    private readonly grupoRepository: Repository<Grupo>,
-    @InjectRepository(Alumno)
-    private readonly alumnoRepository: Repository<Alumno>,
-    @InjectRepository(AlumnoLibro)
-    private readonly alumnoLibroRepository: Repository<AlumnoLibro>,
-    @InjectRepository(SesionLectura)
-    private readonly sesionLecturaRepository: Repository<SesionLectura>,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async getGrupos(maestroId: number) {
-    const asignaciones = await this.maestroGrupoRepository.find({
-      where: { maestroId },
-      relations: ['grupo'],
+    const asignaciones = await this.prisma.maestroGrupo.findMany({
+      where: { maestroId: BigInt(maestroId) },
+      include: { grupo: true },
     });
-    const grupoIds = Array.from(new Set(asignaciones.map((x) => Number(x.grupoId))));
+    const grupoIds = Array.from(new Set(asignaciones.map((x) => x.grupoId)));
     if (grupoIds.length === 0) return { data: [] };
 
-    const gruposResolved = await this.grupoRepository
-      .createQueryBuilder('g')
-      .where('g.id IN (:...ids)', { ids: grupoIds })
-      .getMany();
+    const gruposResolved = await this.prisma.grupo.findMany({
+      where: { id: { in: grupoIds } },
+    });
 
-    const alumnosAgg = await this.alumnoRepository
-      .createQueryBuilder('a')
-      .select('a.grupo_id', 'grupoId')
-      .addSelect('COUNT(*)', 'total')
-      .where('a.grupo_id IN (:...ids)', { ids: grupoIds })
-      .andWhere('a.activo = true')
-      .groupBy('a.grupo_id')
-      .getRawMany<{ grupoId: string; total: string }>();
+    const alumnosAgg = await this.prisma.$queryRaw<Array<{ grupoId: bigint; total: bigint }>>`
+      SELECT grupo_id as "grupoId", COUNT(*) as total
+      FROM "Alumno"
+      WHERE grupo_id IN (${Prisma.join(grupoIds)})
+        AND activo = true
+      GROUP BY grupo_id
+    `;
 
-    const pendientesAgg = await this.alumnoRepository
-      .createQueryBuilder('a')
-      .select('a.grupo_id', 'grupoId')
-      .addSelect('COUNT(*) FILTER (WHERE COALESCE(al.porcentaje,0) < 100)', 'pendientes')
-      .leftJoin(AlumnoLibro, 'al', 'al.alumno_id = a.id')
-      .where('a.grupo_id IN (:...ids)', { ids: grupoIds })
-      .andWhere('a.activo = true')
-      .groupBy('a.grupo_id')
-      .getRawMany<{ grupoId: string; pendientes: string }>();
+    const pendientesAgg = await this.prisma.$queryRaw<Array<{ grupoId: bigint; pendientes: bigint }>>`
+      SELECT a.grupo_id as "grupoId",
+             COUNT(*) FILTER (WHERE COALESCE(al.porcentaje, 0) < 100) as pendientes
+      FROM "Alumno" a
+      LEFT JOIN "Alumno_Libro" al ON al.alumno_id = a.id
+      WHERE a.grupo_id IN (${Prisma.join(grupoIds)})
+        AND a.activo = true
+      GROUP BY a.grupo_id
+    `;
 
     const alumnosMap = new Map<number, number>();
     for (const r of alumnosAgg) alumnosMap.set(Number(r.grupoId), Number(r.total || 0));
@@ -81,38 +63,39 @@ export class ProfesorService {
   }
 
   async getAlumnosPorGrupo(maestroId: number, grupoId: number) {
-    const permitido = await this.maestroGrupoRepository.findOne({ where: { maestroId, grupoId } });
+    const permitido = await this.prisma.maestroGrupo.findFirst({
+      where: { maestroId: BigInt(maestroId), grupoId: BigInt(grupoId) },
+    });
     if (!permitido) throw new ForbiddenException('No tienes acceso a este grupo.');
 
-    const alumnos = await this.alumnoRepository.find({
-      where: { grupoId, activo: true },
-      relations: ['persona'],
-      select: {
-        id: true,
-        persona: { nombre: true, apellidoPaterno: true, apellidoMaterno: true },
-      } as any,
+    const alumnos = await this.prisma.alumno.findMany({
+      where: { grupoId: BigInt(grupoId), activo: true },
+      include: { persona: { select: { nombre: true, apellidoPaterno: true, apellidoMaterno: true } } },
     });
 
     if (alumnos.length === 0) return { data: [] };
-    const alumnoIds = alumnos.map((a) => Number(a.id));
+    const alumnoIds = alumnos.map((a) => a.id);
 
-    const librosAgg = await this.alumnoLibroRepository
-      .createQueryBuilder('al')
-      .select('al.alumno_id', 'alumnoId')
-      .addSelect('AVG(al.porcentaje)', 'progreso')
-      .addSelect('COUNT(*)', 'asignados')
-      .addSelect('COUNT(*) FILTER (WHERE al.porcentaje >= 100)', 'completados')
-      .where('al.alumno_id IN (:...ids)', { ids: alumnoIds })
-      .groupBy('al.alumno_id')
-      .getRawMany<{ alumnoId: string; progreso: string | null; asignados: string; completados: string }>();
+    const librosAgg = await this.prisma.$queryRaw<
+      Array<{ alumnoId: bigint; progreso: string | null; asignados: bigint; completados: bigint }>
+    >`
+      SELECT al.alumno_id as "alumnoId",
+             AVG(al.porcentaje) as progreso,
+             COUNT(*) as asignados,
+             COUNT(*) FILTER (WHERE al.porcentaje >= 100) as completados
+      FROM "Alumno_Libro" al
+      WHERE al.alumno_id IN (${Prisma.join(alumnoIds)})
+      GROUP BY al.alumno_id
+    `;
 
-    const ultimaAgg = await this.sesionLecturaRepository
-      .createQueryBuilder('s')
-      .select('s.alumno_id', 'alumnoId')
-      .addSelect('MAX(s.fecha_fin)', 'ultimaActividad')
-      .where('s.alumno_id IN (:...ids)', { ids: alumnoIds })
-      .groupBy('s.alumno_id')
-      .getRawMany<{ alumnoId: string; ultimaActividad: string | null }>();
+    const ultimaAgg = await this.prisma.$queryRaw<
+      Array<{ alumnoId: bigint; ultimaActividad: Date | null }>
+    >`
+      SELECT s.alumno_id as "alumnoId", MAX(s.fecha_fin) as "ultimaActividad"
+      FROM "Sesion_Lectura" s
+      WHERE s.alumno_id IN (${Prisma.join(alumnoIds)})
+      GROUP BY s.alumno_id
+    `;
 
     const librosMap = new Map<number, { progreso: number; asignados: number; completados: number }>();
     for (const r of librosAgg) {
@@ -148,4 +131,3 @@ export class ProfesorService {
     return { data };
   }
 }
-

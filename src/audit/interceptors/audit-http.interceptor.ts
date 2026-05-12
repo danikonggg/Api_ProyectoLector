@@ -4,7 +4,7 @@ import { tap } from 'rxjs/operators';
 import type { Request } from 'express';
 import { AuditService } from '../audit.service';
 import { getClientIp } from '../../common/utils/request.utils';
-import type { Persona } from '../../personas/entities/persona.entity';
+import type { PersonaPrincipal } from '../../auth/services/jwt-persona-loader.service';
 
 /** Métodos que modifican estado; GET/HEAD/OPTIONS no se auditan aquí. */
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -45,7 +45,7 @@ export class AuditHttpInterceptor implements NestInterceptor {
     }
 
     const http = context.switchToHttp();
-    const req = http.getRequest<Request & { user?: Persona }>();
+    const req = http.getRequest<Request & { user?: PersonaPrincipal }>();
     const method = (req.method || '').toUpperCase();
 
     if (!MUTATING_METHODS.has(method)) {
@@ -57,7 +57,7 @@ export class AuditHttpInterceptor implements NestInterceptor {
       return next.handle();
     }
 
-    const usuarioId = req.user?.id ?? null;
+    const usuarioId = req.user?.id != null ? Number(req.user.id) : null;
     const tipoPersona = req.user?.tipoPersona ?? null;
     const ip = getClientIp(req) ?? null;
 

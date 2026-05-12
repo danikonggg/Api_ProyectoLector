@@ -4,14 +4,7 @@ import {
   ConflictException,
   ForbiddenException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
-import { Escuela } from '../personas/entities/escuela.entity';
-import { Alumno } from '../personas/entities/alumno.entity';
-import { Maestro } from '../personas/entities/maestro.entity';
-import { EscuelaLibro } from '../escuelas/entities/escuela-libro.entity';
-import { Grupo } from '../escuelas/entities/grupo.entity';
-import { MaestroGrupo } from '../escuelas/entities/maestro-grupo.entity';
+import { PrismaService } from '../prisma/prisma.service';
 import { CrearGrupoDto } from './dto/crear-grupo.dto';
 import { ActualizarGrupoDto } from './dto/actualizar-grupo.dto';
 import { AuditService } from '../audit/audit.service';
@@ -20,121 +13,75 @@ import type { AuditContext } from '../common/utils/audit.utils';
 @Injectable()
 export class DirectorService {
   constructor(
-    @InjectRepository(Escuela)
-    private readonly escuelaRepository: Repository<Escuela>,
-    @InjectRepository(Alumno)
-    private readonly alumnoRepository: Repository<Alumno>,
-    @InjectRepository(Maestro)
-    private readonly maestroRepository: Repository<Maestro>,
-    @InjectRepository(EscuelaLibro)
-    private readonly escuelaLibroRepository: Repository<EscuelaLibro>,
-    @InjectRepository(Grupo)
-    private readonly grupoRepository: Repository<Grupo>,
-    @InjectRepository(MaestroGrupo)
-    private readonly maestroGrupoRepository: Repository<MaestroGrupo>,
+    private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
   ) {}
 
-  /**
-   * Obtener dashboard del director con datos de su escuela.
-   */
   async getDashboard(escuelaId: number) {
-    const escuela = await this.escuelaRepository.findOne({
-      where: { id: escuelaId },
-      select: ['id', 'nombre', 'nivel', 'clave', 'direccion', 'telefono'],
+    const escuelaIdBig = BigInt(escuelaId);
+    const escuela = await this.prisma.escuela.findUnique({
+      where: { id: escuelaIdBig },
+      select: { id: true, nombre: true, nivel: true, clave: true, direccion: true, telefono: true },
     });
 
-    if (!escuela) {
-      throw new NotFoundException('No se encontró la escuela del director');
-    }
+    if (!escuela) throw new NotFoundException('No se encontró la escuela del director');
 
     const [totalEstudiantes, totalProfesores, librosDisponibles] = await Promise.all([
-      this.alumnoRepository.count({ where: { escuelaId } }),
-      this.maestroRepository.count({ where: { escuelaId } }),
-      this.escuelaLibroRepository.count({
-        where: { escuelaId, activo: true },
-      }),
+      this.prisma.alumno.count({ where: { escuelaId: escuelaIdBig } }),
+      this.prisma.maestro.count({ where: { escuelaId: escuelaIdBig } }),
+      this.prisma.escuelaLibro.count({ where: { escuelaId: escuelaIdBig, activo: true } }),
     ]);
 
     return {
       message: 'Dashboard obtenido correctamente',
-      data: {
-        escuela: {
-          id: escuela.id,
-          nombre: escuela.nombre,
-          nivel: escuela.nivel,
-          clave: escuela.clave,
-          direccion: escuela.direccion,
-          telefono: escuela.telefono,
-        },
-        totalEstudiantes,
-        totalProfesores,
-        librosDisponibles,
-      },
+      data: { escuela, totalEstudiantes, totalProfesores, librosDisponibles },
     };
   }
 
-  /**
-   * Listar grupos de la escuela del director con maestros asignados.
-   */
   async listarGrupos(escuelaId: number) {
-    const grupos = await this.grupoRepository.find({
-      where: { escuelaId },
-      order: { grado: 'ASC', nombre: 'ASC' },
+    const escuelaIdBig = BigInt(escuelaId);
+    const grupos = await this.prisma.grupo.findMany({
+      where: { escuelaId: escuelaIdBig },
+      orderBy: [{ grado: 'asc' }, { nombre: 'asc' }],
     });
 
-    if (grupos.length === 0) {
-      return grupos;
-    }
+    if (grupos.length === 0) return grupos;
 
     const grupoIds = grupos.map((g) => g.id);
-    const asignaciones = await this.maestroGrupoRepository.find({
-      where: { grupoId: In(grupoIds) },
-      relations: ['maestro', 'maestro.persona'],
+    const asignaciones = await this.prisma.maestroGrupo.findMany({
+      where: { grupoId: { in: grupoIds } },
+      include: { maestro: { include: { persona: true } } },
     });
 
-    const maestrosPorGrupo = new Map<
-      number,
-      Array<{ id: number; personaId: number; nombre: string; correo: string | null }>
-    >();
+    const maestrosPorGrupo = new Map<bigint, Array<{ id: number; personaId: number; nombre: string; correo: string | null }>>();
     for (const a of asignaciones) {
       if (!a.maestro?.persona) continue;
       const p = a.maestro.persona;
-      const nombre = [p.nombre, p.apellidoPaterno, p.apellidoMaterno]
-        .filter(Boolean)
-        .join(' ')
-        .trim();
-      const item = {
-        id: a.maestro.id,
-        personaId: a.maestro.personaId,
-        nombre,
-        correo: p.correo ?? null,
-      };
+      const nombre = [p.nombre, p.apellidoPaterno, p.apellidoMaterno].filter(Boolean).join(' ').trim();
+      const item = { id: Number(a.maestro.id), personaId: Number(a.maestro.personaId), nombre, correo: p.correo ?? null };
       const list = maestrosPorGrupo.get(a.grupoId) ?? [];
       if (!list.find((m) => m.id === item.id)) list.push(item);
       maestrosPorGrupo.set(a.grupoId, list);
     }
 
-    const alumnosEnGrupos = await this.alumnoRepository.find({
-      where: { grupoId: In(grupoIds) },
-      relations: ['persona'],
+    const alumnosEnGrupos = await this.prisma.alumno.findMany({
+      where: { grupoId: { in: grupoIds } },
+      include: { persona: true },
     });
-    const nombresAlumnosPorGrupo = new Map<number, string[]>();
+    const nombresAlumnosPorGrupo = new Map<bigint, string[]>();
     for (const al of alumnosEnGrupos) {
       if (al.grupoId == null) continue;
       const p = al.persona;
-      const nombre =
-        [p?.nombre, p?.apellidoPaterno, p?.apellidoMaterno].filter(Boolean).join(' ').trim() ||
-        'Sin nombre';
+      const nombre = [p?.nombre, p?.apellidoPaterno, p?.apellidoMaterno].filter(Boolean).join(' ').trim() || 'Sin nombre';
       const list = nombresAlumnosPorGrupo.get(al.grupoId) ?? [];
       list.push(nombre);
       nombresAlumnosPorGrupo.set(al.grupoId, list);
     }
 
     return grupos.map((g) => ({
-      id: g.id,
-      escuelaId: g.escuelaId,
-      grado: g.grado,
+      id: Number(g.id),
+      escuelaId: Number(g.escuelaId),
+      grado: Number(g.grado),
       nombre: g.nombre,
       activo: g.activo,
       maestros: maestrosPorGrupo.get(g.id) ?? [],
@@ -142,15 +89,14 @@ export class DirectorService {
     }));
   }
 
-  /**
-   * Crear grupo en la escuela del director.
-   */
   async crearGrupo(escuelaId: number, dto: CrearGrupoDto, auditContext?: AuditContext) {
     const nombreNorm = dto.nombre.trim().toUpperCase();
-    if (!nombreNorm) {
-      throw new ConflictException('El nombre del grupo no puede estar vacío');
-    }
-    const grupos = await this.grupoRepository.find({ where: { escuelaId, grado: dto.grado } });
+    if (!nombreNorm) throw new ConflictException('El nombre del grupo no puede estar vacío');
+
+    const escuelaIdBig = BigInt(escuelaId);
+    const grupos = await this.prisma.grupo.findMany({
+      where: { escuelaId: escuelaIdBig, grado: BigInt(dto.grado) },
+    });
     const existente = grupos.find((g) => (g.nombre || '').trim().toUpperCase() === nombreNorm);
     if (existente) {
       throw new ConflictException(
@@ -158,13 +104,10 @@ export class DirectorService {
       );
     }
 
-    const grupo = this.grupoRepository.create({
-      escuelaId,
-      grado: dto.grado,
-      nombre: nombreNorm,
-      activo: true,
+    const saved = await this.prisma.grupo.create({
+      data: { escuelaId: escuelaIdBig, grado: BigInt(dto.grado), nombre: nombreNorm, activo: true },
     });
-    const saved = await this.grupoRepository.save(grupo);
+
     await this.auditService.log('director_grupo_crear', {
       usuarioId: auditContext?.usuarioId ?? null,
       ip: auditContext?.ip ?? null,
@@ -173,157 +116,110 @@ export class DirectorService {
     return saved;
   }
 
-  /**
-   * Actualizar grupo. Solo si pertenece a la escuela del director.
-   */
-  async actualizarGrupo(
-    escuelaId: number,
-    id: number,
-    dto: ActualizarGrupoDto,
-    auditContext?: AuditContext,
-  ) {
-    const grupo = await this.grupoRepository.findOne({ where: { id } });
-    if (!grupo) {
-      throw new NotFoundException('Grupo no encontrado');
-    }
-    if (Number(grupo.escuelaId) !== Number(escuelaId)) {
-      throw new ForbiddenException('No puedes modificar un grupo de otra escuela');
-    }
+  async actualizarGrupo(escuelaId: number, id: number, dto: ActualizarGrupoDto, auditContext?: AuditContext) {
+    const idBig = BigInt(id);
+    const grupo = await this.prisma.grupo.findUnique({ where: { id: idBig } });
+    if (!grupo) throw new NotFoundException('Grupo no encontrado');
+    if (Number(grupo.escuelaId) !== escuelaId) throw new ForbiddenException('No puedes modificar un grupo de otra escuela');
 
-    if (dto.grado != null) grupo.grado = dto.grado;
-    if (dto.nombre != null) grupo.nombre = dto.nombre.trim().toUpperCase();
-    if (dto.activo != null) grupo.activo = dto.activo;
+    const updateData: Record<string, unknown> = {};
+    if (dto.grado != null) updateData.grado = BigInt(dto.grado);
+    if (dto.nombre != null) updateData.nombre = dto.nombre.trim().toUpperCase();
+    if (dto.activo != null) updateData.activo = dto.activo;
+
+    const gradoFinal = dto.grado != null ? BigInt(dto.grado) : grupo.grado;
+    const nombreFinal = dto.nombre != null ? dto.nombre.trim().toUpperCase() : grupo.nombre;
 
     if (dto.grado != null || dto.nombre != null) {
-      const gruposDelGrado = await this.grupoRepository.find({
-        where: { escuelaId, grado: grupo.grado },
+      const gruposDelGrado = await this.prisma.grupo.findMany({
+        where: { escuelaId: BigInt(escuelaId), grado: gradoFinal },
       });
-      const nombreNorm = (grupo.nombre || '').trim().toUpperCase();
       const otro = gruposDelGrado.find(
-        (g) => (g.nombre || '').trim().toUpperCase() === nombreNorm && g.id !== grupo.id,
+        (g) => (g.nombre || '').trim().toUpperCase() === nombreFinal && g.id !== idBig,
       );
-      if (otro) {
-        throw new ConflictException(
-          `Ya existe un grupo con grado ${grupo.grado} y nombre "${grupo.nombre}" en esta escuela`,
-        );
-      }
+      if (otro) throw new ConflictException(`Ya existe un grupo con grado ${gradoFinal} y nombre "${nombreFinal}"`);
     }
 
-    const saved = await this.grupoRepository.save(grupo);
+    const saved = await this.prisma.grupo.update({ where: { id: idBig }, data: updateData });
 
     if (dto.maestroIds != null) {
       const maestroIdsUnicos = [...new Set(dto.maestroIds)];
       for (const maestroId of maestroIdsUnicos) {
-        const maestro = await this.maestroRepository.findOne({ where: { id: maestroId } });
-        if (!maestro) {
-          throw new NotFoundException(`Maestro con ID ${maestroId} no encontrado`);
-        }
-        if (Number(maestro.escuelaId) !== Number(escuelaId)) {
-          throw new ForbiddenException(`El maestro ${maestroId} no pertenece a tu escuela`);
-        }
+        const maestro = await this.prisma.maestro.findUnique({ where: { id: BigInt(maestroId) } });
+        if (!maestro) throw new NotFoundException(`Maestro con ID ${maestroId} no encontrado`);
+        if (Number(maestro.escuelaId) !== escuelaId) throw new ForbiddenException(`El maestro ${maestroId} no pertenece a tu escuela`);
       }
-      const existentes = await this.maestroGrupoRepository.find({ where: { grupoId: id } });
-      await this.maestroGrupoRepository.remove(existentes);
+      await this.prisma.maestroGrupo.deleteMany({ where: { grupoId: idBig } });
       for (const maestroId of maestroIdsUnicos) {
-        const yaExiste = await this.maestroGrupoRepository.findOne({
-          where: { maestroId, grupoId: id },
+        await this.prisma.maestroGrupo.upsert({
+          where: { maestroId_grupoId: { maestroId: BigInt(maestroId), grupoId: idBig } },
+          update: {},
+          create: { maestroId: BigInt(maestroId), grupoId: idBig },
         });
-        if (!yaExiste) {
-          const mg = this.maestroGrupoRepository.create({ maestroId, grupoId: id });
-          await this.maestroGrupoRepository.save(mg);
-          await this.auditService.log('director_maestro_asignar_grupo', {
-            usuarioId: auditContext?.usuarioId ?? null,
-            ip: auditContext?.ip ?? null,
-            detalles: `escuelaId=${escuelaId} maestroId=${maestroId} grupoId=${id}`,
-          });
-        }
+        await this.auditService.log('director_maestro_asignar_grupo', {
+          usuarioId: auditContext?.usuarioId ?? null,
+          ip: auditContext?.ip ?? null,
+          detalles: `escuelaId=${escuelaId} maestroId=${maestroId} grupoId=${id}`,
+        });
       }
     }
 
     if (dto.alumnoIds != null) {
       const alumnoIdsUnicos = [...new Set(dto.alumnoIds)];
       for (const alumnoId of alumnoIdsUnicos) {
-        const alumno = await this.alumnoRepository.findOne({ where: { id: alumnoId } });
-        if (!alumno) {
-          throw new NotFoundException(`Alumno con ID ${alumnoId} no encontrado`);
-        }
-        if (Number(alumno.escuelaId) !== Number(escuelaId)) {
-          throw new ForbiddenException(`El alumno ${alumnoId} no pertenece a tu escuela`);
-        }
+        const alumno = await this.prisma.alumno.findUnique({ where: { id: BigInt(alumnoId) } });
+        if (!alumno) throw new NotFoundException(`Alumno con ID ${alumnoId} no encontrado`);
+        if (Number(alumno.escuelaId) !== escuelaId) throw new ForbiddenException(`El alumno ${alumnoId} no pertenece a tu escuela`);
       }
-      const alumnosEnEsteGrupo = await this.alumnoRepository.find({ where: { grupoId: id } });
-      for (const a of alumnosEnEsteGrupo) {
-        if (!alumnoIdsUnicos.includes(a.id)) {
-          a.grupoId = null;
-          a.grupo = null;
-          await this.alumnoRepository.save(a);
-        }
-      }
+      await this.prisma.alumno.updateMany({
+        where: { grupoId: idBig, id: { notIn: alumnoIdsUnicos.map((a) => BigInt(a)) } },
+        data: { grupoId: null, grupo: null },
+      });
       for (const alumnoId of alumnoIdsUnicos) {
-        const alumno = await this.alumnoRepository.findOne({ where: { id: alumnoId } });
-        if (!alumno) continue;
-        if (alumno.grupoId !== id) {
-          alumno.grupoId = id;
-          alumno.grado = Number(saved.grado);
-          alumno.grupo = saved.nombre;
-          await this.alumnoRepository.save(alumno);
-          await this.auditService.log('director_alumno_cambiar_grupo', {
-            usuarioId: auditContext?.usuarioId ?? null,
-            ip: auditContext?.ip ?? null,
-            detalles: `escuelaId=${escuelaId} alumnoId=${alumnoId} grupoId=${id} (vía PATCH grupo)`,
-          });
-        }
+        await this.prisma.alumno.update({
+          where: { id: BigInt(alumnoId) },
+          data: { grupoId: idBig, grado: saved.grado, grupo: saved.nombre },
+        });
+        await this.auditService.log('director_alumno_cambiar_grupo', {
+          usuarioId: auditContext?.usuarioId ?? null,
+          ip: auditContext?.ip ?? null,
+          detalles: `escuelaId=${escuelaId} alumnoId=${alumnoId} grupoId=${id} (vía PATCH grupo)`,
+        });
       }
     }
 
     await this.auditService.log('director_grupo_actualizar', {
       usuarioId: auditContext?.usuarioId ?? null,
       ip: auditContext?.ip ?? null,
-      detalles: `escuelaId=${escuelaId} grupoId=${id} grado=${grupo.grado} nombre=${grupo.nombre}`,
+      detalles: `escuelaId=${escuelaId} grupoId=${id} grado=${saved.grado} nombre=${saved.nombre}`,
     });
 
-    const asignaciones = await this.maestroGrupoRepository.find({
-      where: { grupoId: id },
-      relations: ['maestro', 'maestro.persona'],
+    const asignaciones = await this.prisma.maestroGrupo.findMany({
+      where: { grupoId: idBig },
+      include: { maestro: { include: { persona: true } } },
     });
     const maestros = asignaciones
       .filter((a) => a.maestro?.persona)
       .map((a) => {
         const p = a.maestro!.persona!;
-        const nombre = [p.nombre, p.apellidoPaterno, p.apellidoMaterno]
-          .filter(Boolean)
-          .join(' ')
-          .trim();
         return {
-          id: a.maestro!.id,
-          personaId: a.maestro!.personaId,
-          nombre,
+          id: Number(a.maestro!.id),
+          personaId: Number(a.maestro!.personaId),
+          nombre: [p.nombre, p.apellidoPaterno, p.apellidoMaterno].filter(Boolean).join(' ').trim(),
           correo: p.correo ?? null,
         };
       });
 
-    return {
-      id: saved.id,
-      escuelaId: saved.escuelaId,
-      grado: saved.grado,
-      nombre: saved.nombre,
-      activo: saved.activo,
-      maestros,
-    };
+    return { id: Number(saved.id), escuelaId: Number(saved.escuelaId), grado: Number(saved.grado), nombre: saved.nombre, activo: saved.activo, maestros };
   }
 
-  /**
-   * Eliminar grupo. Solo si pertenece a la escuela del director.
-   */
   async eliminarGrupo(escuelaId: number, id: number, auditContext?: AuditContext) {
-    const grupo = await this.grupoRepository.findOne({ where: { id } });
-    if (!grupo) {
-      throw new NotFoundException('Grupo no encontrado');
-    }
-    if (Number(grupo.escuelaId) !== Number(escuelaId)) {
-      throw new ForbiddenException('No puedes eliminar un grupo de otra escuela');
-    }
-    await this.grupoRepository.remove(grupo);
+    const idBig = BigInt(id);
+    const grupo = await this.prisma.grupo.findUnique({ where: { id: idBig } });
+    if (!grupo) throw new NotFoundException('Grupo no encontrado');
+    if (Number(grupo.escuelaId) !== escuelaId) throw new ForbiddenException('No puedes eliminar un grupo de otra escuela');
+
+    await this.prisma.grupo.delete({ where: { id: idBig } });
     await this.auditService.log('director_grupo_eliminar', {
       usuarioId: auditContext?.usuarioId ?? null,
       ip: auditContext?.ip ?? null,
@@ -332,36 +228,23 @@ export class DirectorService {
     return { message: 'Grupo eliminado correctamente' };
   }
 
-  /**
-   * Asignar grupo a maestro. Director solo puede asignar en su escuela.
-   */
-  async asignarGrupoAMaestro(
-    escuelaId: number,
-    maestroId: number,
-    grupoId: number,
-    auditContext?: AuditContext,
-  ) {
-    const maestro = await this.maestroRepository.findOne({ where: { id: maestroId } });
+  async asignarGrupoAMaestro(escuelaId: number, maestroId: number, grupoId: number, auditContext?: AuditContext) {
+    const maestro = await this.prisma.maestro.findUnique({ where: { id: BigInt(maestroId) } });
     if (!maestro) throw new NotFoundException('Maestro no encontrado');
-    if (Number(maestro.escuelaId) !== Number(escuelaId)) {
-      throw new ForbiddenException('No puedes asignar grupos a maestros de otra escuela');
-    }
+    if (Number(maestro.escuelaId) !== escuelaId) throw new ForbiddenException('No puedes asignar grupos a maestros de otra escuela');
 
-    const grupo = await this.grupoRepository.findOne({ where: { id: grupoId } });
+    const grupo = await this.prisma.grupo.findUnique({ where: { id: BigInt(grupoId) } });
     if (!grupo) throw new NotFoundException('Grupo no encontrado');
-    if (Number(grupo.escuelaId) !== Number(escuelaId)) {
-      throw new ForbiddenException('El grupo no pertenece a tu escuela');
-    }
+    if (Number(grupo.escuelaId) !== escuelaId) throw new ForbiddenException('El grupo no pertenece a tu escuela');
 
-    const existente = await this.maestroGrupoRepository.findOne({
-      where: { maestroId, grupoId },
+    const existente = await this.prisma.maestroGrupo.findFirst({
+      where: { maestroId: BigInt(maestroId), grupoId: BigInt(grupoId) },
     });
-    if (existente) {
-      throw new ConflictException('El maestro ya tiene asignado este grupo');
-    }
+    if (existente) throw new ConflictException('El maestro ya tiene asignado este grupo');
 
-    const mg = this.maestroGrupoRepository.create({ maestroId, grupoId });
-    const saved = await this.maestroGrupoRepository.save(mg);
+    const saved = await this.prisma.maestroGrupo.create({
+      data: { maestroId: BigInt(maestroId), grupoId: BigInt(grupoId) },
+    });
     await this.auditService.log('director_maestro_asignar_grupo', {
       usuarioId: auditContext?.usuarioId ?? null,
       ip: auditContext?.ip ?? null,
@@ -370,27 +253,17 @@ export class DirectorService {
     return saved;
   }
 
-  /**
-   * Desasignar grupo de maestro.
-   */
-  async desasignarGrupoDeMaestro(
-    escuelaId: number,
-    maestroId: number,
-    grupoId: number,
-    auditContext?: AuditContext,
-  ) {
-    const maestro = await this.maestroRepository.findOne({ where: { id: maestroId } });
+  async desasignarGrupoDeMaestro(escuelaId: number, maestroId: number, grupoId: number, auditContext?: AuditContext) {
+    const maestro = await this.prisma.maestro.findUnique({ where: { id: BigInt(maestroId) } });
     if (!maestro) throw new NotFoundException('Maestro no encontrado');
-    if (Number(maestro.escuelaId) !== Number(escuelaId)) {
-      throw new ForbiddenException('No puedes desasignar grupos de maestros de otra escuela');
-    }
+    if (Number(maestro.escuelaId) !== escuelaId) throw new ForbiddenException('No puedes desasignar grupos de maestros de otra escuela');
 
-    const asignacion = await this.maestroGrupoRepository.findOne({
-      where: { maestroId, grupoId },
+    const asignacion = await this.prisma.maestroGrupo.findFirst({
+      where: { maestroId: BigInt(maestroId), grupoId: BigInt(grupoId) },
     });
     if (!asignacion) throw new NotFoundException('El maestro no tiene asignado este grupo');
 
-    await this.maestroGrupoRepository.remove(asignacion);
+    await this.prisma.maestroGrupo.delete({ where: { id: asignacion.id } });
     await this.auditService.log('director_maestro_desasignar_grupo', {
       usuarioId: auditContext?.usuarioId ?? null,
       ip: auditContext?.ip ?? null,
@@ -399,70 +272,50 @@ export class DirectorService {
     return { message: 'Grupo desasignado del maestro correctamente' };
   }
 
-  /**
-   * Actualizar grupo de un alumno. Director solo puede en su escuela.
-   */
-  async actualizarGrupoDeAlumno(
-    escuelaId: number,
-    alumnoId: number,
-    dto: { grupoId?: number | null },
-    auditContext?: AuditContext,
-  ) {
-    const alumno = await this.alumnoRepository.findOne({
-      where: { id: alumnoId },
-      relations: ['persona'],
+  async actualizarGrupoDeAlumno(escuelaId: number, alumnoId: number, dto: { grupoId?: number | null }, auditContext?: AuditContext) {
+    const alumno = await this.prisma.alumno.findUnique({
+      where: { id: BigInt(alumnoId) },
+      include: { persona: true },
     });
     if (!alumno) throw new NotFoundException('Alumno no encontrado');
-    if (Number(alumno.escuelaId) !== Number(escuelaId)) {
-      throw new ForbiddenException('No puedes modificar alumnos de otra escuela');
-    }
+    if (Number(alumno.escuelaId) !== escuelaId) throw new ForbiddenException('No puedes modificar alumnos de otra escuela');
 
-    if (dto.grupoId == null || dto.grupoId === undefined) {
-      alumno.grupoId = null;
-      alumno.grupo = null;
-    } else {
-      const grupo = await this.grupoRepository.findOne({ where: { id: dto.grupoId } });
+    let updateData: Record<string, unknown> = { grupoId: null, grupo: null };
+    if (dto.grupoId != null) {
+      const grupo = await this.prisma.grupo.findUnique({ where: { id: BigInt(dto.grupoId) } });
       if (!grupo) throw new NotFoundException('Grupo no encontrado');
-      if (Number(grupo.escuelaId) !== Number(escuelaId)) {
-        throw new ForbiddenException('El grupo no pertenece a tu escuela');
-      }
-      alumno.grupoId = grupo.id;
-      alumno.grado = Number(grupo.grado);
-      alumno.grupo = grupo.nombre;
+      if (Number(grupo.escuelaId) !== escuelaId) throw new ForbiddenException('El grupo no pertenece a tu escuela');
+      updateData = { grupoId: grupo.id, grado: grupo.grado, grupo: grupo.nombre };
     }
 
-    await this.alumnoRepository.save(alumno);
+    const updated = await this.prisma.alumno.update({ where: { id: BigInt(alumnoId) }, data: updateData });
     await this.auditService.log('director_alumno_cambiar_grupo', {
       usuarioId: auditContext?.usuarioId ?? null,
       ip: auditContext?.ip ?? null,
       detalles: `escuelaId=${escuelaId} alumnoId=${alumnoId} nuevoGrupoId=${dto.grupoId ?? 'null'}`,
     });
+
     return {
       message: 'Grupo del alumno actualizado correctamente',
       alumno: {
-        id: alumno.id,
-        personaId: alumno.personaId,
-        escuelaId: alumno.escuelaId,
-        grado: alumno.grado,
-        grupo: alumno.grupo,
-        grupoId: alumno.grupoId,
+        id: Number(updated.id),
+        personaId: Number(updated.personaId),
+        escuelaId: Number(updated.escuelaId),
+        grado: Number(updated.grado),
+        grupo: updated.grupo,
+        grupoId: updated.grupoId != null ? Number(updated.grupoId) : null,
       },
     };
   }
 
-  /**
-   * Listar grupos asignados a un maestro.
-   */
   async listarGruposDeMaestro(escuelaId: number, maestroId: number) {
-    const maestro = await this.maestroRepository.findOne({ where: { id: maestroId } });
+    const maestro = await this.prisma.maestro.findUnique({ where: { id: BigInt(maestroId) } });
     if (!maestro) throw new NotFoundException('Maestro no encontrado');
-    if (Number(maestro.escuelaId) !== Number(escuelaId)) {
-      throw new ForbiddenException('No puedes ver grupos de maestros de otra escuela');
-    }
+    if (Number(maestro.escuelaId) !== escuelaId) throw new ForbiddenException('No puedes ver grupos de maestros de otra escuela');
 
-    const asignaciones = await this.maestroGrupoRepository.find({
-      where: { maestroId },
-      relations: ['grupo'],
+    const asignaciones = await this.prisma.maestroGrupo.findMany({
+      where: { maestroId: BigInt(maestroId) },
+      include: { grupo: true },
     });
     const grupos = asignaciones.map((a) => a.grupo).filter(Boolean);
     grupos.sort((a, b) => {

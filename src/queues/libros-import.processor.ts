@@ -1,10 +1,8 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { PrismaService } from '../prisma/prisma.service';
 import { LibroProcesamientoService } from '../libros/libro-procesamiento.service';
-import { Libro } from '../libros/entities/libro.entity';
 import {
   LIBROS_IMPORT_QUEUE,
   LOCK_LIBRO_IMPORT_PREFIX,
@@ -27,7 +25,7 @@ export class LibrosImportProcessor extends WorkerHost {
     private readonly libroProcesamiento: LibroProcesamientoService,
     private readonly supabaseStorage: SupabaseStorageService,
     private readonly redis: RedisService,
-    @InjectRepository(Libro) private readonly libroRepo: Repository<Libro>,
+    private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
   ) {
     super();
@@ -61,9 +59,9 @@ export class LibrosImportProcessor extends WorkerHost {
     }
 
     try {
-      const libro = await this.libroRepo.findOne({
-        where: { id: libroId },
-        relations: ['unidades'],
+      const libro = await this.prisma.libro.findUnique({
+        where: { id: BigInt(libroId) },
+        include: { unidades: true },
       });
 
       if (!libro) {
@@ -85,9 +83,9 @@ export class LibrosImportProcessor extends WorkerHost {
         rutaPdfPreexistente: rutaPdfRelativa,
       });
 
-      const final = await this.libroRepo.findOne({
-        where: { id: libroId },
-        relations: ['materia', 'unidades'],
+      const final = await this.prisma.libro.findUnique({
+        where: { id: BigInt(libroId) },
+        include: { materia: true, unidades: true },
       });
 
       await this.auditService.log('libro_cargar', {

@@ -1,0 +1,466 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================
+// PERSONAS
+// ============================================
+
+model Persona {
+  id              BigInt    @id @default(autoincrement())
+  nombre          String    @db.VarChar(100)
+  apellidoPaterno String    @map("apellido_paterno") @db.VarChar(100)
+  apellidoMaterno String?   @map("apellido_materno") @db.VarChar(100)
+  correo          String?   @db.VarChar(150)
+  telefono        String?   @db.VarChar(20)
+  fechaNacimiento DateTime? @map("fecha_nacimiento") @db.Date
+  genero          String?   @db.VarChar(30)
+  password        String?   @db.VarChar(255)
+  tipoPersona     String?   @map("tipo_persona") @db.VarChar(50)
+  activo          Boolean?  @default(true)
+  ultimaConexion  DateTime? @map("ultima_conexion") @db.Timestamptz()
+
+  administrador Administrador?
+  padre         Padre?
+  alumno        Alumno?
+  maestro       Maestro?
+  director      Director?
+
+  @@map("Persona")
+}
+
+model Administrador {
+  id        BigInt    @id @default(autoincrement())
+  personaId BigInt    @unique @map("persona_id")
+  fechaAlta DateTime? @map("fecha_alta") @db.Date
+
+  persona Persona @relation(fields: [personaId], references: [id])
+
+  @@map("Admin")
+}
+
+model Padre {
+  id         BigInt  @id @default(autoincrement())
+  personaId  BigInt  @unique @map("persona_id")
+  parentesco String? @db.VarChar(50)
+
+  persona Persona  @relation(fields: [personaId], references: [id])
+  alumnos Alumno[]
+
+  @@map("Padre")
+}
+
+model Alumno {
+  id           BigInt  @id @default(autoincrement())
+  personaId    BigInt  @unique @map("persona_id")
+  escuelaId    BigInt  @map("escuela_id")
+  padreId      BigInt? @map("padre_id")
+  grado        BigInt
+  grupo        String? @db.VarChar(10)
+  grupoId      BigInt? @map("grupo_id")
+  cicloEscolar String? @map("ciclo_escolar") @db.VarChar(20)
+  activo       Boolean @default(true)
+
+  persona        Persona                  @relation(fields: [personaId], references: [id])
+  escuela        Escuela                  @relation(fields: [escuelaId], references: [id])
+  padre          Padre?                   @relation(fields: [padreId], references: [id])
+  grupoEntidad   Grupo?                   @relation(fields: [grupoId], references: [id])
+  alumnoMaestros AlumnoMaestro[]
+  vinculaciones  AlumnoVinculacionPadre[]
+  alumnoLibros   AlumnoLibro[]
+  anotaciones    Anotacion[]
+  licencias      LicenciaLibro[]
+
+  @@map("Alumno")
+}
+
+model Maestro {
+  id                BigInt    @id @default(autoincrement())
+  personaId         BigInt    @unique @map("persona_id")
+  escuelaId         BigInt    @map("escuela_id")
+  especialidad      String?   @db.VarChar(100)
+  fechaContratacion DateTime? @map("fecha_contratacion") @db.Date
+  activo            Boolean   @default(true)
+
+  persona        Persona         @relation(fields: [personaId], references: [id])
+  escuela        Escuela         @relation(fields: [escuelaId], references: [id])
+  alumnoMaestros AlumnoMaestro[]
+  maestroGrupos  MaestroGrupo[]
+
+  @@map("Maestro")
+}
+
+model Director {
+  id                BigInt    @id @default(autoincrement())
+  personaId         BigInt    @unique @map("persona_id")
+  escuelaId         BigInt    @map("escuela_id")
+  fechaNombramiento DateTime? @map("fecha_nombramiento") @db.Date
+  activo            Boolean   @default(true)
+
+  persona Persona @relation(fields: [personaId], references: [id])
+  escuela Escuela @relation(fields: [escuelaId], references: [id])
+
+  @@map("Director")
+}
+
+model Escuela {
+  id           BigInt  @id @default(autoincrement())
+  nombre       String  @db.VarChar(150)
+  nivel        String  @db.VarChar(50)
+  clave        String? @db.VarChar(50)
+  direccion    String? @db.VarChar(200)
+  telefono     String? @db.VarChar(20)
+  estado       String  @default("activa") @db.VarChar(20)
+  ciudad       String? @db.VarChar(100)
+  estadoRegion String? @map("estado_region") @db.VarChar(100)
+
+  alumnos                 Alumno[]
+  maestros                Maestro[]
+  directores              Director[]
+  grupos                  Grupo[]
+  escuelaLibros           EscuelaLibro[]
+  escuelaLibrosPendientes EscuelaLibroPendiente[]
+  licencias               LicenciaLibro[]
+
+  @@map("Escuela")
+}
+
+model Materia {
+  id          BigInt  @id @default(autoincrement())
+  nombre      String  @db.VarChar(100)
+  descripcion String? @db.VarChar(255)
+  nivel       String? @db.VarChar(50)
+
+  libros         Libro[]
+  alumnoMaestros AlumnoMaestro[]
+
+  @@map("Materia")
+}
+
+model AlumnoMaestro {
+  id          BigInt    @id @default(autoincrement())
+  alumnoId    BigInt    @map("alumno_id")
+  maestroId   BigInt    @map("maestro_id")
+  materiaId   BigInt    @map("materia_id")
+  fechaInicio DateTime  @map("fecha_inicio") @db.Date
+  fechaFin    DateTime? @map("fecha_fin") @db.Date
+
+  alumno  Alumno  @relation(fields: [alumnoId], references: [id], onDelete: Cascade)
+  maestro Maestro @relation(fields: [maestroId], references: [id], onDelete: Cascade)
+  materia Materia @relation(fields: [materiaId], references: [id])
+
+  @@map("Alumno_Maestro")
+}
+
+model AlumnoVinculacionPadre {
+  id       BigInt    @id @default(autoincrement())
+  alumnoId BigInt    @map("alumno_id")
+  codigo   String    @unique @db.VarChar(64)
+  usado    Boolean   @default(false)
+  usadoEn  DateTime? @map("usado_en")
+  expiraEn DateTime? @map("expira_en")
+  creadoEn DateTime  @default(now()) @map("creado_en")
+
+  alumno Alumno @relation(fields: [alumnoId], references: [id], onDelete: Cascade)
+
+  @@map("Alumno_Vinculacion_Padre")
+}
+
+// ============================================
+// LIBROS
+// ============================================
+
+model Libro {
+  id           BigInt  @id @default(autoincrement())
+  titulo       String  @db.VarChar(150)
+  materiaId    BigInt? @map("materia_id")
+  codigo       String  @db.VarChar(50)
+  grado        BigInt
+  editorial    String? @db.VarChar(150)
+  autor        String? @db.VarChar(150)
+  descripcion  String? @db.VarChar(255)
+  estado       String  @default("procesando") @db.VarChar(50)
+  activo       Boolean @default(true)
+  numPaginas   BigInt? @map("num_paginas")
+  rutaPdf      String? @map("ruta_pdf") @db.VarChar(512)
+  mensajeError String? @map("mensaje_error") @db.VarChar(512)
+  jobId        String? @map("job_id") @db.VarChar(100)
+
+  materia                 Materia?                @relation(fields: [materiaId], references: [id])
+  unidades                Unidad[]
+  alumnoLibros            AlumnoLibro[]
+  escuelaLibros           EscuelaLibro[]
+  escuelaLibrosPendientes EscuelaLibroPendiente[]
+  licencias               LicenciaLibro[]
+  anotaciones             Anotacion[]
+  segmentos               Segmento[]
+
+  @@map("Libro")
+}
+
+model Unidad {
+  id      BigInt @id @default(autoincrement())
+  libroId BigInt @map("libro_id")
+  nombre  String @db.VarChar(150)
+  orden   BigInt @default(1)
+
+  libro     Libro      @relation(fields: [libroId], references: [id], onDelete: Cascade)
+  segmentos Segmento[]
+
+  @@map("Unidad")
+}
+
+model Segmento {
+  id           BigInt  @id @default(autoincrement())
+  libroId      BigInt  @map("libro_id")
+  unidadId     BigInt  @map("unidad_id")
+  contenido    String
+  numeroPagina BigInt? @map("numero_pagina")
+  orden        BigInt  @default(1)
+  idExterno    String  @map("id_externo") @db.VarChar(100)
+
+  libro             Libro              @relation(fields: [libroId], references: [id], onDelete: Cascade)
+  unidad            Unidad             @relation(fields: [unidadId], references: [id], onDelete: Cascade)
+  preguntas         PreguntaSegmento[]
+  seccionesGlosario SeccionGlosario[]
+  alumnoLibros      AlumnoLibro[]      @relation("ultimoSegmento")
+  anotaciones       Anotacion[]
+
+  @@map("Segmento")
+}
+
+model PreguntaSegmento {
+  id            BigInt @id @default(autoincrement())
+  segmentoId    BigInt @map("segmento_id")
+  nivel         String @db.VarChar(20)
+  textoPregunta String @map("texto_pregunta")
+  orden         Int    @default(1)
+
+  segmento Segmento @relation(fields: [segmentoId], references: [id], onDelete: Cascade)
+
+  @@map("PreguntaSegmento")
+}
+
+model Glosario {
+  id         BigInt   @id @default(autoincrement())
+  palabra    String   @unique @db.VarChar(180)
+  definicion String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("glosario")
+}
+
+model SeccionGlosario {
+  id         BigInt  @id @default(autoincrement())
+  segmentoId BigInt  @map("segmento_id")
+  palabra    String  @db.VarChar(180)
+  definicion String?
+
+  segmento Segmento @relation(fields: [segmentoId], references: [id], onDelete: Cascade)
+
+  @@unique([segmentoId, palabra], name: "uq_seccion_glosario_segmento_palabra")
+  @@map("seccion_glosario")
+}
+
+// ============================================
+// ESCUELAS
+// ============================================
+
+model Grupo {
+  id        BigInt  @id @default(autoincrement())
+  escuelaId BigInt  @map("escuela_id")
+  grado     BigInt
+  nombre    String  @db.VarChar(20)
+  activo    Boolean @default(true)
+
+  escuela       Escuela        @relation(fields: [escuelaId], references: [id])
+  alumnos       Alumno[]
+  maestroGrupos MaestroGrupo[]
+
+  @@unique([escuelaId, grado, nombre])
+  @@map("Grupo")
+}
+
+model AlumnoLibro {
+  id               BigInt    @id @default(autoincrement())
+  alumnoId         BigInt    @map("alumno_id")
+  libroId          BigInt    @map("libro_id")
+  porcentaje       Int       @default(0)
+  ultimoSegmentoId BigInt?   @map("ultimo_segmento_id")
+  ultimaLectura    DateTime? @map("ultima_lectura") @db.Timestamptz()
+  fechaAsignacion  DateTime  @map("fecha_asignacion") @db.Date
+  asignadoPorTipo  String    @default("maestro") @map("asignado_por_tipo") @db.VarChar(20)
+  asignadoPorId    BigInt?   @map("asignado_por_id")
+
+  alumno         Alumno    @relation(fields: [alumnoId], references: [id], onDelete: Cascade)
+  libro          Libro     @relation(fields: [libroId], references: [id], onDelete: Cascade)
+  ultimoSegmento Segmento? @relation("ultimoSegmento", fields: [ultimoSegmentoId], references: [id], onDelete: SetNull)
+
+  @@map("Alumno_Libro")
+}
+
+model EscuelaLibro {
+  id          BigInt    @id @default(autoincrement())
+  escuelaId   BigInt    @map("escuela_id")
+  libroId     BigInt    @map("libro_id")
+  activo      Boolean   @default(true)
+  fechaInicio DateTime  @map("fecha_inicio") @db.Date
+  fechaFin    DateTime? @map("fecha_fin") @db.Date
+  grupo       String?   @db.VarChar(10)
+
+  escuela Escuela @relation(fields: [escuelaId], references: [id])
+  libro   Libro   @relation(fields: [libroId], references: [id])
+
+  @@map("Escuela_Libro")
+}
+
+model EscuelaLibroPendiente {
+  id            BigInt   @id @default(autoincrement())
+  escuelaId     BigInt   @map("escuela_id")
+  libroId       BigInt   @map("libro_id")
+  fechaOtorgado DateTime @default(now()) @map("fecha_otorgado")
+
+  escuela Escuela @relation(fields: [escuelaId], references: [id])
+  libro   Libro   @relation(fields: [libroId], references: [id])
+
+  @@map("Escuela_Libro_Pendiente")
+}
+
+model MaestroGrupo {
+  id        BigInt @id @default(autoincrement())
+  maestroId BigInt @map("maestro_id")
+  grupoId   BigInt @map("grupo_id")
+
+  maestro Maestro @relation(fields: [maestroId], references: [id], onDelete: Cascade)
+  grupo   Grupo   @relation(fields: [grupoId], references: [id], onDelete: Cascade)
+
+  @@unique([maestroId, grupoId])
+  @@map("Maestro_Grupo")
+}
+
+model AlumnoSegmentoEvaluacion {
+  id            BigInt   @id @default(autoincrement())
+  alumnoId      BigInt   @map("alumno_id")
+  libroId       BigInt   @map("libro_id")
+  segmentoId    BigInt   @map("segmento_id")
+  nivelPregunta String   @map("nivel_pregunta") @db.VarChar(20)
+  intento       Int      @default(1)
+  preguntas     Json
+  respuestas    Json
+  score         Int      @default(0)
+  aprobado      Boolean  @default(false)
+  puedeAvanzar  Boolean  @default(false) @map("puede_avanzar")
+  apoyos        Json?
+  creadoEn      DateTime @default(now()) @map("creado_en") @db.Timestamptz()
+
+  @@map("Alumno_Segmento_Evaluacion")
+}
+
+model Anotacion {
+  id                BigInt   @id @default(autoincrement())
+  alumnoId          BigInt   @map("alumno_id")
+  libroId           BigInt   @map("libro_id")
+  segmentoId        BigInt   @map("segmento_id")
+  tipo              String   @db.VarChar(20)
+  textoSeleccionado String   @map("texto_seleccionado")
+  offsetInicio      Int      @map("offset_inicio")
+  offsetFin         Int      @map("offset_fin")
+  color             String?  @db.VarChar(20)
+  comentario        String?
+  creadoEn          DateTime @default(now()) @map("creado_en") @db.Timestamptz()
+
+  alumno   Alumno   @relation(fields: [alumnoId], references: [id], onDelete: Cascade)
+  libro    Libro    @relation(fields: [libroId], references: [id], onDelete: Cascade)
+  segmento Segmento @relation(fields: [segmentoId], references: [id], onDelete: Cascade)
+
+  @@map("Anotacion")
+}
+
+// ============================================
+// LICENCIAS
+// ============================================
+
+model LicenciaLibro {
+  id               BigInt    @id @default(autoincrement())
+  clave            String    @unique @db.VarChar(50)
+  libroId          BigInt    @map("libro_id")
+  escuelaId        BigInt    @map("escuela_id")
+  alumnoId         BigInt?   @map("alumno_id")
+  fechaVencimiento DateTime  @map("fecha_vencimiento") @db.Date
+  activa           Boolean   @default(true)
+  fechaAsignacion  DateTime? @map("fecha_asignacion") @db.Timestamptz()
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  libro   Libro   @relation(fields: [libroId], references: [id])
+  escuela Escuela @relation(fields: [escuelaId], references: [id])
+  alumno  Alumno? @relation(fields: [alumnoId], references: [id])
+
+  @@map("Licencia_Libro")
+}
+
+model LicenciaLibroArchivada {
+  id               BigInt    @id @default(autoincrement())
+  licenciaId       BigInt    @map("licencia_id")
+  clave            String    @db.VarChar(50)
+  libroId          BigInt    @map("libro_id")
+  escuelaId        BigInt    @map("escuela_id")
+  alumnoId         BigInt?   @map("alumno_id")
+  fechaVencimiento DateTime  @map("fecha_vencimiento") @db.Date
+  activa           Boolean
+  fechaAsignacion  DateTime? @map("fecha_asignacion") @db.Timestamptz()
+  archivadaEn      DateTime  @map("archivada_en") @db.Timestamptz()
+  motivo           String    @db.VarChar(64)
+
+  @@map("Licencia_Libro_Archivada")
+}
+
+// ============================================
+// ALUMNO (sesiones y preferencias)
+// ============================================
+
+model SesionLectura {
+  id               String   @id @default(uuid())
+  alumnoId         BigInt   @map("alumno_id")
+  libroId          BigInt   @map("libro_id")
+  duracionSegundos Int      @map("duracion_segundos")
+  segmentosLeidos  Int      @default(0) @map("segmentos_leidos")
+  segmentoInicioId BigInt?  @map("segmento_inicio_id")
+  segmentoFinId    BigInt?  @map("segmento_fin_id")
+  fechaInicio      DateTime @map("fecha_inicio") @db.Timestamptz()
+  fechaFin         DateTime @map("fecha_fin") @db.Timestamptz()
+  creadoEn         DateTime @default(now()) @map("creado_en") @db.Timestamptz()
+
+  @@index([alumnoId, libroId])
+  @@index([fechaFin])
+  @@map("Sesion_Lectura")
+}
+
+model PreferenciasAlumno {
+  id                    String   @id @default(uuid())
+  alumnoId              BigInt   @unique @map("alumno_id")
+  ocultarTutorialLector Boolean  @default(false) @map("ocultar_tutorial_lector")
+  temaLector            String   @default("sepia") @map("tema_lector") @db.VarChar(10)
+  idioma                String   @default("es") @db.VarChar(5)
+  actualizadoEn         DateTime @updatedAt @map("actualizado_en") @db.Timestamptz()
+
+  @@map("Preferencias_Alumno")
+}
+
+// ============================================
+// AUDIT
+// ============================================
+
+model AuditLog {
+  id        BigInt   @id @default(autoincrement())
+  accion    String   @db.VarChar(80)
+  usuarioId BigInt?  @map("usuario_id")
+  ip        String?  @db.VarChar(45)
+  detalles  String?
+  fecha     DateTime @default(now())
+
+  @@map("audit_log")
+}

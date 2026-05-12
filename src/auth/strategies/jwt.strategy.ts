@@ -7,7 +7,7 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
-import type { Persona } from '../../personas/entities/persona.entity';
+import type { PersonaPrincipal } from '../services/jwt-persona-loader.service';
 import { JwtPersonaLoaderService } from '../services/jwt-persona-loader.service';
 
 export type AccessTokenPayload = {
@@ -33,7 +33,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(payload: AccessTokenPayload): Promise<Persona> {
+  async validate(payload: AccessTokenPayload): Promise<PersonaPrincipal> {
     if (payload?.sub == null) {
       throw new UnauthorizedException('Token inválido');
     }
