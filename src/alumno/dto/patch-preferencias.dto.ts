@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsBoolean, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
-import type { TemaLector } from '../entities/preferencias-alumno.entity';
+type TemaLector = 'sepia' | 'oscuro' | 'claro';
 
 export class PatchPreferenciasDto {
   @ApiPropertyOptional({ example: true })

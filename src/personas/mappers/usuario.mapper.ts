@@ -1,4 +1,21 @@
-import type { Persona } from '../entities/persona.entity';
+interface Persona {
+  id: number;
+  nombre: string;
+  apellidoPaterno: string;
+  apellidoMaterno?: string | null;
+  correo?: string | null;
+  telefono?: string | null;
+  genero?: string | null;
+  fechaNacimiento?: Date | string | null;
+  tipoPersona?: string | null;
+  activo?: boolean | null;
+  ultimaConexion?: Date | string | null;
+  administrador?: { id: number } | null;
+  director?: { id: number; escuela?: { id: number; nombre: string; nivel?: string } | null } | null;
+  maestro?: { id: number; escuela?: { id: number; nombre: string; nivel?: string } | null } | null;
+  alumno?: { id: number; escuela?: { id: number; nombre: string; nivel?: string } | null } | null;
+  padre?: { id: number } | null;
+}
 
 export interface UsuarioListItem {
   id: number;
