@@ -22,10 +22,6 @@ export function validateEnv(): void {
     if (process.env.METRICS_ALLOW_UNPROTECTED === 'true') {
       errors.push('METRICS_ALLOW_UNPROTECTED no puede ser true en producción.');
     }
-    const hasRedis = !!(process.env.REDIS_URL?.trim() || process.env.REDIS_HOST?.trim());
-    if (!hasRedis) {
-      errors.push('En producción se requiere REDIS_URL o REDIS_HOST (colas y caché).');
-    }
     if (!process.env.SUPABASE_URL?.trim() || !process.env.SUPABASE_KEY?.trim()) {
       errors.push(
         'En producción SUPABASE_URL y SUPABASE_KEY son obligatorios (almacenamiento de PDFs).',
