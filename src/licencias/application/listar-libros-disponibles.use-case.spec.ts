@@ -1,39 +1,30 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
 import { ListarLibrosDisponiblesUseCase } from './listar-libros-disponibles.use-case';
-import { Alumno } from '../../personas/entities/alumno.entity';
-import { EscuelaLibro } from '../../escuelas/entities/escuela-libro.entity';
-import { AlumnoLibro } from '../../escuelas/entities/alumno-libro.entity';
-import { LicenciaLibro } from '../entities/licencia-libro.entity';
+import { PrismaService } from '../../prisma/prisma.service';
 
 describe('ListarLibrosDisponiblesUseCase', () => {
   let useCase: ListarLibrosDisponiblesUseCase;
-
-  const alumnoRepo = { findOne: jest.fn() };
-  const escuelaLibroRepo = { find: jest.fn() };
-  const alumnoLibroRepo = { find: jest.fn() };
-  const licenciaQb = {
-    select: jest.fn().mockReturnThis(),
-    addSelect: jest.fn().mockReturnThis(),
-    where: jest.fn().mockReturnThis(),
-    andWhere: jest.fn().mockReturnThis(),
-    groupBy: jest.fn().mockReturnThis(),
-    getRawMany: jest.fn(),
-  };
-  const licenciaRepo = {
-    createQueryBuilder: jest.fn().mockReturnValue(licenciaQb),
+  let mockPrisma: {
+    alumno: { findUnique: jest.Mock };
+    escuelaLibro: { findMany: jest.Mock };
+    alumnoLibro: { findMany: jest.Mock };
+    licenciaLibro: { groupBy: jest.Mock };
   };
 
   beforeEach(async () => {
+    mockPrisma = {
+      alumno: { findUnique: jest.fn() },
+      escuelaLibro: { findMany: jest.fn() },
+      alumnoLibro: { findMany: jest.fn() },
+      licenciaLibro: { groupBy: jest.fn() },
+    };
+
     jest.clearAllMocks();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ListarLibrosDisponiblesUseCase,
-        { provide: getRepositoryToken(Alumno), useValue: alumnoRepo },
-        { provide: getRepositoryToken(EscuelaLibro), useValue: escuelaLibroRepo },
-        { provide: getRepositoryToken(AlumnoLibro), useValue: alumnoLibroRepo },
-        { provide: getRepositoryToken(LicenciaLibro), useValue: licenciaRepo },
+        { provide: PrismaService, useValue: mockPrisma },
       ],
     }).compile();
 
@@ -41,21 +32,28 @@ describe('ListarLibrosDisponiblesUseCase', () => {
   });
 
   it('filtra libros por grado/grupo/asignación y licencias disponibles', async () => {
-    alumnoRepo.findOne.mockResolvedValue({ id: 10, escuelaId: 1, grado: 3, grupo: 'A' });
-    escuelaLibroRepo.find.mockResolvedValue([
+    mockPrisma.alumno.findUnique.mockResolvedValue({
+      id: BigInt(10),
+      escuelaId: BigInt(1),
+      grado: BigInt(3),
+      grupo: 'A',
+    });
+    mockPrisma.escuelaLibro.findMany.mockResolvedValue([
       {
-        libroId: 100,
+        libroId: BigInt(100),
         grupo: 'A',
-        libro: { id: 100, titulo: 'Libro A', codigo: 'A', grado: 3, activo: true, materia: null },
+        libro: { id: BigInt(100), titulo: 'Libro A', codigo: 'A', grado: BigInt(3), activo: true, materia: null },
       },
       {
-        libroId: 101,
+        libroId: BigInt(101),
         grupo: 'B',
-        libro: { id: 101, titulo: 'Libro B', codigo: 'B', grado: 3, activo: true, materia: null },
+        libro: { id: BigInt(101), titulo: 'Libro B', codigo: 'B', grado: BigInt(3), activo: true, materia: null },
       },
     ]);
-    alumnoLibroRepo.find.mockResolvedValue([]);
-    licenciaQb.getRawMany.mockResolvedValue([{ libroId: '100', total: '2' }]);
+    mockPrisma.alumnoLibro.findMany.mockResolvedValue([]);
+    mockPrisma.licenciaLibro.groupBy.mockResolvedValue([
+      { libroId: BigInt(100), _count: { id: 2 } },
+    ]);
 
     const result = await useCase.execute(1, 10);
 
@@ -64,12 +62,17 @@ describe('ListarLibrosDisponiblesUseCase', () => {
   });
 
   it('lanza error si alumno no existe', async () => {
-    alumnoRepo.findOne.mockResolvedValue(null);
+    mockPrisma.alumno.findUnique.mockResolvedValue(null);
     await expect(useCase.execute(1, 10)).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('lanza error si alumno pertenece a otra escuela', async () => {
-    alumnoRepo.findOne.mockResolvedValue({ id: 10, escuelaId: 2, grado: 3, grupo: 'A' });
+    mockPrisma.alumno.findUnique.mockResolvedValue({
+      id: BigInt(10),
+      escuelaId: BigInt(2),
+      grado: BigInt(3),
+      grupo: 'A',
+    });
     await expect(useCase.execute(1, 10)).rejects.toBeInstanceOf(BadRequestException);
   });
 });

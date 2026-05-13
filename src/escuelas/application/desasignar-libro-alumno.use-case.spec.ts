@@ -1,34 +1,30 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
 import { DesasignarLibroAlumnoUseCase } from './desasignar-libro-alumno.use-case';
-import { AlumnoLibro } from '../entities/alumno-libro.entity';
-import { MaestroGrupo } from '../entities/maestro-grupo.entity';
+import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../audit/audit.service';
 
 describe('DesasignarLibroAlumnoUseCase', () => {
   let useCase: DesasignarLibroAlumnoUseCase;
-
-  const alumnoLibroRepo = {
-    findOne: jest.fn(),
-    remove: jest.fn(),
-  };
-  const maestroGrupoRepo = { find: jest.fn() };
-  const alumnoMaestroRepo = { findOne: jest.fn() };
-  const dataSource = {
-    getRepository: jest.fn().mockReturnValue(alumnoMaestroRepo),
+  let mockPrisma: {
+    alumnoLibro: { findFirst: jest.Mock; delete: jest.Mock };
+    alumnoMaestro: { findFirst: jest.Mock };
+    maestroGrupo: { findMany: jest.Mock };
   };
   const auditService = { log: jest.fn() };
 
   beforeEach(async () => {
+    mockPrisma = {
+      alumnoLibro: { findFirst: jest.fn(), delete: jest.fn().mockResolvedValue({}) },
+      alumnoMaestro: { findFirst: jest.fn() },
+      maestroGrupo: { findMany: jest.fn() },
+    };
+
     jest.clearAllMocks();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DesasignarLibroAlumnoUseCase,
-        { provide: getRepositoryToken(AlumnoLibro), useValue: alumnoLibroRepo },
-        { provide: getRepositoryToken(MaestroGrupo), useValue: maestroGrupoRepo },
-        { provide: DataSource, useValue: dataSource },
+        { provide: PrismaService, useValue: mockPrisma },
         { provide: AuditService, useValue: auditService },
       ],
     }).compile();
@@ -37,8 +33,10 @@ describe('DesasignarLibroAlumnoUseCase', () => {
   });
 
   it('desasigna correctamente para director de su escuela', async () => {
-    alumnoLibroRepo.findOne.mockResolvedValue({ alumno: { escuelaId: 7 } });
-    alumnoLibroRepo.remove.mockResolvedValue(undefined);
+    mockPrisma.alumnoLibro.findFirst.mockResolvedValue({
+      id: BigInt(1),
+      alumno: { escuelaId: BigInt(7) },
+    });
 
     const result = await useCase.execute(1, 2, {
       escuelaIdRestriccion: 7,
@@ -53,12 +51,15 @@ describe('DesasignarLibroAlumnoUseCase', () => {
   });
 
   it('bloquea si la asignación no existe', async () => {
-    alumnoLibroRepo.findOne.mockResolvedValue(null);
+    mockPrisma.alumnoLibro.findFirst.mockResolvedValue(null);
     await expect(useCase.execute(1, 2)).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('bloquea si director intenta operar otra escuela', async () => {
-    alumnoLibroRepo.findOne.mockResolvedValue({ alumno: { escuelaId: 8 } });
+    mockPrisma.alumnoLibro.findFirst.mockResolvedValue({
+      id: BigInt(1),
+      alumno: { escuelaId: BigInt(8) },
+    });
     await expect(useCase.execute(1, 2, { escuelaIdRestriccion: 7 })).rejects.toBeInstanceOf(
       ForbiddenException,
     );

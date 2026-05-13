@@ -1,9 +1,8 @@
 import { Test } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
 import { Job } from 'bullmq';
 import { LibrosImportProcessor } from './libros-import.processor';
 import { LibroProcesamientoService } from '../libros/libro-procesamiento.service';
-import { Libro } from '../libros/entities/libro.entity';
+import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../infra/redis/redis.service';
 import { AuditService } from '../audit/audit.service';
 import { LIBRO_ESTADO } from '../libros/constants/libro-estado.constants';
@@ -13,10 +12,10 @@ describe('LibrosImportProcessor', () => {
   it('omite si el libro ya está listo (idempotencia)', async () => {
     const procesar = jest.fn();
     const auditLog = jest.fn();
-    const findOne = jest.fn().mockResolvedValue({
-      id: 1,
+    const findUnique = jest.fn().mockResolvedValue({
+      id: BigInt(1),
       estado: LIBRO_ESTADO.LISTO,
-      unidades: [{ id: 1 }],
+      unidades: [{ id: BigInt(1) }],
     });
 
     const moduleRef = await Test.createTestingModule({
@@ -34,7 +33,7 @@ describe('LibrosImportProcessor', () => {
             releaseLock: jest.fn(),
           },
         },
-        { provide: getRepositoryToken(Libro), useValue: { findOne } },
+        { provide: PrismaService, useValue: { libro: { findUnique } } },
         { provide: AuditService, useValue: { log: auditLog } },
         {
           provide: SupabaseStorageService,
@@ -61,8 +60,8 @@ describe('LibrosImportProcessor', () => {
 
   it('si no hay lock, el job falla (reintento Bull) en lugar de completar en silencio', async () => {
     const procesar = jest.fn();
-    const findOne = jest.fn().mockResolvedValue({
-      id: 1,
+    const findUnique = jest.fn().mockResolvedValue({
+      id: BigInt(1),
       estado: LIBRO_ESTADO.PROCESANDO,
       unidades: [],
     });
@@ -82,7 +81,7 @@ describe('LibrosImportProcessor', () => {
             releaseLock: jest.fn(),
           },
         },
-        { provide: getRepositoryToken(Libro), useValue: { findOne } },
+        { provide: PrismaService, useValue: { libro: { findUnique } } },
         { provide: AuditService, useValue: { log: jest.fn() } },
         {
           provide: SupabaseStorageService,

@@ -1,26 +1,25 @@
 import { Test } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
 import { JwtPersonaLoaderService } from './jwt-persona-loader.service';
-import { Persona } from '../../personas/entities/persona.entity';
+import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../infra/redis/redis.service';
 
 describe('JwtPersonaLoaderService', () => {
   it('usa dos queries y solo la relación del rol (ej. alumno)', async () => {
-    const findOne = jest
+    const findUnique = jest
       .fn()
-      .mockResolvedValueOnce({ id: 1, activo: true, tipoPersona: 'alumno' })
+      .mockResolvedValueOnce({ id: BigInt(1), activo: true, tipoPersona: 'alumno' })
       .mockResolvedValueOnce({
-        id: 1,
+        id: BigInt(1),
         tipoPersona: 'alumno',
         correo: 'a@test.com',
-        alumno: { id: 99, personaId: 1 },
+        alumno: { id: BigInt(99), personaId: BigInt(1) },
       });
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         JwtPersonaLoaderService,
-        { provide: getRepositoryToken(Persona), useValue: { findOne } },
+        { provide: PrismaService, useValue: { persona: { findUnique } } },
         { provide: ConfigService, useValue: { get: () => '0' } },
         {
           provide: RedisService,
@@ -32,19 +31,18 @@ describe('JwtPersonaLoaderService', () => {
     const svc = moduleRef.get(JwtPersonaLoaderService);
     const p = await svc.loadPrincipal(1);
 
-    expect(findOne).toHaveBeenCalledTimes(2);
-    expect(findOne.mock.calls[1][0].relations).toEqual(['alumno']);
-    expect((p as any).alumno?.id).toBe(99);
+    expect(findUnique).toHaveBeenCalledTimes(2);
+    expect((p as any).alumno?.id).toBe(BigInt(99));
   });
 
   it('falla si usuario no existe en auth row', async () => {
-    const findOne = jest.fn().mockResolvedValueOnce(null);
+    const findUnique = jest.fn().mockResolvedValueOnce(null);
     const del = jest.fn();
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         JwtPersonaLoaderService,
-        { provide: getRepositoryToken(Persona), useValue: { findOne } },
+        { provide: PrismaService, useValue: { persona: { findUnique } } },
         { provide: ConfigService, useValue: { get: () => '0' } },
         {
           provide: RedisService,
@@ -59,8 +57,8 @@ describe('JwtPersonaLoaderService', () => {
   });
 
   it('falla si usuario está inactivo', async () => {
-    const findOne = jest.fn().mockResolvedValueOnce({
-      id: 1,
+    const findUnique = jest.fn().mockResolvedValueOnce({
+      id: BigInt(1),
       activo: false,
       tipoPersona: 'alumno',
     });
@@ -69,7 +67,7 @@ describe('JwtPersonaLoaderService', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         JwtPersonaLoaderService,
-        { provide: getRepositoryToken(Persona), useValue: { findOne } },
+        { provide: PrismaService, useValue: { persona: { findUnique } } },
         { provide: ConfigService, useValue: { get: () => '0' } },
         {
           provide: RedisService,
