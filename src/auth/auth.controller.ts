@@ -66,8 +66,28 @@ export class AuthController {
   }
 
   /**
+   * POST /auth/primer-admin
+   * Registrar administrador sin autenticación — solo funciona si no hay ninguno registrado aún.
+   */
+  @Public()
+  @Post('primer-admin')
+  @HttpCode(HttpStatus.CREATED)
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @ApiTags('Público')
+  @ApiOperation({
+    summary: 'Registrar primer administrador (sin auth, solo si no existe ninguno)',
+    description:
+      'Endpoint de arranque inicial. Solo funciona cuando no hay administradores registrados. Máximo 3 admins en total.',
+  })
+  @ApiResponse({ status: 201, description: 'Administrador registrado exitosamente' })
+  @ApiResponse({ status: 409, description: 'Ya existe al menos un administrador registrado' })
+  async primerAdmin(@Body() registroDto: RegistroAdminDto) {
+    return await this.authService.registrarPrimerAdmin(registroDto);
+  }
+
+  /**
    * POST /auth/registro-admin
-   * Registrar nuevo administrador (máximo 5). Solo administradores pueden crear otros admins.
+   * Registrar nuevo administrador (máximo 3). Solo administradores pueden crear otros admins.
    */
   @Post('registro-admin')
   @UseGuards(AdminGuard)

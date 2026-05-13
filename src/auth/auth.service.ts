@@ -9,7 +9,7 @@ import { AuditService } from '../audit/audit.service';
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
-  private readonly MAX_ADMINS = 5;
+  private readonly MAX_ADMINS = 3;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -125,6 +125,16 @@ export class AuthService {
         tipoPersona: persona.tipoPersona,
       },
     };
+  }
+
+  async registrarPrimerAdmin(registroDto: RegistroAdminDto) {
+    const cantidadAdmins = await this.prisma.administrador.count();
+    if (cantidadAdmins > 0) {
+      throw new ConflictException(
+        'Ya existe al menos un administrador. Usa el endpoint /auth/registro-admin con autenticación.',
+      );
+    }
+    return await this.registrarAdmin(registroDto);
   }
 
   async registrarAdmin(registroDto: RegistroAdminDto, ip?: string) {
