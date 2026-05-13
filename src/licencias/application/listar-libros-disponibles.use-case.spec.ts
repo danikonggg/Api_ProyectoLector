@@ -52,7 +52,7 @@ describe('ListarLibrosDisponiblesUseCase', () => {
     ]);
     mockPrisma.alumnoLibro.findMany.mockResolvedValue([]);
     mockPrisma.licenciaLibro.groupBy.mockResolvedValue([
-      { libroId: BigInt(100), _count: { id: 2 } },
+      { libroId: BigInt(100), _count: { libroId: 2 } },
     ]);
 
     const result = await useCase.execute(1, 10);
