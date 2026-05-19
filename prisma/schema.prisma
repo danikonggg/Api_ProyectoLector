@@ -200,6 +200,7 @@ model Libro {
   licencias               LicenciaLibro[]
   anotaciones             Anotacion[]
   segmentos               Segmento[]
+  preguntasSegmento       PreguntaSegmento[]
 
   @@map("Libro")
 }
@@ -217,13 +218,15 @@ model Unidad {
 }
 
 model Segmento {
-  id           BigInt  @id @default(autoincrement())
-  libroId      BigInt  @map("libro_id")
-  unidadId     BigInt  @map("unidad_id")
-  contenido    String
-  numeroPagina BigInt? @map("numero_pagina")
-  orden        BigInt  @default(1)
-  idExterno    String  @map("id_externo") @db.VarChar(100)
+  id               BigInt  @id @default(autoincrement())
+  libroId          BigInt  @map("libro_id")
+  unidadId         BigInt  @map("unidad_id")
+  contenido        String
+  numeroPagina     BigInt? @map("numero_pagina")
+  orden            BigInt  @default(1)
+  idExterno        String  @map("id_externo") @db.VarChar(100)
+  pistaContextual  String? @map("pista_contextual")
+  resumen          String?
 
   libro             Libro              @relation(fields: [libroId], references: [id], onDelete: Cascade)
   unidad            Unidad             @relation(fields: [unidadId], references: [id], onDelete: Cascade)
@@ -236,13 +239,21 @@ model Segmento {
 }
 
 model PreguntaSegmento {
-  id            BigInt @id @default(autoincrement())
-  segmentoId    BigInt @map("segmento_id")
-  nivel         String @db.VarChar(20)
-  textoPregunta String @map("texto_pregunta")
-  orden         Int    @default(1)
+  id                BigInt  @id @default(autoincrement())
+  segmentoId        BigInt  @map("segmento_id")
+  nivel             String  @db.VarChar(20)
+  textoPregunta     String  @map("texto_pregunta")
+  orden             Int     @default(1)
+  libroId           BigInt? @map("libro_id")
+  opcionA           String? @map("opcion_a")
+  opcionB           String? @map("opcion_b")
+  opcionC           String? @map("opcion_c")
+  opcionD           String? @map("opcion_d")
+  respuestaCorrecta String? @map("respuesta_correcta") @db.VarChar(1)
+  tipo              String? @db.VarChar(30)
 
   segmento Segmento @relation(fields: [segmentoId], references: [id], onDelete: Cascade)
+  libro    Libro?   @relation(fields: [libroId], references: [id], onDelete: Cascade)
 
   @@map("PreguntaSegmento")
 }
@@ -345,21 +356,52 @@ model MaestroGrupo {
 }
 
 model AlumnoSegmentoEvaluacion {
-  id            BigInt   @id @default(autoincrement())
-  alumnoId      BigInt   @map("alumno_id")
-  libroId       BigInt   @map("libro_id")
-  segmentoId    BigInt   @map("segmento_id")
-  nivelPregunta String   @map("nivel_pregunta") @db.VarChar(20)
-  intento       Int      @default(1)
-  preguntas     Json
-  respuestas    Json
-  score         Int      @default(0)
-  aprobado      Boolean  @default(false)
-  puedeAvanzar  Boolean  @default(false) @map("puede_avanzar")
-  apoyos        Json?
-  creadoEn      DateTime @default(now()) @map("creado_en") @db.Timestamptz()
+  id                BigInt   @id @default(autoincrement())
+  alumnoId          BigInt   @map("alumno_id")
+  libroId           BigInt   @map("libro_id")
+  segmentoId        BigInt   @map("segmento_id")
+  nivelPregunta     String   @map("nivel_pregunta") @db.VarChar(20)
+  intento           Int      @default(1)
+  preguntas         Json
+  respuestas        Json
+  score             Int      @default(0)
+  aprobado          Boolean  @default(false)
+  puedeAvanzar      Boolean  @default(false) @map("puede_avanzar")
+  apoyos            Json?
+  tiempoRespuestaMs Int?     @map("tiempo_respuesta_ms")
+  tiposError        Json?    @map("tipos_error")
+  creadoEn          DateTime @default(now()) @map("creado_en") @db.Timestamptz()
 
   @@map("Alumno_Segmento_Evaluacion")
+}
+
+model AlumnoPerfilAprendizaje {
+  id                    BigInt   @id @default(autoincrement())
+  alumnoId              BigInt   @map("alumno_id")
+  libroId               BigInt   @map("libro_id")
+  nivelActual           String   @default("basico") @map("nivel_actual") @db.VarChar(20)
+  tiempoMinimoActual    Int      @default(300) @map("tiempo_minimo_actual")
+  rachaPosiva           Int      @default(0) @map("racha_positiva")
+  rachaNegativa         Int      @default(0) @map("racha_negativa")
+  diagnosticoCompletado Boolean  @default(false) @map("diagnostico_completado")
+  creadoEn              DateTime @default(now()) @map("creado_en") @db.Timestamptz()
+  actualizadoEn         DateTime @updatedAt @map("actualizado_en") @db.Timestamptz()
+
+  @@unique([alumnoId, libroId])
+  @@map("alumno_perfil_aprendizaje")
+}
+
+model PreguntaDiagnostico {
+  id                BigInt  @id @default(autoincrement())
+  textoPregunta     String  @map("texto_pregunta")
+  opcionA           String  @map("opcion_a")
+  opcionB           String  @map("opcion_b")
+  opcionC           String  @map("opcion_c")
+  opcionD           String  @map("opcion_d")
+  respuestaCorrecta String  @map("respuesta_correcta") @db.VarChar(1)
+  activa            Boolean @default(true)
+
+  @@map("pregunta_diagnostico")
 }
 
 model Anotacion {

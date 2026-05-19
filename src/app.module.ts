@@ -21,6 +21,7 @@ import { LicenciasModule } from './licencias/licencias.module';
 import { GroqModule } from './groq/groq.module';
 import { AlumnoModule } from './alumno/alumno.module';
 import { ProfesorModule } from './profesor/profesor.module';
+import { EvaluacionModule } from './evaluacion/evaluacion.module';
 import { AuditHttpInterceptor } from './audit/interceptors/audit-http.interceptor';
 import { RedisModule } from './infra/redis/redis.module';
 import { QueuesModule } from './queues/queues.module';
@@ -84,6 +85,7 @@ import { buildLoggerParams } from './config/pino-logger.config';
     GroqModule,
     AlumnoModule,
     ProfesorModule,
+    EvaluacionModule,
   ],
   controllers: [AppController],
   providers: [
