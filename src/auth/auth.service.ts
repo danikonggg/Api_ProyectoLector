@@ -10,7 +10,6 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { AuditService } from '../audit/audit.service';
 import { MailService } from '../mail/mail.service';
-import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class AuthService {
@@ -23,7 +22,6 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly auditService: AuditService,
     private readonly mailService: MailService,
-    private readonly configService: ConfigService,
   ) {}
 
   private getAccessTokenTtl(): string {
