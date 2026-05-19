@@ -5,6 +5,12 @@ export interface AuditContext {
   usuarioId?: number | null;
   ip?: string | null;
   detalles?: string | null;
+  method?: string | null;
+  path?: string | null;
+  statusCode?: number | null;
+  durationMs?: number | null;
+  tipoPersona?: string | null;
+  bodySnapshot?: string | null;
 }
 
 @Injectable()
@@ -18,9 +24,15 @@ export class AuditService {
       await this.prisma.auditLog.create({
         data: {
           accion,
-          usuarioId: context?.usuarioId != null ? BigInt(context.usuarioId) : null,
-          ip: context?.ip ?? null,
-          detalles: context?.detalles ?? null,
+          usuarioId:    context?.usuarioId != null ? BigInt(context.usuarioId) : null,
+          ip:           context?.ip ?? null,
+          detalles:     context?.detalles ?? null,
+          method:       context?.method ?? null,
+          path:         context?.path ?? null,
+          statusCode:   context?.statusCode ?? null,
+          durationMs:   context?.durationMs ?? null,
+          tipoPersona:  context?.tipoPersona ?? null,
+          bodySnapshot: context?.bodySnapshot ?? null,
         },
       });
     } catch (e) {
@@ -78,6 +90,138 @@ export class AuditService {
       total,
       ...(meta && { meta }),
       data,
+    };
+  }
+
+  async getTelemetryResumen() {
+    const ahora = new Date();
+    const hace24h = new Date(ahora.getTime() - 24 * 60 * 60 * 1000);
+    const hace7d  = new Date(ahora.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const [total24h, errores24h, total7d, errores7d, promedioMs] = await Promise.all([
+      this.prisma.auditLog.count({ where: { fecha: { gte: hace24h }, method: { not: null } } }),
+      this.prisma.auditLog.count({ where: { fecha: { gte: hace24h }, statusCode: { gte: 400 } } }),
+      this.prisma.auditLog.count({ where: { fecha: { gte: hace7d }, method: { not: null } } }),
+      this.prisma.auditLog.count({ where: { fecha: { gte: hace7d }, statusCode: { gte: 400 } } }),
+      this.prisma.auditLog.aggregate({ _avg: { durationMs: true }, where: { fecha: { gte: hace24h }, method: { not: null } } }),
+    ]);
+
+    const accionesFrecuentes = await this.prisma.auditLog.groupBy({
+      by: ['accion'],
+      _count: { accion: true },
+      where: { fecha: { gte: hace24h } },
+      orderBy: { _count: { accion: 'desc' } },
+      take: 5,
+    });
+
+    return {
+      message: 'Resumen de telemetría',
+      generadoEn: ahora.toISOString(),
+      ultimas24h: {
+        peticiones: total24h,
+        errores: errores24h,
+        tasaError: total24h > 0 ? `${((errores24h / total24h) * 100).toFixed(1)}%` : '0%',
+        promedioRespuestaMs: Math.round(promedioMs._avg.durationMs ?? 0),
+      },
+      ultimos7d: {
+        peticiones: total7d,
+        errores: errores7d,
+        tasaError: total7d > 0 ? `${((errores7d / total7d) * 100).toFixed(1)}%` : '0%',
+      },
+      accionesMasFrecuentes: accionesFrecuentes.map((a) => ({
+        accion: a.accion,
+        total: a._count.accion,
+      })),
+    };
+  }
+
+  async getTelemetryEndpoints(desde?: Date) {
+    const fechaDesde = desde ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+    const grupos = await this.prisma.auditLog.groupBy({
+      by: ['method', 'path'],
+      _count: { id: true },
+      _avg: { durationMs: true },
+      _min: { durationMs: true },
+      _max: { durationMs: true },
+      where: { fecha: { gte: fechaDesde }, method: { not: null }, path: { not: null } },
+      orderBy: { _count: { id: 'desc' } },
+      take: 30,
+    });
+
+    const erroresPorPath = await this.prisma.auditLog.groupBy({
+      by: ['path'],
+      _count: { id: true },
+      where: { fecha: { gte: fechaDesde }, statusCode: { gte: 400 }, path: { not: null } },
+    });
+
+    const erroresMap = new Map(erroresPorPath.map((e) => [e.path, e._count.id]));
+
+    return {
+      message: 'Estadísticas por endpoint',
+      desde: fechaDesde.toISOString(),
+      data: grupos.map((g) => ({
+        method: g.method,
+        path: g.path,
+        totalLlamadas: g._count.id,
+        errores: erroresMap.get(g.path ?? '') ?? 0,
+        tasaError: g._count.id > 0
+          ? `${(((erroresMap.get(g.path ?? '') ?? 0) / g._count.id) * 100).toFixed(1)}%`
+          : '0%',
+        tiempoMs: {
+          promedio: Math.round(g._avg.durationMs ?? 0),
+          minimo: g._min.durationMs ?? 0,
+          maximo: g._max.durationMs ?? 0,
+        },
+      })),
+    };
+  }
+
+  async getTelemetryRoles(desde?: Date) {
+    const fechaDesde = desde ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+    const grupos = await this.prisma.auditLog.groupBy({
+      by: ['tipoPersona'],
+      _count: { id: true },
+      _avg: { durationMs: true },
+      where: { fecha: { gte: fechaDesde }, method: { not: null } },
+      orderBy: { _count: { id: 'desc' } },
+    });
+
+    return {
+      message: 'Actividad por rol',
+      desde: fechaDesde.toISOString(),
+      data: grupos.map((g) => ({
+        rol: g.tipoPersona ?? 'anónimo',
+        totalAcciones: g._count.id,
+        tiempoPromedioMs: Math.round(g._avg.durationMs ?? 0),
+      })),
+    };
+  }
+
+  async getTelemetryErrores(page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+    const where = { statusCode: { gte: 400 } };
+
+    const [total, data] = await Promise.all([
+      this.prisma.auditLog.count({ where }),
+      this.prisma.auditLog.findMany({
+        where,
+        orderBy: { fecha: 'desc' },
+        skip,
+        take: limit,
+        select: {
+          id: true, fecha: true, method: true, path: true,
+          statusCode: true, durationMs: true, tipoPersona: true,
+          usuarioId: true, ip: true, bodySnapshot: true,
+        },
+      }),
+    ]);
+
+    return {
+      message: 'Peticiones con error',
+      meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+      data: data.map((d) => ({ ...d, id: Number(d.id), usuarioId: d.usuarioId ? Number(d.usuarioId) : null })),
     };
   }
 

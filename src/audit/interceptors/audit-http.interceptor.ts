@@ -97,15 +97,19 @@ export class AuditHttpInterceptor implements NestInterceptor {
         );
 
         // ── BD audit_log ─────────────────────────────────────────────────
-        const detalles = JSON.stringify({
-          path,
+        void this.auditService.log(accion, {
+          usuarioId:    userId,
+          ip,
           method,
-          status,
-          ms,
-          ...(role !== 'anon' ? { tipoPersona: role } : {}),
+          path,
+          statusCode:   status,
+          durationMs:   ms,
+          tipoPersona:  role !== 'anon' ? role : null,
+          bodySnapshot: req.body && Object.keys(req.body).length
+            ? JSON.stringify(sanitizeBody(req.body))
+            : null,
+          detalles: null,
         });
-
-        void this.auditService.log(accion, { usuarioId: userId, ip, detalles });
       }),
     );
   }

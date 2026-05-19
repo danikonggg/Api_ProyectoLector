@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards, ParseIntPipe, DefaultValuePipe } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { AuditService } from './audit.service';
 import { AdminGuard } from '../auth/guards/admin.guard';
@@ -45,6 +45,69 @@ export class AuditController {
     const pageNum = page ? parseInt(page, 10) : undefined;
     const limitNum = limit ? parseInt(limit, 10) : undefined;
     return await this.auditService.findAll(pageNum, limitNum);
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // TELEMETRÍA
+  // ─────────────────────────────────────────────────────────────────
+
+  /**
+   * GET /audit/telemetry/resumen
+   * Totales del día y últimos 7 días: peticiones, errores, tasa de error, tiempo promedio.
+   */
+  @Get('telemetry/resumen')
+  @ApiTags('Solo Administrador')
+  @ApiOperation({ summary: 'Resumen de telemetría: peticiones, errores y tiempos (24h y 7d)' })
+  @ApiResponse({ status: 200, description: 'Resumen general de telemetría' })
+  async telemetryResumen() {
+    return await this.auditService.getTelemetryResumen();
+  }
+
+  /**
+   * GET /audit/telemetry/endpoints
+   * Top 30 endpoints más llamados con total, errores, tasa de error y tiempos de respuesta.
+   */
+  @Get('telemetry/endpoints')
+  @ApiTags('Solo Administrador')
+  @ApiOperation({ summary: 'Estadísticas por endpoint: llamadas, errores y tiempos' })
+  @ApiQuery({ name: 'dias', required: false, type: Number, description: 'Últimos N días (default 7)' })
+  @ApiResponse({ status: 200, description: 'Stats agrupadas por method + path' })
+  async telemetryEndpoints(@Query('dias') dias?: string) {
+    const d = dias ? parseInt(dias, 10) : 7;
+    const desde = new Date(Date.now() - d * 24 * 60 * 60 * 1000);
+    return await this.auditService.getTelemetryEndpoints(desde);
+  }
+
+  /**
+   * GET /audit/telemetry/roles
+   * Actividad agrupada por rol de usuario.
+   */
+  @Get('telemetry/roles')
+  @ApiTags('Solo Administrador')
+  @ApiOperation({ summary: 'Actividad por rol (alumno, maestro, director, admin, anónimo)' })
+  @ApiQuery({ name: 'dias', required: false, type: Number, description: 'Últimos N días (default 7)' })
+  @ApiResponse({ status: 200, description: 'Acciones y tiempo promedio por rol' })
+  async telemetryRoles(@Query('dias') dias?: string) {
+    const d = dias ? parseInt(dias, 10) : 7;
+    const desde = new Date(Date.now() - d * 24 * 60 * 60 * 1000);
+    return await this.auditService.getTelemetryRoles(desde);
+  }
+
+  /**
+   * GET /audit/telemetry/errores
+   * Peticiones que devolvieron status >= 400, paginadas, ordenadas por fecha desc.
+   */
+  @Get('telemetry/errores')
+  @ApiTags('Solo Administrador')
+  @ApiOperation({ summary: 'Peticiones con error (status >= 400), paginadas' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiResponse({ status: 200, description: 'Lista de errores HTTP registrados' })
+  async telemetryErrores(
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+  ) {
+    return await this.auditService.getTelemetryErrores(page, limit);
   }
 
   /**

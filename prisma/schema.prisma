@@ -457,12 +457,21 @@ model PreferenciasAlumno {
 // ============================================
 
 model AuditLog {
-  id        BigInt   @id @default(autoincrement())
-  accion    String   @db.VarChar(80)
-  usuarioId BigInt?  @map("usuario_id")
-  ip        String?  @db.VarChar(45)
-  detalles  String?
-  fecha     DateTime @default(now())
+  id           BigInt   @id @default(autoincrement())
+  accion       String   @db.VarChar(80)
+  usuarioId    BigInt?  @map("usuario_id")
+  ip           String?  @db.VarChar(45)
+  detalles     String?
+  fecha        DateTime @default(now())
+  method       String?  @db.VarChar(10)
+  path         String?  @db.VarChar(255)
+  statusCode   Int?     @map("status_code")
+  durationMs   Int?     @map("duration_ms")
+  tipoPersona  String?  @map("tipo_persona") @db.VarChar(50)
+  bodySnapshot String?  @map("body_snapshot")
 
+  @@index([fecha])
+  @@index([path])
+  @@index([accion])
   @@map("audit_log")
 }
