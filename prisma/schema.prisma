@@ -20,9 +20,11 @@ model Persona {
   fechaNacimiento DateTime? @map("fecha_nacimiento") @db.Date
   genero          String?   @db.VarChar(30)
   password        String?   @db.VarChar(255)
-  tipoPersona     String?   @map("tipo_persona") @db.VarChar(50)
-  activo          Boolean?  @default(true)
-  ultimaConexion  DateTime? @map("ultima_conexion") @db.Timestamptz()
+  tipoPersona          String?   @map("tipo_persona") @db.VarChar(50)
+  activo               Boolean?  @default(true)
+  ultimaConexion       DateTime? @map("ultima_conexion") @db.Timestamptz()
+  resetPasswordToken   String?   @unique @map("reset_password_token") @db.VarChar(255)
+  resetPasswordExpires DateTime? @map("reset_password_expires") @db.Timestamptz()
 
   administrador Administrador?
   padre         Padre?

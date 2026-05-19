@@ -1,0 +1,3 @@
+ALTER TABLE "Persona"
+  ADD COLUMN IF NOT EXISTS reset_password_token  VARCHAR(255) UNIQUE,
+  ADD COLUMN IF NOT EXISTS reset_password_expires TIMESTAMPTZ;

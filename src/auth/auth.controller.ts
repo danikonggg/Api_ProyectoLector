@@ -13,6 +13,8 @@ import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegistroAdminDto } from './dto/registro-admin.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { AdminGuard } from './guards/admin.guard';
 import { Public } from './decorators/public.decorator';
 
@@ -133,6 +135,63 @@ export class AuthController {
       registroDto,
       typeof ip === 'string' ? ip : undefined,
     );
+  }
+
+  /**
+   * POST /auth/forgot-password
+   * Solicitar enlace de recuperación de contraseña vía correo.
+   */
+  @Public()
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 3, ttl: 60000 } })
+  @ApiTags('Público')
+  @ApiOperation({ summary: 'Solicitar recuperación de contraseña' })
+  @ApiResponse({
+    status: 200,
+    description: 'Si el correo existe, se enviará un enlace de recuperación',
+    schema: {
+      example: {
+        message: 'Si el correo existe en nuestro sistema, recibirás un enlace para restablecer tu contraseña.',
+      },
+    },
+  })
+  async forgotPassword(
+    @Body() dto: ForgotPasswordDto,
+    @Request() req: { ip?: string; headers?: Record<string, string | string[] | undefined> },
+  ) {
+    const ip =
+      req.ip ??
+      (Array.isArray(req.headers?.['x-forwarded-for'])
+        ? req.headers['x-forwarded-for'][0]
+        : req.headers?.['x-forwarded-for']) ??
+      req.headers?.['x-real-ip'];
+    return await this.authService.forgotPassword(dto, typeof ip === 'string' ? ip : undefined);
+  }
+
+  /**
+   * POST /auth/reset-password
+   * Restablecer contraseña usando el token recibido por correo.
+   */
+  @Public()
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @ApiTags('Público')
+  @ApiOperation({ summary: 'Restablecer contraseña con token' })
+  @ApiResponse({ status: 200, description: 'Contraseña restablecida exitosamente' })
+  @ApiResponse({ status: 400, description: 'Token inválido o expirado' })
+  async resetPassword(
+    @Body() dto: ResetPasswordDto,
+    @Request() req: { ip?: string; headers?: Record<string, string | string[] | undefined> },
+  ) {
+    const ip =
+      req.ip ??
+      (Array.isArray(req.headers?.['x-forwarded-for'])
+        ? req.headers['x-forwarded-for'][0]
+        : req.headers?.['x-forwarded-for']) ??
+      req.headers?.['x-real-ip'];
+    return await this.authService.resetPassword(dto, typeof ip === 'string' ? ip : undefined);
   }
 
   /**

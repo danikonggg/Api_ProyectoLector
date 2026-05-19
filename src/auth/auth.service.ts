@@ -1,10 +1,15 @@
-import { Injectable, UnauthorizedException, ConflictException, Logger } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException, Logger, BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
 import { RegistroAdminDto } from './dto/registro-admin.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { AuditService } from '../audit/audit.service';
+import { MailService } from '../mail/mail.service';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class AuthService {
@@ -15,6 +20,8 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private jwtService: JwtService,
     private readonly auditService: AuditService,
+    private readonly mailService: MailService,
+    private readonly configService: ConfigService,
   ) {}
 
   async login(loginDto: LoginDto, ip?: string) {
@@ -203,6 +210,77 @@ export class AuthService {
         fechaAlta: administrador.fechaAlta,
       },
     };
+  }
+
+  async forgotPassword(dto: ForgotPasswordDto, ip?: string) {
+    const persona = await this.prisma.persona.findFirst({
+      where: { correo: dto.email },
+      select: { id: true, nombre: true, correo: true, activo: true },
+    });
+
+    // Respuesta genérica para no revelar si el correo existe o no
+    const genericResponse = {
+      message: 'Si el correo existe en nuestro sistema, recibirás un enlace para restablecer tu contraseña.',
+    };
+
+    if (!persona || !persona.activo) return genericResponse;
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
+
+    await this.prisma.persona.update({
+      where: { id: persona.id },
+      data: { resetPasswordToken: token, resetPasswordExpires: expires },
+    });
+
+    const frontendUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:3000');
+    const resetUrl = `${frontendUrl}/reset-password?token=${token}`;
+
+    await this.mailService.sendPasswordResetEmail(persona.correo!, persona.nombre, resetUrl);
+
+    await this.auditService.log('forgot_password', {
+      usuarioId: Number(persona.id),
+      ip: ip ?? null,
+      detalles: persona.correo,
+    });
+
+    this.logger.log(`Solicitud de recuperación de contraseña: ${dto.email}`);
+    return genericResponse;
+  }
+
+  async resetPassword(dto: ResetPasswordDto, ip?: string) {
+    const persona = await this.prisma.persona.findFirst({
+      where: { resetPasswordToken: dto.token },
+      select: { id: true, correo: true, resetPasswordExpires: true },
+    });
+
+    if (!persona) {
+      throw new BadRequestException('El token es inválido o ya fue utilizado.');
+    }
+
+    if (!persona.resetPasswordExpires || persona.resetPasswordExpires < new Date()) {
+      throw new BadRequestException('El token ha expirado. Solicita uno nuevo.');
+    }
+
+    const hashedPassword = await bcrypt.hash(dto.nuevaPassword, 10);
+
+    await this.prisma.persona.update({
+      where: { id: persona.id },
+      data: {
+        password: hashedPassword,
+        resetPasswordToken: null,
+        resetPasswordExpires: null,
+      },
+    });
+
+    await this.auditService.log('reset_password', {
+      usuarioId: Number(persona.id),
+      ip: ip ?? null,
+      detalles: persona.correo,
+    });
+
+    this.logger.log(`Contraseña restablecida exitosamente para: ${persona.correo}`);
+    return { message: 'Contraseña restablecida exitosamente. Ya puedes iniciar sesión.' };
   }
 
   async getProfile(userId: number) {
