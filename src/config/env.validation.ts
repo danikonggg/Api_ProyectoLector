@@ -15,6 +15,11 @@ export function validateEnv(): void {
     errors.push('JWT_SECRET debe tener ≥32 caracteres aleatorios (sin palabras predecibles).');
   }
 
+  const refreshSecret = process.env.JWT_REFRESH_SECRET?.trim();
+  if (refreshSecret && refreshSecret.length < 32) {
+    errors.push('JWT_REFRESH_SECRET debe tener ≥32 caracteres si se define.');
+  }
+
   if (isProd) {
     if (!process.env.CORS_ORIGINS?.trim()) {
       errors.push('CORS_ORIGINS es obligatorio en producción.');

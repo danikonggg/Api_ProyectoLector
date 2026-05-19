@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -57,6 +58,21 @@ describe('AuthService', () => {
         AuthService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: JwtService, useValue: { sign: jest.fn().mockReturnValue('jwt-token') } },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn((key: string, defaultValue?: string) => {
+              if (key === 'JWT_EXPIRES_IN') return '2d';
+              if (key === 'JWT_REFRESH_EXPIRES_IN') return '50d';
+              if (key === 'JWT_REFRESH_SECRET') return 'refresh-secret-123456789012345678901234';
+              return defaultValue;
+            }),
+            getOrThrow: jest.fn((key: string) => {
+              if (key === 'JWT_SECRET') return 'jwt-secret-123456789012345678901234567890';
+              throw new Error(`Missing config key: ${key}`);
+            }),
+          },
+        },
         { provide: AuditService, useValue: { log: auditLog } },
       ],
     }).compile();

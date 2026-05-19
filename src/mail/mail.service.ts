@@ -1,28 +1,41 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
-  private transporter: nodemailer.Transporter;
+  private transporter: nodemailer.Transporter | null = null;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(private readonly configService: ConfigService) {}
+
+  private getTransporter(): nodemailer.Transporter {
+    if (this.transporter) return this.transporter;
+
+    const host = this.configService.get<string>('SMTP_HOST');
+    const user = this.configService.get<string>('SMTP_USER');
+    const pass = this.configService.get<string>('SMTP_PASS');
+
+    if (!host || !user || !pass) {
+      throw new InternalServerErrorException(
+        'El servicio de correo no está configurado. Agrega SMTP_HOST, SMTP_USER y SMTP_PASS en las variables de entorno.',
+      );
+    }
+
     this.transporter = nodemailer.createTransport({
-      host: this.configService.getOrThrow<string>('SMTP_HOST'),
+      host,
       port: this.configService.get<number>('SMTP_PORT', 587),
       secure: this.configService.get<string>('SMTP_SECURE', 'false') === 'true',
-      auth: {
-        user: this.configService.getOrThrow<string>('SMTP_USER'),
-        pass: this.configService.getOrThrow<string>('SMTP_PASS'),
-      },
+      auth: { user, pass },
     });
+
+    return this.transporter;
   }
 
   async sendPasswordResetEmail(to: string, nombre: string, resetUrl: string): Promise<void> {
     const from = this.configService.get<string>('SMTP_FROM', 'no-reply@apilector.com');
 
-    await this.transporter.sendMail({
+    await this.getTransporter().sendMail({
       from,
       to,
       subject: 'Recuperación de contraseña - ApiLector',

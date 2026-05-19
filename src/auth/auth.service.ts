@@ -1,5 +1,6 @@
 import { Injectable, UnauthorizedException, ConflictException, Logger, BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -19,10 +20,75 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private jwtService: JwtService,
+    private readonly configService: ConfigService,
     private readonly auditService: AuditService,
     private readonly mailService: MailService,
     private readonly configService: ConfigService,
   ) {}
+
+  private getAccessTokenTtl(): string {
+    return this.configService.get<string>('JWT_EXPIRES_IN', '2d');
+  }
+
+  private getRefreshTokenTtlLong(): string {
+    return this.configService.get<string>('JWT_REFRESH_EXPIRES_IN', '50d');
+  }
+
+  private getRefreshTokenTtlShort(): string {
+    return this.configService.get<string>('JWT_REFRESH_EXPIRES_IN_SHORT', '2d');
+  }
+
+  private getRefreshTokenSecret(): string {
+    return this.configService.get<string>('JWT_REFRESH_SECRET')?.trim() ||
+      this.configService.getOrThrow<string>('JWT_SECRET');
+  }
+
+  private buildTokenPayload(persona: {
+    id: bigint;
+    correo: string | null;
+    tipoPersona: string | null;
+  }) {
+    return {
+      sub: Number(persona.id),
+      email: persona.correo ?? undefined,
+      tipoPersona: persona.tipoPersona ?? undefined,
+    };
+  }
+
+  private generateTokenPair(persona: {
+    id: bigint;
+    correo: string | null;
+    tipoPersona: string | null;
+  }, rememberMe = false) {
+    const payload = this.buildTokenPayload(persona);
+    const refreshExpiresIn = rememberMe
+      ? this.getRefreshTokenTtlLong()
+      : this.getRefreshTokenTtlShort();
+
+    const accessToken = this.jwtService.sign(payload, {
+      expiresIn: this.getAccessTokenTtl(),
+    });
+
+    const refreshToken = this.jwtService.sign(
+      {
+        ...payload,
+        tokenType: 'refresh',
+        rememberMe,
+      },
+      {
+        secret: this.getRefreshTokenSecret(),
+        expiresIn: refreshExpiresIn,
+      },
+    );
+
+    return {
+      accessToken,
+      refreshToken,
+      accessExpiresIn: this.getAccessTokenTtl(),
+      refreshExpiresIn,
+      rememberMe,
+    };
+  }
 
   async login(loginDto: LoginDto, ip?: string) {
     this.logger.log(`Intento de login: ${loginDto.email}`);
@@ -93,13 +159,7 @@ export class AuthService {
       }
     }
 
-    const payload = {
-      sub: Number(persona.id),
-      email: persona.correo,
-      tipoPersona: persona.tipoPersona,
-    };
-
-    const accessToken = this.jwtService.sign(payload);
+    const tokens = this.generateTokenPair(persona, Boolean(loginDto.rememberMe));
 
     this.logger.log(
       `Login exitoso: ${persona.nombre} ${persona.apellidoPaterno} (${persona.tipoPersona}) - ID: ${persona.id}`,
@@ -119,10 +179,13 @@ export class AuthService {
     return {
       message: 'Login exitoso',
       description:
-        'Usuario autenticado correctamente. Usa el access_token para acceder a endpoints protegidos.',
-      access_token: accessToken,
+        'Usuario autenticado correctamente. Usa access_token para endpoints protegidos y refresh_token para renovar sesión.',
+      access_token: tokens.accessToken,
+      refresh_token: tokens.refreshToken,
       token_type: 'Bearer',
-      expires_in: '24h',
+      expires_in: tokens.accessExpiresIn,
+      refresh_expires_in: tokens.refreshExpiresIn,
+      remember_me: tokens.rememberMe,
       user: {
         id: Number(persona.id),
         nombre: persona.nombre,
@@ -131,6 +194,102 @@ export class AuthService {
         email: persona.correo,
         tipoPersona: persona.tipoPersona,
       },
+    };
+  }
+
+  async refreshAccessToken(refreshToken: string, ip?: string) {
+    type RefreshPayload = {
+      sub: number;
+      email?: string;
+      tipoPersona?: string;
+      tokenType?: string;
+      rememberMe?: boolean;
+    };
+
+    let payload: RefreshPayload;
+    try {
+      payload = this.jwtService.verify<RefreshPayload>(refreshToken, {
+        secret: this.getRefreshTokenSecret(),
+      });
+    } catch {
+      await this.auditService.log('refresh_fallido', {
+        usuarioId: null,
+        ip: ip ?? null,
+        detalles: 'token_refresh_invalido',
+      });
+      throw new UnauthorizedException('Refresh token inválido o expirado');
+    }
+
+    if (payload.tokenType !== 'refresh' || payload.sub == null) {
+      await this.auditService.log('refresh_fallido', {
+        usuarioId: payload?.sub ?? null,
+        ip: ip ?? null,
+        detalles: 'tipo_token_invalido',
+      });
+      throw new UnauthorizedException('Refresh token inválido');
+    }
+
+    const persona = await this.prisma.persona.findFirst({
+      where: { id: BigInt(payload.sub) },
+      include: {
+        administrador: true,
+        padre: true,
+        alumno: { include: { escuela: true } },
+        maestro: { include: { escuela: true } },
+        director: { include: { escuela: true } },
+      },
+    });
+
+    if (!persona || !persona.activo) {
+      await this.auditService.log('refresh_fallido', {
+        usuarioId: payload.sub,
+        ip: ip ?? null,
+        detalles: 'usuario_invalido_o_inactivo',
+      });
+      throw new UnauthorizedException('Usuario no autorizado para refrescar sesión');
+    }
+
+    const escuelaInactivaMsg = 'Tu escuela no está activa. Contacta al administrador.';
+    if (persona.director) {
+      const d = persona.director as typeof persona.director & { escuela?: { estado?: string } };
+      if (
+        !d.activo ||
+        (d as any).escuela?.estado === 'inactiva' ||
+        (d as any).escuela?.estado === 'suspendida'
+      ) {
+        throw new UnauthorizedException(escuelaInactivaMsg);
+      }
+    }
+    if (persona.maestro) {
+      const m = persona.maestro as any;
+      if (!m.activo || m.escuela?.estado === 'inactiva' || m.escuela?.estado === 'suspendida') {
+        throw new UnauthorizedException(escuelaInactivaMsg);
+      }
+    }
+    if (persona.alumno) {
+      const a = persona.alumno as any;
+      if (!a.activo || a.escuela?.estado === 'inactiva' || a.escuela?.estado === 'suspendida') {
+        throw new UnauthorizedException(escuelaInactivaMsg);
+      }
+    }
+
+    const tokens = this.generateTokenPair(persona, Boolean(payload.rememberMe));
+
+    await this.auditService.log('refresh_ok', {
+      usuarioId: Number(persona.id),
+      ip: ip ?? null,
+      detalles: persona.correo,
+    });
+
+    return {
+      message: 'Token renovado exitosamente',
+      description: 'Sesión renovada. Se emite nuevo access_token y refresh_token.',
+      access_token: tokens.accessToken,
+      refresh_token: tokens.refreshToken,
+      token_type: 'Bearer',
+      expires_in: tokens.accessExpiresIn,
+      refresh_expires_in: tokens.refreshExpiresIn,
+      remember_me: tokens.rememberMe,
     };
   }
 

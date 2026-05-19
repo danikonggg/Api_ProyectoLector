@@ -15,6 +15,7 @@ import { LoginDto } from './dto/login.dto';
 import { RegistroAdminDto } from './dto/registro-admin.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { AdminGuard } from './guards/admin.guard';
 import { Public } from './decorators/public.decorator';
 
@@ -40,10 +41,13 @@ export class AuthController {
       example: {
         message: 'Login exitoso',
         description:
-          'Usuario autenticado correctamente. Usa el access_token para acceder a endpoints protegidos.',
+          'Usuario autenticado correctamente. Usa access_token para endpoints protegidos y refresh_token para renovar sesión.',
         access_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+        refresh_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
         token_type: 'Bearer',
-        expires_in: '24h',
+        expires_in: '2d',
+        refresh_expires_in: '50d',
+        remember_me: true,
         user: {
           idPersona: 1,
           nombre: 'Juan',
@@ -65,6 +69,50 @@ export class AuthController {
         : req.headers?.['x-forwarded-for']) ??
       req.headers?.['x-real-ip'];
     return await this.authService.login(loginDto, typeof ip === 'string' ? ip : undefined);
+  }
+
+  /**
+   * POST /auth/refresh
+   * Renueva la sesión con refresh token.
+   */
+  @Public()
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
+  @ApiTags('Público')
+  @ApiOperation({ summary: 'Renovar access token usando refresh token' })
+  @ApiResponse({
+    status: 200,
+    description: 'Tokens renovados correctamente',
+    schema: {
+      example: {
+        message: 'Token renovado exitosamente',
+        description: 'Sesión renovada. Se emite nuevo access_token y refresh_token.',
+        access_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+        refresh_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+        token_type: 'Bearer',
+        expires_in: '2d',
+        refresh_expires_in: '50d',
+        remember_me: true,
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Refresh token inválido o expirado' })
+  async refresh(
+    @Body() refreshTokenDto: RefreshTokenDto,
+    @Request() req: { ip?: string; headers?: Record<string, string | string[] | undefined> },
+  ) {
+    const ip =
+      req.ip ??
+      (Array.isArray(req.headers?.['x-forwarded-for'])
+        ? req.headers['x-forwarded-for'][0]
+        : req.headers?.['x-forwarded-for']) ??
+      req.headers?.['x-real-ip'];
+
+    return await this.authService.refreshAccessToken(
+      refreshTokenDto.refresh_token,
+      typeof ip === 'string' ? ip : undefined,
+    );
   }
 
   /**

@@ -1,466 +1,325 @@
-# API Lector – Documentación de arquitectura
+# 📚 ApiLector – Sistema de Gestión Educativa Digital
 
-Backend NestJS para sistema educativo: roles (Administrador, Director, Maestro, Alumno, Padre), autenticación JWT, escuelas, libros digitales, asignación y progreso de lectura.
+**Backend SaaS educativo** con NestJS que administra:
+- 🎓 Usuarios con 5 roles (Admin, Director, Maestro, Alumno, Padre)
+- 📚 Libros digitales con procesamiento inteligente de PDFs
+- 🏫 Multi-tenant por escuela con aislamiento de datos
+- 📖 Seguimiento de progreso de lectura y evaluaciones
+- 🔐 Licencias y control de acceso
+- 🔍 Auditoría completa y observabilidad
+- 🚀 Colas async con BullMQ + Redis
 
-**Stack:** NestJS, TypeORM, PostgreSQL, JWT, Swagger (solo desarrollo).
-
----
-
-## Índice
-
-1. [Resumen estructural](#1-resumen-estructural)
-2. [Arquitectura general y módulos](#2-arquitectura-general-y-módulos)
-3. [Base de datos (TypeORM)](#3-base-de-datos-typeorm)
-4. [Sistema de usuarios y roles](#4-sistema-de-usuarios-y-roles)
-5. [Multi-tenant y aislamiento por escuela](#5-multi-tenant-y-aislamiento-por-escuela)
-6. [Autenticación y seguridad](#6-autenticación-y-seguridad)
-7. [Gestión de libros digitales](#7-gestión-de-libros-digitales)
-8. [Asignación y licencias](#8-asignación-y-licencias)
-9. [Progreso de lectura](#9-progreso-de-lectura)
-10. [API y endpoints](#10-api-y-endpoints)
-11. [Lógica de negocio crítica](#11-lógica-de-negocio-crítica)
-12. [Problemas potenciales y riesgos](#12-problemas-potenciales-y-riesgos)
-13. [Escalabilidad y preparación SaaS](#13-escalabilidad-y-preparación-saas)
+**Stack:** NestJS 10 • TypeScript 5 • PostgreSQL • Prisma • JWT • Groq AI
 
 ---
 
-## 1. Resumen estructural
+## 📖 Documentación
 
-- **Patrón:** NestJS modular; capas Controller → Service → Repository (TypeORM). Sin CQRS ni eventos de dominio.
-- **Módulos:** Auth, Personas, Escuelas, Libros, Director, Maestros, Admin, Audit. Dependencias lineales; Admin y Director consumen servicios de `PersonasModule` (registro, consulta, gestión) y `EscuelasService`.
-- **Organización:** `src/` por dominio (auth/, personas/, escuelas/, libros/, director/, maestros/, admin/, common/). Entidades en cada dominio o en `personas/entities/`.
-- **Base de datos:** PostgreSQL vía TypeORM; migraciones SQL en `migrations/`. No hay soft delete; se usa campo **activo** en Persona, Director, Maestro, Alumno, Libro, EscuelaLibro.
+### Para Principiantes
+- [DOCUMENTACION.md](./docs/DOCUMENTACION.md) – Guía rápida: inicio, roles, rutas, seguridad
+
+### Documentación Técnica Completa ⭐
+- **[DOCUMENTACION_TECNICA_COMPLETA.md](./docs/DOCUMENTACION_TECNICA_COMPLETA.md)** – **LEER ESTO PRIMERO**
+  - Qué es ApiLector y casos de uso
+  - Stack tecnológico completo
+  - Arquitectura de capas
+  - Estructura de carpetas detallada
+  - Descripción de todos los módulos
+  - Schema de base de datos con ER
+  - Sistema de autenticación JWT
+  - Todos los flujos principales
+  - Endpoints por módulo
+  - Procesamiento de PDFs
+  - Sistema de colas (BullMQ)
+  - Auditoría y logging
+  - Observabilidad
+  - Licencias y asignaciones
+  - Seguridad
+  - Deployment
+  - Troubleshooting
+
+### Documentos Especializados
+- [SUPER_DOC_MAESTRA_API_LECTOR.md](./docs/SUPER_DOC_MAESTRA_API_LECTOR.md) – Mega guía integral
+- [ARQUITECTURA_GENERAL.md](./docs/ARQUITECTURA_GENERAL.md) – Vista técnica corta
+- [PERSONAS_DOCUMENTACION_TECNICA.md](./docs/PERSONAS_DOCUMENTACION_TECNICA.md) – Módulo Personas
+- [ESCUELAS_DOCUMENTACION_TECNICA.md](./docs/ESCUELAS_DOCUMENTACION_TECNICA.md) – Módulo Escuelas
+- [LINEAS_BASE_DOCUMENTACION.md](./docs/LINEAS_BASE_DOCUMENTACION.md) – Estándares editoriales
 
 ---
 
-## 2. Arquitectura general y módulos
+## 🚀 Quick Start
 
-### Estructura en `src/`
+### Requisitos
+- Node.js 18+
+- PostgreSQL 13+
+- Redis 6+ (opcional, fallback sync)
+- Groq API Key (para IA)
 
-| Ruta | Contenido |
-|------|-----------|
-| `main.ts` | Bootstrap, ValidationPipe, CORS, Swagger (no prod), Throttler global, body limit 1MB |
-| `app.module.ts` | Importa todos los módulos en orden: Auth → Personas → Escuelas → Maestros → Libros → Audit → Admin → Director |
-| `app.controller.ts` | Rutas raíz: `/`, `/health`, `/metrics` (token). Groq: `/groq-test` (módulo aparte) |
+### Instalación
 
-### Módulos y responsabilidades
+```bash
+# 1. Clonar y dependencias
+git clone <repo>
+cd ApiLector
+npm install
 
-| Módulo | Controlador | Servicios principales | Exporta |
-|--------|-------------|------------------------|---------|
-| **Auth** | AuthController | AuthService, JwtStrategy | AuthService |
-| **Personas** | PersonasController | RegistroPersonasService, ConsultaPersonasService, GestionPersonasService, CargaMasivaService, VinculacionPadresService | Igual que columna servicios (exportados para Admin y otros módulos) |
-| **Escuelas** | EscuelasController, AlumnoAnotacionesController | EscuelasService, use-cases, estadísticas, consulta escuela, evaluación por segmento | EscuelasService |
-| **Libros** | LibrosController | LibrosService, LibrosPdfService, PdfStorageService, PreguntasSegmentoService | LibrosService |
-| **Director** | DirectorController | DirectorService | — |
-| **Maestros** | MaestrosController | MaestrosService | MaestrosService |
-| **Admin** | AdminController | AdminService | — |
-| **Audit** | AuditController | AuditService | AuditService (global) |
+# 2. Variables de entorno
+cp .env.example .env
+# Editar .env con credenciales
 
----
+# 3. Migraciones BD
+npx prisma migrate deploy
 
-## 3. Base de datos (TypeORM)
+# 4. Dev
+npm run start:dev
 
-### Entidades y tablas
+# 5. Worker (procesa PDFs async)
+npm run start:worker
 
-| Entidad | Tabla | PK | Campos principales |
-|---------|-------|-----|-------------------|
-| **Persona** | `Persona` | id (bigint) | nombre, segundo_nombre, apellido_paterno, apellido_materno, apellido (legacy), correo, telefono, fecha_nacimiento, genero, password, tipo_persona, activo, ultima_conexion |
-| **Admin** | `Admin` | id | persona_id (FK → Persona), fecha_alta |
-| **Escuela** | `Escuela` | id | nombre, nivel, clave, direccion, telefono, estado, ciudad, estado_region |
-| **Director** | `Director` | id | persona_id (FK), escuela_id (FK), fecha_nombramiento, activo |
-| **Maestro** | `Maestro` | id | persona_id (FK), escuela_id (FK), especialidad, fecha_contratacion, activo |
-| **Alumno** | `Alumno` | id | persona_id (FK), escuela_id (FK), padre_id (FK nullable), grado, grupo, ciclo_escolar, activo |
-| **Padre** | `Padre` | id | persona_id (FK), parentesco |
-| **Alumno_Maestro** | `Alumno_Maestro` | id | alumno_id (FK CASCADE), maestro_id (FK CASCADE), materia_id (FK), fecha_inicio, fecha_fin |
-| **Materia** | `Materia` | id | nombre, descripcion, nivel |
-| **Libro** | `Libro` | id | titulo, materia_id (FK nullable), codigo, grado, descripcion, estado, activo, num_paginas, ruta_pdf |
-| **Unidad** | `Unidad` | id | libro_id (FK CASCADE), nombre, orden |
-| **Segmento** | `Segmento` | id | libro_id (FK CASCADE), unidad_id (FK CASCADE), contenido, numero_pagina, orden, id_externo |
-| **PreguntaSegmento** | `PreguntaSegmento` | id | segmento_id (FK CASCADE), nivel, texto_pregunta, orden |
-| **Escuela_Libro** | `Escuela_Libro` | id | escuela_id (FK), libro_id (FK), activo, fecha_inicio, fecha_fin, grupo (nullable) |
-| **Escuela_Libro_Pendiente** | `Escuela_Libro_Pendiente` | id | escuela_id (FK), libro_id (FK), fecha_otorgado |
-| **Alumno_Libro** | `Alumno_Libro` | id | alumno_id (FK CASCADE), libro_id (FK CASCADE), porcentaje, ultimo_segmento_id (FK), ultima_lectura, fecha_asignacion, asignado_por_tipo, asignado_por_id |
-| **AuditLog** | `audit_log` | id | accion, usuario_id, ip, detalles, fecha (CreateDateColumn) |
-
-### Relaciones (diagrama lógico)
-
-```
-Persona (1) ──< Admin | Director | Maestro | Alumno | Padre (1)
-     │
-Director ── escuela_id ──> Escuela
-Maestro  ── escuela_id ──> Escuela
-Alumno   ── escuela_id ──> Escuela, padre_id ──> Padre
-
-Alumno (N) ──< Alumno_Maestro >── (N) Maestro   [materia_id → Materia]
-
-Libro (1) ──< Unidad (1) ──< Segmento (1) ──< PreguntaSegmento
-Libro (N) ──< Escuela_Libro >── (N) Escuela     [activo, fecha_inicio/fin, grupo]
-Libro (N) ──< Escuela_Libro_Pendiente >── (N) Escuela  [pre-canje]
-Alumno (N) ──< Alumno_Libro >── (N) Libro       [porcentaje, ultimo_segmento_id, ultima_lectura, asignado_por_*]
+# 6. Tests
+npm run test
 ```
 
-### Tablas pivote
+### Health Check
 
-- **Alumno_Maestro:** asignación alumno–maestro por materia.
-- **Escuela_Libro:** libro disponible en una escuela (tras canje).
-- **Escuela_Libro_Pendiente:** libro otorgado por admin a una escuela, pendiente de canje.
-- **Alumno_Libro:** asignación alumno–libro + progreso de lectura.
-
-### Soft delete e índices
-
-- No hay `deletedAt`. Se usa campo **activo** (boolean) en Persona, Director, Maestro, Alumno, Libro, EscuelaLibro.
-- Índices: los que TypeORM genera por defecto; en migraciones existe `idx_persona_correo` y otros según scripts en `migrations/`.
+```bash
+curl http://localhost:3000/health
+# {"status":"ok","timestamp":"2026-05-18..."}
+```
 
 ---
 
-## 4. Sistema de usuarios y roles
+## 📊 Módulos Principales
 
-### Roles
-
-| Rol | Alcance |
-|-----|---------|
-| **Administrador** | Todo: escuelas, directores, maestros, alumnos, padres, libros, auditoría. Máx. 5 admins. |
-| **Director** | Solo su escuela: alumnos, maestros, canjear libros, asignar libros a alumnos. No envía `idEscuela` en rutas propias (se usa el del token). |
-| **Maestro** | Alumnos asignados por materia; asignar/desasignar libros a sus alumnos. |
-| **Alumno** | Ver y leer libros asignados; actualizar progreso. |
-| **Padre** | Vinculado a uno o más alumnos (hijos). |
-
-### Relación usuario–escuela
-
-- **Director:** `director.escuelaId` (y `director.escuela`) cargados en JWT strategy; todas las rutas `/director/*` usan solo ese ID.
-- **Maestro:** `maestro.escuelaId`; solo opera sobre alumnos/libros de su escuela.
-- **Alumno:** `alumno.escuelaId`; solo ve libros asignados a él (vía Alumno_Libro).
-
-### Jerarquías
-
-- Admin > Director (por escuela) > Maestro (por escuela). Alumno y Padre son “hojas”.
-- Un director no puede ver/modificar datos de otra escuela (salvo riesgos indicados en sección 12).
+| Módulo | Responsabilidad | Endpoints |
+|--------|-----------------|-----------|
+| **auth** | Autenticación JWT | POST /auth/login, /auth/register-admin |
+| **personas** | CRUD usuarios | GET/POST /personas, PATCH /personas/:id |
+| **escuelas** | Multi-tenant hub | GET/POST /escuelas, /escuelas/:id/libros |
+| **libros** | PDFs + procesamiento | POST /libros/upload, GET /libros/:id/segmentos |
+| **director** | Dashboard director | GET /director/dashboard, POST /director/asignar-libro |
+| **maestros** | Gestión maestros | GET /maestros/:id, POST /maestros/:id/asignar-libro |
+| **alumno** | Perfil alumno | GET /alumno/mis-libros, GET /alumno/estadisticas |
+| **licencias** | Control de acceso | POST /licencias/canjear, GET /licencias |
+| **audit** | Logging auditoría | GET /audit/logs (admin) |
+| **groq** | IA (preguntas) | POST /groq-test |
 
 ---
 
-## 5. Multi-tenant y aislamiento por escuela
+## 🔐 Roles y Permisos
 
-### Cómo se separan los datos
-
-- **Director:** En rutas `/director/*` el `escuelaId` se obtiene solo del token (`user.director.escuelaId`), nunca del body ni de la URL.
-- **Rutas con `:id` de escuela:** En EscuelasController se usa `directorSoloSuEscuela(req.user, id)`: se compara `user.director.escuelaId` con el `id` de la URL; si no coinciden → 403 Forbidden. Aplica a: GET/POST `:id/carga-masiva`, GET `:id/maestros`, GET `:id/alumnos`, GET `:id/directores`, GET `:id`.
-- **PersonasController:** Para director se fuerza o valida `idEscuela` contra `user.director.escuelaId` en registro y en listados/actualización/eliminación de alumnos y maestros; el servicio recibe `escuelaId` (undefined para admin, escuela del director para director) y filtra.
-
-### Riesgos de fuga de datos
-
-- **GET /escuelas/lista:** Devuelve **todas** las escuelas activas (id, nombre) también a directores. Fuga acotada (solo id y nombre).
-- **Desasignar libro:** Ver sección 12 (IDOR: director/maestro pueden desasignar libros a alumnos de otra escuela).
-
----
-
-## 6. Autenticación y seguridad
-
-### Login y JWT
-
-- **POST /auth/login** (público, Throttle 5/min). Body: `{ email, password }`.
-- AuthService: busca Persona por correo con relaciones (administrador, padre, alumno.escuela, maestro.escuela, director.escuela). Valida bcrypt, que esté activo y (si director/maestro/alumno) que la escuela no esté inactiva/suspendida. Actualiza `ultima_conexion`. Registra en audit (login / login_fallido).
-- **Payload JWT:** `{ sub: persona.id, email: persona.correo, tipoPersona: persona.tipoPersona }`.
-- Respuesta: `access_token`, token_type Bearer, expires_in 24h, objeto `user`.
-
-### Estrategia JWT y req.user
-
-- **jwt.strategy.ts:** Valida JWT con JWT_SECRET. En `validate(payload)` carga Persona por `payload.sub` con relaciones (administrador, padre, alumno, maestro.escuela, director.escuela). Devuelve la entidad Persona; se asigna a **req.user** (incluye director.escuelaId, maestro.escuelaId, alumno.escuelaId según rol).
-
-### Guards
-
-| Guard | Condición |
-|-------|-----------|
-| **JwtAuthGuard** | Passport('jwt'). Respeta `@Public()` (no exige token). |
-| **AdminGuard** | req.user.tipoPersona === 'administrador' && user.administrador |
-| **DirectorGuard** | tipoPersona === 'director' && user.director |
-| **MaestroGuard** | tipoPersona === 'maestro' && user.maestro |
-| **AlumnoGuard** | tipoPersona === 'alumno' && user.alumno |
-| **AdminOrDirectorGuard** | administrador o director |
-| **AdminOrDirectorOrAlumnoGuard** | administrador, director o alumno |
-
-### Validaciones críticas
-
-- Contraseñas: bcrypt (10 rounds). No se devuelven en respuestas.
-- ValidationPipe global (whitelist, forbidNonWhitelisted, transform). DTOs con class-validator.
-- Throttler por IP (configurable; default 500 req/min).
+```
+┌─────────────────────────────────────────────────────────┐
+│                   ADMINISTRADOR                         │
+│  • Crear escuelas, usuarios, libros                     │
+│  • Ver sistema completo                                 │
+└──────────────────────┬──────────────────────────────────┘
+                       │
+         ┌─────────────┼─────────────┐
+         │             │             │
+    DIRECTOR       MAESTRO      PADRE
+    • Escuela      • Alumnos     • Hijo
+    • Libros       • Tareas      • Progreso
+    • Licencias    • Progreso
+         │
+    ALUMNO
+    • Mis libros
+    • Lectura
+    • Progreso
+```
 
 ---
 
-## 7. Gestión de libros digitales
+## 📚 Flujos Principales
 
-### Almacenamiento
+### 1. Registrar Alumno
+```
+Admin/Director → POST /personas/registro
+               → Crear Persona + Alumno
+               → Vincular a escuela y grado
+```
 
-- **Libro:** Metadatos (titulo, codigo, grado, materia_id, descripcion, estado, activo) + **ruta_pdf** (ruta en disco/servidor).
-- **Unidad / Segmento:** Estructura del contenido (unidades → segmentos). Segmento tiene contenido de texto y numero_pagina, orden.
-- **PreguntaSegmento:** Preguntas asociadas a segmentos (nivel, texto_pregunta, orden).
+### 2. Subir Libro PDF
+```
+Admin/Director → POST /libros/upload
+               → Validación + Supabase Storage
+               → Cola BullMQ (async en worker)
+               → Extracción de texto
+               → Segmentación
+               → Generar preguntas (Groq)
+               → Generar imágenes
+               → Guardar en BD
+```
 
-### Control de acceso
+### 3. Asignar Libro a Grupo
+```
+Director → POST /director/asignar-libro
+         → Validar licencia
+         → Crear Escuela_Libro
+         → Crear Alumno_Libro para cada alumno
+         → Auditar
+```
 
-- **Admin:** Puede cargar, listar, ver PDF, eliminar libros.
-- **Director / Maestro:** Ven libros de su escuela; pueden asignar a alumnos solo libros que estén en Escuela_Libro activa para su escuela.
-- **Alumno:** Solo ve libros que tenga asignados en Alumno_Libro (y detalle vía GET /libros/:id si el libro está asignado).
-
-### Verificación de permisos de lectura
-
-- El alumno accede a “mis libros” por GET /escuelas/mis-libros (AlumnoGuard; alumnoId del token).
-- GET /libros/:id para alumno está restringido en lógica a libros asignados (Alumno_Libro).
-
----
-
-## 8. Asignación y licencias
-
-### Libros a escuelas
-
-1. **Otorgar (admin):** `POST /escuelas/:id/libros` con `{ codigo }`. Busca Libro por codigo; crea **Escuela_Libro_Pendiente** (no duplicar si ya existe pendiente o canjeado).
-2. **Canjear (admin o director):**  
-   - Admin: `POST /escuelas/:id/libros/canjear` con `{ codigo }`.  
-   - Director: `POST /director/canjear-libro` con `{ codigo }` (escuelaId del token).  
-   Se comprueba pendiente para esa escuela+libro; se crea **Escuela_Libro** y se elimina el pendiente.
-
-### Libros a alumnos
-
-- **Director:** `POST /director/asignar-libro` (body: alumnoId, libroId). EscuelaId del token.
-- **Maestro:** `POST /maestros/asignar-libro` (body: alumnoId, libroId). EscuelaId del maestro.
-- Lógica: EscuelasService.asignarLibroAlAlumno(escuelaId, alumnoId, libroId, asignadoPorTipo, asignadoPorId). Valida que el alumno sea de esa escuela, que exista Escuela_Libro activa y (según implementación) grado/grupo; crea o actualiza **Alumno_Libro** (fecha_asignacion, asignado_por_tipo, asignado_por_id).
-
-### Códigos y disponibilidad
-
-- Cada **Libro** tiene un **codigo** único. El admin “otorga” a una escuela indicando ese código; la escuela “canjea” con el mismo código. Sin canje, el libro no está disponible en la escuela. No hay modelo explícito de “licencia” con cantidad; un código otorgado genera un registro en Escuela_Libro_Pendiente y tras canje uno en Escuela_Libro.
+### 4. Alumno Lee Libro
+```
+Alumno → GET /escuelas/:id/mis-libros-interacciones/:libroId/segmentos
+       → Ver página + preguntas + glosario
+       → POST /escuelas/:id/alumno-anotaciones
+       → Actualizar progreso
+       → Auditar lectura
+```
 
 ---
 
-## 9. Progreso de lectura
+## 🏗️ Arquitectura
 
-### Dónde se guarda
-
-- **Alumno_Libro:** campos `porcentaje` (0–100), `ultimo_segmento_id`, `ultima_lectura` (timestamp), además de fecha_asignacion y asignado_por_*.
-
-### Endpoint de actualización
-
-- **PATCH /escuelas/mis-libros/:libroId/progreso** (AlumnoGuard). Body: `{ porcentaje?, ultimoSegmentoId? }` (opcionales; porcentaje 0–100).
-- Lógica: EscuelasService.actualizarProgresoLibro(alumnoId del token, libroId, dto). Comprueba que exista Alumno_Libro para ese alumno+libro; actualiza porcentaje (clamped), ultimoSegmentoId si viene; pone ultimaLectura = now; guarda.
-
-### Frecuencia y reanudación
-
-- La frecuencia la define el cliente (frontend/app). No hay cola ni batching en backend. La reanudación se basa en ultimo_segmento_id y porcentaje almacenados.
-
----
-
-## 10. API y endpoints
-
-### App (públicas o sin guard JWT global)
-
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| GET | `/` | getHello |
-| GET | `/health` | healthCheck |
-| GET | `/groq-test` | testGroq |
-| POST | `/groq-test` | groqTestCustom |
-
-### Auth
-
-| Método | Ruta | Guard | Descripción |
-|--------|------|-------|-------------|
-| POST | `/auth/login` | Público (Throttle 5/min) | login |
-| POST | `/auth/registro-admin` | Jwt + Admin | registrarAdmin |
-| GET | `/auth/profile` | Jwt | getProfile |
-
-### Personas
-
-| Método | Ruta | Guard | Descripción |
-|--------|------|-------|-------------|
-| POST | `/personas/registro-padre` | Jwt + Admin | registrarPadre |
-| POST | `/personas/registro-alumno` | Jwt + AdminOrDirector | registrarAlumno |
-| POST | `/personas/registro-maestro` | Jwt + AdminOrDirector | registrarMaestro |
-| POST | `/personas/registro-director` | Jwt + Admin | registrarDirector |
-| GET | `/personas/admins` | Jwt + Admin | obtenerAdmins |
-| GET | `/personas/admins/cantidad` | Jwt + Admin | contarAdmins |
-| GET | `/personas/alumnos` | Jwt + AdminOrDirector | obtenerAlumnos |
-| GET | `/personas/alumnos/buscar` | Jwt + AdminOrDirector | buscarAlumnos |
-| GET | `/personas/alumnos/:id` | Jwt + AdminOrDirector | obtenerAlumnoPorId |
-| GET | `/personas/alumnos/:id/padre` | Jwt + AdminOrDirector | obtenerPadreDeAlumno |
-| PATCH | `/personas/alumnos/:id` | Jwt + AdminOrDirector | actualizarAlumno |
-| DELETE | `/personas/alumnos/:id` | Jwt + AdminOrDirector | eliminarAlumno |
-| PATCH | `/personas/maestros/:id` | Jwt + AdminOrDirector | actualizarMaestro |
-| DELETE | `/personas/maestros/:id` | Jwt + AdminOrDirector | eliminarMaestro |
-| GET | `/personas/padres` | Jwt + Admin | obtenerPadres |
-| GET | `/personas/padres/:id` | Jwt + Admin | obtenerPadrePorId |
-| GET | `/personas/padres/:id/alumnos` | Jwt + Admin | obtenerAlumnosDePadre |
-
-### Escuelas
-
-| Método | Ruta | Guard | Descripción |
-|--------|------|-------|-------------|
-| POST | `/escuelas` | Jwt + Admin | crear |
-| GET | `/escuelas` | Jwt + Admin | obtenerTodas |
-| GET | `/escuelas/lista` | Jwt + AdminOrDirector | listarParaRegistro |
-| GET | `/escuelas/stats` | Jwt + Admin | obtenerEstadisticasPanel |
-| GET | `/escuelas/directores` | Jwt + Admin | listarTodosDirectores |
-| GET | `/escuelas/con-libros` | Jwt + Admin | listarEscuelasConLibros |
-| GET | `/escuelas/plantilla-carga-masiva` | @Public | plantillaCargaMasiva |
-| GET | `/escuelas/mis-libros` | Jwt + Alumno | misLibros |
-| PATCH | `/escuelas/mis-libros/:libroId/progreso` | Jwt + Alumno | actualizarProgresoLibro |
-| GET | `/escuelas/:id` | Jwt + AdminOrDirector | obtenerPorId (directorSoloSuEscuela) |
-| PUT | `/escuelas/:id` | Jwt + Admin | actualizar |
-| DELETE | `/escuelas/:id` | Jwt + Admin | eliminar |
-| POST | `/escuelas/:id/carga-masiva` | Jwt + AdminOrDirector | cargaMasiva (directorSoloSuEscuela) |
-| GET | `/escuelas/:id/maestros` | Jwt + AdminOrDirector | listarMaestros (directorSoloSuEscuela) |
-| GET | `/escuelas/:id/alumnos` | Jwt + AdminOrDirector | listarAlumnos (directorSoloSuEscuela) |
-| GET | `/escuelas/:id/directores` | Jwt + AdminOrDirector | listarDirectores (directorSoloSuEscuela) |
-| GET | `/escuelas/:id/libros` | Jwt + Admin | listarLibros |
-| GET | `/escuelas/:id/libros/pendientes` | Jwt + Admin | listarLibrosPendientes |
-| POST | `/escuelas/:id/libros` | Jwt + Admin | otorgarLibro |
-| POST | `/escuelas/:id/libros/canjear` | Jwt + Admin | canjearLibro |
-| GET | `/escuelas/:id/libros/asignaciones` | Jwt + Admin | listarAsignacionesLibros |
-| PATCH | `/escuelas/:id/libros/:libroId/activo` | Jwt + Admin | setLibroActivoEnEscuela |
-
-### Director (todas Jwt + Director; escuela del token)
-
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| GET | `/director/dashboard` | getDashboard |
-| GET | `/director/escuela` | getMiEscuela |
-| GET | `/director/maestros` | getMaestros |
-| GET | `/director/alumnos` | getAlumnos |
-| GET | `/director/directores` | getDirectores |
-| GET | `/director/libros` | getLibros |
-| GET | `/director/libros/pendientes` | getLibrosPendientes |
-| POST | `/director/canjear-libro` | canjearLibro |
-| POST | `/director/carga-masiva` | cargaMasiva |
-| GET | `/director/libros-disponibles-para-asignar` | librosDisponiblesParaAsignar (query alumnoId) |
-| POST | `/director/asignar-libro` | asignarLibro |
-| DELETE | `/director/desasignar-libro/:alumnoId/:libroId` | desasignarLibro |
-
-### Maestros (todas Jwt + Maestro)
-
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| GET | `/maestros/mis-alumnos` | obtenerMisAlumnos |
-| GET | `/maestros/mis-alumnos/:id` | obtenerAlumnoPorId |
-| POST | `/maestros/asignar-alumno` | asignarAlumno |
-| DELETE | `/maestros/mis-alumnos/:alumnoId/materia/:materiaId` | desasignarAlumno |
-| GET | `/maestros/libros-disponibles-para-asignar` | librosDisponiblesParaAsignar (query alumnoId) |
-| POST | `/maestros/asignar-libro` | asignarLibro |
-| DELETE | `/maestros/desasignar-libro/:alumnoId/:libroId` | desasignarLibro |
-
-### Libros
-
-| Método | Ruta | Guard | Descripción |
-|--------|------|-------|-------------|
-| POST | `/libros/cargar` | Jwt + Admin | cargar (multipart PDF) |
-| GET | `/libros` | Jwt + Admin | listar |
-| GET | `/libros/:id` | Jwt + AdminOrDirectorOrAlumno | obtenerPorId (alumno: solo si asignado) |
-| GET | `/libros/:id/pdf` | Jwt + Admin | descargarPdf |
-| GET | `/libros/:id/escuelas` | Jwt + Admin | listarEscuelasDeLibro |
-| PATCH | `/libros/:id/escuelas/:escuelaId/activo` | Jwt + Admin | setLibroActivoEnEscuela |
-| PATCH | `/libros/:id/activo` | Jwt + Admin | setActivo |
-| DELETE | `/libros/:id` | Jwt + Admin | eliminar |
-
-### Admin
-
-| Método | Ruta | Guard | Descripción |
-|--------|------|-------|-------------|
-| GET | `/admin/dashboard` | Jwt + Admin | getDashboard |
-| GET | `/admin/usuarios` | Jwt + Admin | getUsuarios |
-| PATCH | `/admin/usuarios/:id` | Jwt + Admin | actualizarUsuario |
-| DELETE | `/admin/usuarios/:id` | Jwt + Admin | eliminarUsuario |
-
-### Audit
-
-| Método | Ruta | Guard | Descripción |
-|--------|------|-------|-------------|
-| GET | `/audit` | Jwt + Admin | findAll (paginado) |
+```
+┌──────────────────────────────────────┐
+│      REST Clients (Web, Mobile)      │
+└──────────────────┬───────────────────┘
+                   │ HTTP/JWT
+┌──────────────────▼───────────────────┐
+│   Express + NestJS Controllers       │
+│  (Auth, Personas, Escuelas, Libros)  │
+└──────────────────┬───────────────────┘
+                   │
+┌──────────────────▼───────────────────┐
+│      Business Logic Services         │
+│   (CRUD, Validación, Negocio)        │
+└──────┬──────────────────────┬────────┘
+       │                      │
+    ┌──▼───┐         ┌───────▼──┐
+    │  BD  │         │ Redis +  │
+    │  PG  │         │ BullMQ   │
+    └──────┘         └────┬─────┘
+                          │
+                    ┌─────▼──────┐
+                    │   Worker   │
+                    │ (async PDF)│
+                    └────────────┘
+```
 
 ---
 
-## 11. Lógica de negocio crítica
+## 🔧 Variables de Entorno Clave
 
-### Validaciones importantes
+```bash
+# Base de datos
+DATABASE_URL=postgresql://user:pass@localhost:5432/apilector
 
-- **Máximo 5 administradores:** AuthService.registrarAdmin usa `MAX_ADMINS = 5`; lanza ConflictException si se alcanza.
-- **Máximo 3 directores por escuela:** `RegistroPersonasService.registrarDirector` usa `MAX_DIRECTORES_POR_ESCUELA = 3`; lanza ConflictException si la escuela ya tiene 3.
-- **Email único:** En todos los registros (padre, alumno, maestro, director, admin) se comprueba que el correo no esté en uso.
-- **Escuela activa:** Login rechaza director/maestro/alumno si la escuela está inactiva o suspendida.
+# JWT
+JWT_SECRET=super_secret_key
+JWT_EXPIRATION=3600
 
-### Transacciones
+# Redis (colas)
+REDIS_HOST=localhost
+REDIS_PORT=6379
 
-- **RegistroPersonasService.registrarPadre:** transacción que crea Persona + Padre y vincula alumnos (padreId).
-- **GestionPersonasService.eliminarUsuarioPorId:** transacción que borra rol (AlumnoMaestro, Alumno, Maestro, Director, Admin, Padre) y luego Persona.
-- No hay transacciones en otorgar/canjear libro ni en asignar/desasignar libro.
+# Groq API (IA)
+GROQ_API_KEY=gsk_xxxxx
 
-### Automatizaciones
+# Supabase Storage
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_ANON_KEY=eyJ...
+SUPABASE_SERVICE_ROLE_KEY=eyJ...
 
-- Al desactivar/suspender una escuela se aplica cascada de desactivación a alumnos, maestros, directores y Escuela_Libro (EscuelasService.actualizar).
+# Observabilidad
+JAEGER_HOST=localhost
+JAEGER_PORT=6831
+LOG_LEVEL=info
 
----
-
-## 12. Problemas potenciales y riesgos
-
-### Seguridad
-
-| Riesgo | Severidad | Descripción |
-|--------|-----------|-------------|
-| **Desasignar libro (director/maestro)** | Mitigado | `DesasignarLibroAlumnoUseCase` exige `escuelaIdRestriccion` (director, vía `getEscuelaId`) o valida relación alumno–maestro/grupos (`maestroId`). |
-| **Fuga en /escuelas/lista** | Media | El director puede ver lista de todas las escuelas (id, nombre). Recomendación: restringir a su escuela. |
-
-### Escalabilidad y rendimiento
-
-| Riesgo | Severidad | Descripción |
-|--------|-----------|-------------|
-| **Carga de PDF** | Media | Con Redis + worker: encolado asíncrono. Sin Redis (dev): procesamiento en la request; puede bloquear. Throttle dedicado en POST /libros/cargar. |
-| **Posible N+1** | Media | Listados con find + relations (ej. escuelas con libros, alumnos con padre) pueden generar N+1 en listas grandes. |
-| **Sin transacciones en flujo libro** | Baja | Canje y asignación/desasignación no usan transacción; en fallos parciales podría quedar estado inconsistente. |
-
-### Duplicación de lógica
-
-- Carga masiva: misma CargaMasivaService; admin usa `:id` en URL, director usa escuela del token (validado con directorSoloSuEscuela).
-- Canjear libro: admin usa `/escuelas/:id/libros/canjear`; director usa `/director/canjear-libro`; misma lógica en EscuelasService.canjearLibroPorCodigo.
-
-### Rutas públicas
-
-- `/health` y `/metrics` (con token) son públicos; `/groq-test` exige admin JWT. Evitar datos sensibles en respuestas de health.
+# Server
+PORT=3000
+NODE_ENV=development
+```
 
 ---
 
-## 13. Escalabilidad y preparación SaaS
+## 🐳 Docker
 
-### Nivel de escalabilidad actual
+```bash
+# Servicios (PostgreSQL, Redis, Jaeger)
+docker-compose up -d
 
-- Una instancia orientada a ~200 usuarios concurrentes (pool 80, throttle 500 req/min por IP).
-- Carga de PDF y procesamiento pesado en la misma instancia limitan escalado horizontal sin cola.
-- Modelo relacional claro; escalado vertical de BD viable. Sin particionado ni sharding por escuela.
-- JWT stateless; adecuado para varias instancias detrás de balanceador si el trabajo pesado se externaliza.
+# API
+docker build -f Dockerfile -t apilector:api .
+docker run -p 3000:3000 --env-file .env apilector:api
 
-### Preparación para SaaS: **MEDIA**
-
-**A favor:**
-
-- Aislamiento por escuela en la mayoría de endpoints (director sin elegir escuela en URL en `/director/*`, directorSoloSuEscuela donde se usa `:id`).
-- Límites de negocio (5 admins, 3 directores por escuela).
-- Auditoría de login y acciones sensibles.
-- Roles bien separados con guards.
-
-**En contra:**
-
-- IDOR en desasignar libro (riesgo multi-tenant grave).
-- Listado de escuelas visible para directores.
-- Ausencia de transacciones en flujos libro-escuela-alumno donde sería deseable.
-- Procesamiento de PDF bloqueante y posibles N+1.
-
-**Para subir a “alta” preparación SaaS:**
-
-1. Corregir desasignar libro: validar que el alumno pertenezca a la escuela del director o (para maestro) a la escuela del maestro y/o a sus alumnos asignados.
-2. Restringir GET /escuelas/lista para directores a su escuela (o solo id/nombre de su escuela).
-3. Valorar transacciones en canje, asignación y desasignación.
-4. Externalizar procesamiento de PDF a cola (worker).
-5. Revisar queries (QueryBuilder/joins) para evitar N+1 en listados grandes.
+# Worker (procesa colas)
+docker build -f Dockerfile.worker -t apilector:worker .
+docker run --env-file .env apilector:worker
+```
 
 ---
 
-## Referencias
+## 🧪 Testing
 
-- Documentación funcional de la API: `docs/DOCUMENTACION.md`
-- Migraciones SQL: carpeta `migrations/`
-- Variables de entorno: `.env.example`
+```bash
+# Unit tests
+npm run test
 
-*Última actualización: Febrero 2025*
+# E2E tests
+npm run test:e2e
+
+# Coverage
+npm run test:cov
+```
+
+---
+
+## 📈 Observabilidad
+
+### Logs (Pino)
+```bash
+curl http://localhost:3000 2>&1 | grep "level"
+# Salida JSON estructurado
+```
+
+### Métricas (Prometheus)
+```bash
+curl http://localhost:3000/metrics
+# Formato Prometheus
+```
+
+### Trazas (Jaeger)
+```
+http://localhost:16686
+```
+
+---
+
+## 🐛 Troubleshooting Rápido
+
+| Problema | Solución |
+|----------|----------|
+| "Connection refused PostgreSQL" | `docker-compose up -d` |
+| "Pool error: too many clients" | Aumentar `max_connections` en PG |
+| "Libro stuck en PROCESANDO" | Verificar worker: `npm run start:worker` |
+| "Groq API error" | Validar `GROQ_API_KEY` en .env |
+| "Upload PDF timeout" | Aumentar body limit: `limit: '500mb'` |
+
+---
+
+## � Documentación Completa
+
+### 🌟 Empieza por aquí:
+
+1. **[INDICE_DOCUMENTACION.md](./docs/INDICE_DOCUMENTACION.md)** – Índice centralizado de toda la documentación
+2. **[RESUMEN_EJECUTIVO_APILECTOR.md](./docs/RESUMEN_EJECUTIVO_APILECTOR.md)** – 1 página con todo esencial (5 min)
+3. **[DOCUMENTACION_TECNICA_COMPLETA.md](./docs/DOCUMENTACION_TECNICA_COMPLETA.md)** – Referencia técnica exhaustiva (60 min)
+
+### 📚 Otros documentos disponibles:
+
+- [DOCUMENTACION.md](./docs/DOCUMENTACION.md) – Guía rápida
+- [ARQUITECTURA_GENERAL.md](./docs/ARQUITECTURA_GENERAL.md) – Vista técnica
+- [PERSONAS_DOCUMENTACION_TECNICA.md](./docs/PERSONAS_DOCUMENTACION_TECNICA.md) – Módulo Personas
+- [ESCUELAS_DOCUMENTACION_TECNICA.md](./docs/ESCUELAS_DOCUMENTACION_TECNICA.md) – Módulo Escuelas
+- [SUPER_DOC_MAESTRA_API_LECTOR.md](./docs/SUPER_DOC_MAESTRA_API_LECTOR.md) – Mega guía integral
+
+---
+
+## 💡 Para diferentes roles:
+
+**👨‍💻 Developer:** DOCUMENTACION_TECNICA_COMPLETA.md + ver código en src/  
+**🏗️ Tech Lead:** ARQUITECTURA_GENERAL.md + SUPER_DOC_MAESTRA_API_LECTOR.md  
+**👥 Product Manager:** RESUMEN_EJECUTIVO_APILECTOR.md + ADMIN_FLUJO_LIBROS_LICENCIAS.md

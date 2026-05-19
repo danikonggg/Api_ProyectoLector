@@ -7,7 +7,7 @@
  * Se usa el email y se genera un JWT token.
  */
 
-import { IsEmail, IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsNotEmpty, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 import { EMAIL_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '../../common/constants/validation.constants';
@@ -39,4 +39,20 @@ export class LoginDto {
     message: `La contraseña debe tener al menos ${PASSWORD_MIN_LENGTH} caracteres`,
   })
   password: string;
+
+  @ApiProperty({
+    description:
+      'Mantener sesión iniciada. true usa refresh token largo; false usa refresh token corto.',
+    example: true,
+    required: false,
+    default: false,
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'string') return value.toLowerCase() === 'true';
+    return false;
+  })
+  @IsBoolean({ message: 'rememberMe debe ser booleano' })
+  rememberMe?: boolean;
 }
