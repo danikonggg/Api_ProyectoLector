@@ -408,7 +408,7 @@ export class AuthService {
   async resetPassword(dto: ResetPasswordDto, ip?: string) {
     const persona = await this.prisma.persona.findFirst({
       where: { resetPasswordToken: dto.token },
-      select: { id: true, correo: true, resetPasswordExpires: true },
+      select: { id: true, correo: true, nombre: true, resetPasswordExpires: true },
     });
 
     if (!persona) {
@@ -435,6 +435,13 @@ export class AuthService {
       ip: ip ?? null,
       detalles: persona.correo,
     });
+
+    // Enviar confirmación — si falla el correo no rompemos el flujo
+    try {
+      await this.mailService.sendPasswordChangedEmail(persona.correo!, persona.nombre ?? 'usuario');
+    } catch (err) {
+      this.logger.warn(`No se pudo enviar el correo de confirmación a ${persona.correo}: ${err}`);
+    }
 
     this.logger.log(`Contraseña restablecida exitosamente para: ${persona.correo}`);
     return { message: 'Contraseña restablecida exitosamente. Ya puedes iniciar sesión.' };

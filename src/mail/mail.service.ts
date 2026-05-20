@@ -255,4 +255,179 @@ export class MailService {
 
     this.logger.log(`Correo de recuperación enviado a: ${to}`);
   }
+
+  async sendPasswordChangedEmail(to: string, nombre: string): Promise<void> {
+    const from = this.configService.get<string>('SMTP_FROM', 'no-reply@apilector.com');
+    const year = new Date().getFullYear();
+    const fecha = new Date().toLocaleString('es-MX', {
+      dateStyle: 'long',
+      timeStyle: 'short',
+      timeZone: 'America/Mexico_City',
+    });
+
+    await this.getTransporter().sendMail({
+      from,
+      to,
+      subject: '✅ Tu contraseña fue cambiada — ApiLector',
+      html: `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Contraseña cambiada</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f0f4f8;font-family:'Segoe UI',Arial,sans-serif;">
+
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f0f4f8;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:560px;" cellpadding="0" cellspacing="0">
+
+          <!-- Logo -->
+          <tr>
+            <td align="center" style="padding-bottom:24px;">
+              <table cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="
+                    background:linear-gradient(135deg,#4F46E5,#7C3AED);
+                    border-radius:14px;
+                    padding:14px 28px;
+                  ">
+                    <span style="color:#ffffff;font-size:22px;font-weight:700;letter-spacing:0.5px;">
+                      📚 ApiLector
+                    </span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Card -->
+          <tr>
+            <td style="
+              background:#ffffff;
+              border-radius:20px;
+              box-shadow:0 4px 24px rgba(0,0,0,0.08);
+              overflow:hidden;
+            ">
+
+              <!-- Accent top -->
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="background:linear-gradient(135deg,#059669,#10B981);height:6px;"></td>
+                </tr>
+              </table>
+
+              <!-- Body -->
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="padding:40px 40px 32px;">
+
+                    <!-- Icon -->
+                    <table cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
+                      <tr>
+                        <td style="
+                          background:#ECFDF5;
+                          border-radius:50%;
+                          width:64px;height:64px;
+                          text-align:center;
+                          vertical-align:middle;
+                          font-size:28px;
+                          line-height:64px;
+                        ">✅</td>
+                      </tr>
+                    </table>
+
+                    <!-- Title -->
+                    <h1 style="
+                      margin:0 0 8px;
+                      font-size:24px;
+                      font-weight:700;
+                      color:#064E3B;
+                      line-height:1.3;
+                    ">Contraseña actualizada</h1>
+
+                    <!-- Subtitle -->
+                    <p style="
+                      margin:0 0 24px;
+                      font-size:16px;
+                      color:#6b7280;
+                      line-height:1.6;
+                    ">
+                      Hola <strong style="color:#374151;">${nombre}</strong>, te confirmamos que la contraseña
+                      de tu cuenta en ApiLector fue cambiada correctamente.
+                    </p>
+
+                    <!-- Divider -->
+                    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
+                      <tr><td style="border-top:1px solid #e5e7eb;"></td></tr>
+                    </table>
+
+                    <!-- Info box -->
+                    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
+                      <tr>
+                        <td style="
+                          background:#F0FDF4;
+                          border-left:4px solid #10B981;
+                          border-radius:0 8px 8px 0;
+                          padding:14px 16px;
+                        ">
+                          <p style="margin:0;font-size:14px;color:#065F46;line-height:1.6;">
+                            🕐 <strong>Fecha y hora:</strong> ${fecha}<br/>
+                            🔒 Tu sesión anterior fue cerrada automáticamente por seguridad.
+                          </p>
+                        </td>
+                      </tr>
+                    </table>
+
+                    <!-- Alert box -->
+                    <table width="100%" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td style="
+                          background:#F9FAFB;
+                          border-radius:10px;
+                          padding:14px 16px;
+                        ">
+                          <p style="margin:0;font-size:13px;color:#6b7280;line-height:1.6;">
+                            🚨 <strong style="color:#374151;">¿No fuiste tú?</strong>
+                            Si no realizaste este cambio, tu cuenta puede estar comprometida.
+                            Contacta a tu administrador de inmediato o escríbenos a
+                            <a href="mailto:soporte@apilector.com" style="color:#4F46E5;text-decoration:none;">soporte@apilector.com</a>.
+                          </p>
+                        </td>
+                      </tr>
+                    </table>
+
+                  </td>
+                </tr>
+              </table>
+
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td align="center" style="padding:28px 0 8px;">
+              <p style="margin:0 0 4px;font-size:13px;color:#9ca3af;">
+                © ${year} ApiLector · Todos los derechos reservados
+              </p>
+              <p style="margin:0;font-size:12px;color:#d1d5db;">
+                Este es un correo automático, por favor no respondas a este mensaje.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>
+      `,
+    });
+
+    this.logger.log(`Correo de confirmación de cambio de contraseña enviado a: ${to}`);
+  }
 }
