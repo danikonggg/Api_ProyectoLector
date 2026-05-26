@@ -323,18 +323,12 @@ export class EscuelasController {
     @Request() req: { user?: ReqUser },
     @Param('libroId', ParseIntPipe) libroId: number,
     @Param('segmentoId', ParseIntPipe) segmentoId: number,
-    @Query('nivel') nivel?: string,
   ) {
     const alumnoId = req.user?.alumno?.id;
     if (!alumnoId) {
       throw new ForbiddenException('No se encontró el alumno.');
     }
-    return await this.escuelasService.obtenerEvaluacionSegmento(
-      alumnoId,
-      libroId,
-      segmentoId,
-      nivel,
-    );
+    return await this.escuelasService.obtenerEvaluacionSegmento(alumnoId, libroId, segmentoId);
   }
 
   /**

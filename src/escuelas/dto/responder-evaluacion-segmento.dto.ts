@@ -1,12 +1,17 @@
-import { ArrayMinSize, IsArray, IsOptional, IsString, ValidateNested } from 'class-validator';
+import { ArrayMinSize, IsArray, IsIn, IsInt, IsOptional, IsString, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 
 class RespuestaEvaluacionDto {
-  @IsString()
-  preguntaId: string;
+  @IsInt()
+  preguntaId: number;
 
   @IsString()
-  respuesta: string;
+  @IsIn(['A', 'B', 'C', 'D'])
+  respuesta: 'A' | 'B' | 'C' | 'D';
+
+  @IsOptional()
+  @IsInt()
+  tiempoMs?: number;
 }
 
 export class ResponderEvaluacionSegmentoDto {

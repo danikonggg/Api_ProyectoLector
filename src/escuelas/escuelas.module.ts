@@ -5,6 +5,7 @@ import { AlumnoAnotacionesController } from './alumno-anotaciones.controller';
 import { PersonasModule } from '../personas/personas.module';
 import { LicenciasModule } from '../licencias/licencias.module';
 import { LibrosCoreModule } from '../libros/libros-core.module';
+import { EvaluacionModule } from '../evaluacion/evaluacion.module';
 import { ListarLibrosAsignadosAlumnoUseCase } from './application/listar-libros-asignados-alumno.use-case';
 import { DesasignarLibroAlumnoUseCase } from './application/desasignar-libro-alumno.use-case';
 import { EstadisticasEscuelaService } from './services/estadisticas-escuela.service';
@@ -15,7 +16,7 @@ import { MisLibrosInteraccionesController } from './mis-libros-interacciones.con
 import { AlumnoSesionesLecturaService } from './services/alumno-sesiones-lectura.service';
 
 @Module({
-  imports: [PersonasModule, LicenciasModule, LibrosCoreModule],
+  imports: [PersonasModule, LicenciasModule, LibrosCoreModule, EvaluacionModule],
   controllers: [EscuelasController, AlumnoAnotacionesController, MisLibrosInteraccionesController],
   providers: [
     EscuelasService,

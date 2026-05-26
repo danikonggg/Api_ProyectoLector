@@ -1035,13 +1035,11 @@ export class EscuelasService {
     alumnoId: number,
     libroId: number,
     segmentoId: number,
-    nivelSolicitado?: string,
   ) {
     return this.alumnoEvaluacionSegmentoService.obtenerEvaluacionSegmento(
       alumnoId,
       libroId,
       segmentoId,
-      nivelSolicitado,
     );
   }
 
@@ -1049,7 +1047,7 @@ export class EscuelasService {
     alumnoId: number,
     libroId: number,
     segmentoId: number,
-    dto: { respuestas: Array<{ preguntaId: string; respuesta: string }>; nivel?: string },
+    dto: { respuestas: Array<{ preguntaId: number; respuesta: string; tiempoMs?: number }> },
   ) {
     return this.alumnoEvaluacionSegmentoService.responderEvaluacionSegmento(
       alumnoId,
