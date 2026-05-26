@@ -23,6 +23,7 @@ import { LIBROS_IMPORT_QUEUE, librosImportJobId } from '../queues/libros-import.
 import type { LibrosImportJobPayload } from '../queues/interfaces/libros-import-job.interface';
 import { injectTraceContextForJob } from '../infra/telemetry/trace-context';
 import { GlosarioSegmentoService } from './glosario-segmento.service';
+import { textoAHtml } from '../common/utils/texto-html.utils';
 
 export interface AuditContext {
   usuarioId?: number | null;
@@ -294,6 +295,7 @@ export class LibrosService {
       for (const seg of u.segmentos ?? []) {
         (seg as any).preguntas = preguntasVacias;
         (seg as any).glosario = mapaGlosario.get(Number(seg.id)) ?? [];
+        (seg as any).contenidoHtml = textoAHtml((seg as any).contenido ?? '');
       }
     }
 
