@@ -34,6 +34,10 @@ export const SEGMENTOS = {
   MIN_LEN_PARRAFO: 10,
   /** Máximo de palabras por “frase” al dividir por oraciones */
   MAX_PALABRAS_FRASE_CORTE: 80,
+  /** Una página con <= estas palabras se considera portada/metadatos y se salta */
+  MAX_WORDS_PORTADA: 80,
+  /** Máximo de páginas iniciales a revisar buscando portada/metadatos */
+  MAX_PAGINAS_METADATA: 5,
 } as const;
 
 /** Delimitadores de oración para segmentar (incluye espacios/saltos opcionales). */
@@ -55,8 +59,8 @@ export const FOOTER_HEADER_PATTERNS = [
 /** Patrones para quitar marcadores de página embebidos (ej. "-- 1 of 35 --" en medio del texto). */
 export const PAGINA_EMBEBIDA = /(?:\n|^)\s*--\s*\d{1,5}\s+(?:of|de)\s+\d{1,5}\s*--\s*(?=\n|$)/gi;
 
-/** Línea de índice: "Texto ...................... 11" -> queda solo "Texto". */
-export const LINEA_INDICE = /^(.+?)\s*[.\s]{3,}\s*\d{1,5}\s*$/;
+/** Línea de índice: "Texto ...................... 11" -> eliminada. Requiere al menos 3 puntos reales. */
+export const LINEA_INDICE = /^(.+?)\s*\.{3,}[.\s]*\d{1,5}\s*$/;
 
 /** Patrones de títulos de capítulo o sección principal (para marcar con ##). */
 export const TITULO_CAPITULO =

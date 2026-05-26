@@ -19,13 +19,17 @@ export type TipoPregunta = 'vocabulario' | 'idea_principal' | 'inferencia' | 'de
 const NIVELES_VALIDOS: NivelPregunta[] = ['basico', 'intermedio', 'avanzado'];
 
 /** Maximo de segmentos procesados en paralelo para no saturar Groq. */
-const CONCURRENCIA_SEGMENTOS = 4;
+const CONCURRENCIA_SEGMENTOS = 3;
 /** Pausa entre lotes de peticiones paralelas. */
-const DELAY_ENTRE_LOTES_MS = 800;
+const DELAY_ENTRE_LOTES_MS = 1200;
 /** Maximo de reintentos ante rate limit (429). */
 const MAX_REINTENTOS = 3;
 /** Delay base para backoff exponencial (ms). */
-const RETRY_DELAY_BASE_MS = 2000;
+const RETRY_DELAY_BASE_MS = 2500;
+/** Modelo preferido (mejor calidad, disponible en free tier de Groq). */
+const MODELO_PRIMARIO = 'llama-3.3-70b-versatile';
+/** Modelo fallback si el primario está saturado. */
+const MODELO_FALLBACK = 'llama-3.1-8b-instant';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -135,7 +139,16 @@ export class PreguntasSegmentoService {
 
     const segmento = await this.prisma.segmento.findUnique({
       where: { id: segmentoId },
-      select: { id: true, contenido: true },
+      select: {
+        id: true,
+        contenido: true,
+        unidad: {
+          select: {
+            nombre: true,
+            libro: { select: { titulo: true, grado: true } },
+          },
+        },
+      },
     });
 
     if (!segmento) {
@@ -147,21 +160,51 @@ export class PreguntasSegmentoService {
       throw new Error('GROQ_API_KEY no configurada. No se pueden generar preguntas.');
     }
 
+    const tituloLibro = segmento.unidad?.libro?.titulo ?? 'libro de lectura';
+    const capituloNombre = segmento.unidad?.nombre ?? '';
+    const grado = Number(segmento.unidad?.libro?.grado ?? 6);
+    const nivelEscolar = this.describirNivelEscolar(grado);
+
     const contenidoCorto =
-      segmento.contenido.length > 3000
-        ? segmento.contenido.slice(0, 3000) + '...'
+      segmento.contenido.length > 3500
+        ? segmento.contenido.slice(0, 3500) + '...'
         : segmento.contenido;
 
-    const systemPrompt = `Eres un profesor experto en comprension lectora. Dado un fragmento de texto, genera exactamente 8 preguntas de opcion multiple (MCQ) con las siguientes reglas:
-- Distribucion por nivel: minimo 2 preguntas de nivel "basico", minimo 2 de "intermedio", minimo 2 de "avanzado" (los 2 restantes los eliges tu).
-- Distribucion por tipo: usa exactamente estos tipos: "vocabulario", "idea_principal", "inferencia", "detalle". Cada tipo debe aparecer al menos una vez.
-- Cada pregunta tiene 4 opciones (opcion_a, opcion_b, opcion_c, opcion_d) y una respuesta_correcta que es solo la letra ("A", "B", "C" o "D").
-- Las opciones incorrectas deben ser plausibles pero claramente distintas a la correcta.
-- Nivel basico: recordar hechos explicitos, vocabulario directo, identificar detalles.
-- Nivel intermedio: comprender, parafrasear, aplicar, identificar idea principal.
-- Nivel avanzado: inferir, analizar causas-efectos, evaluar, relacionar con otros contextos.
-- Genera ademas una pista_contextual (pregunta reflexiva de 1-2 oraciones para guiar la relectura) y un resumen (2-3 oraciones del fragmento).
-Responde UNICAMENTE con JSON valido, sin markdown ni texto extra, con esta forma exacta:
+    const contextoLibro = [
+      `Libro: "${tituloLibro}"`,
+      capituloNombre ? `Capítulo/Sección: "${capituloNombre}"` : '',
+      `Nivel educativo del alumno: ${nivelEscolar} (grado ${grado})`,
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    const systemPrompt = `Eres un profesor experto en comprensión lectora para alumnos de educación básica en México.
+Tu tarea es generar exactamente 8 preguntas de opción múltiple (MCQ) sobre el fragmento dado, siguiendo estas reglas pedagógicas:
+
+CONTEXTO DEL LIBRO:
+${contextoLibro}
+
+REGLAS DE DISTRIBUCIÓN:
+- Exactamente 3 preguntas de nivel "basico", 3 de "intermedio", 2 de "avanzado".
+- Los tipos "vocabulario", "idea_principal", "inferencia" y "detalle" deben aparecer al menos una vez cada uno.
+
+REGLAS DE CALIDAD (MUY IMPORTANTE):
+- Cada pregunta debe estar directamente basada en el fragmento proporcionado, no en conocimiento general.
+- Las preguntas deben ser claras, sin ambigüedad y con una sola respuesta correcta.
+- Las opciones incorrectas deben ser plausibles pero claramente erróneas si se leyó el texto.
+- NO hagas preguntas triviales como "¿De qué trata el texto?" ni preguntas cuya respuesta no esté en el fragmento.
+- Adapta el vocabulario y complejidad al nivel del alumno (${nivelEscolar}, grado ${grado}).
+
+DEFINICIÓN DE NIVELES:
+- basico: Identificar datos explícitos, vocabulario directo, hechos mencionados literalmente en el texto.
+- intermedio: Comprender la idea principal, parafrasear, relacionar ideas dentro del texto, aplicar lo leído.
+- avanzado: Inferir, analizar causas y consecuencias, evaluar la postura del autor, relacionar con la vida real.
+
+Genera también:
+- pista_contextual: una pregunta reflexiva de 1-2 oraciones que motive al alumno a releer con más atención.
+- resumen: 2-3 oraciones que capturen lo esencial del fragmento en lenguaje accesible para el alumno.
+
+Responde ÚNICAMENTE con JSON válido, sin markdown ni texto extra:
 {
   "preguntas": [
     {
@@ -179,11 +222,12 @@ Responde UNICAMENTE con JSON valido, sin markdown ni texto extra, con esta forma
   "resumen": "..."
 }`;
 
-    const userPrompt = `Fragmento del libro:\n\n${contenidoCorto}`;
+    const userPrompt = `Fragmento del libro "${tituloLibro}"${capituloNombre ? ` — ${capituloNombre}` : ''}:\n\n${contenidoCorto}`;
 
     let bancoGroq: GroqBancoResponse | null = null;
 
     for (let intento = 0; intento < MAX_REINTENTOS; intento++) {
+      const modeloActual = intento === 0 ? MODELO_PRIMARIO : MODELO_FALLBACK;
       try {
         const groq = new Groq({ apiKey });
         const chatCompletion = await groq.chat.completions.create({
@@ -191,9 +235,9 @@ Responde UNICAMENTE con JSON valido, sin markdown ni texto extra, con esta forma
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
           ],
-          model: 'llama-3.1-8b-instant',
-          max_tokens: 2400,
-          temperature: 0.5,
+          model: modeloActual,
+          max_tokens: 2800,
+          temperature: 0.4,
         });
 
         const raw = chatCompletion.choices[0]?.message?.content?.trim() ?? '';
@@ -205,18 +249,19 @@ Responde UNICAMENTE con JSON valido, sin markdown ni texto extra, con esta forma
           );
           throw new Error('No se pudieron parsear preguntas del response de Groq.');
         }
+        this.logger.log(`Preguntas generadas con ${modeloActual} para segmento ${segmentoId}`);
         break;
       } catch (error: unknown) {
         const err = error as { status?: number };
         if (err?.status === 429 && intento < MAX_REINTENTOS - 1) {
           const delay = RETRY_DELAY_BASE_MS * Math.pow(2, intento);
           this.logger.warn(
-            `Rate limit (429) segmento ${segmentoId}. Reintento ${intento + 2}/${MAX_REINTENTOS} en ${delay}ms`,
+            `Rate limit (429) segmento ${segmentoId} con ${modeloActual}. Reintento ${intento + 2}/${MAX_REINTENTOS} en ${delay}ms`,
           );
           await sleep(delay);
         } else {
           const message = error instanceof Error ? error.message : String(error);
-          this.logger.error(`Groq error segmento ${segmentoId}: ${message}`);
+          this.logger.error(`Groq error segmento ${segmentoId} (${modeloActual}): ${message}`);
           if (intento === MAX_REINTENTOS - 1) throw error;
         }
       }
@@ -468,6 +513,12 @@ Responde UNICAMENTE con JSON valido, sin markdown ni texto extra, con esta forma
   // ──────────────────────────────────────────────
   // Private helpers
   // ──────────────────────────────────────────────
+
+  private describirNivelEscolar(grado: number): string {
+    if (grado <= 6) return 'primaria';
+    if (grado <= 9) return 'secundaria';
+    return 'preparatoria';
+  }
 
   private parsearBancoGroq(raw: string): GroqBancoResponse | null {
     try {

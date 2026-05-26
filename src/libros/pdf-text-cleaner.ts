@@ -13,35 +13,22 @@ import {
   FOOTER_HEADER_PATTERNS,
   PAGINA_EMBEBIDA,
   LINEA_INDICE,
-  TITULO_CAPITULO,
   LIGADURAS,
   COMILLAS_UNICODE,
 } from './constants/pdf.constants';
 
-/**
- * Reemplaza todos los espacios Unicode por espacio normal.
- */
 function normalizarEspaciosUnicode(texto: string): string {
   return texto.replace(UNICODE_SPACES, ' ');
 }
 
-/**
- * Elimina caracteres de control y no imprimibles (mantiene \n \r \t).
- */
 function eliminarControlYInvisibles(texto: string): string {
   return texto.replace(CONTROL_CHARS, '').replace(ZERO_WIDTH, '');
 }
 
-/**
- * Normaliza saltos de línea a \n.
- */
 function normalizarSaltosLinea(texto: string): string {
   return texto.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
-/**
- * Normaliza comillas tipográficas y guiones Unicode a ASCII.
- */
 function normalizarComillasYGuiones(texto: string): string {
   let t = texto;
   for (const [unicode, ascii] of COMILLAS_UNICODE) {
@@ -50,9 +37,6 @@ function normalizarComillasYGuiones(texto: string): string {
   return t;
 }
 
-/**
- * Reemplaza ligaduras tipográficas (ﬁ, ﬂ, ﬀ, etc.) por caracteres normales.
- */
 function normalizarLigaduras(texto: string): string {
   let t = texto;
   for (const [lig, rep] of Object.entries(LIGADURAS)) {
@@ -61,14 +45,10 @@ function normalizarLigaduras(texto: string): string {
   return t;
 }
 
-/**
- * Une palabras partidas por guión al final de línea (ej. "ejem-\nplo" → "ejemplo").
- * Incluye soft hyphen (\\u00AD), guion normal y variantes.
- */
 function unirPalabrasPartidasPorGuion(texto: string): string {
   let t = texto;
-  const letras = '[a-zA-ZáéíóúÁÉÍÓÚñÑüÜàèìòùÀÈÌÒÙâêîôûÂÊÎÔÛäëïöüÄËÏÖÜ]';
-  const guion = '[\\-\\u00AD\\u2010\\u2011]';
+  const letras = '[a-zA-ZáéíóúÁÉÍÓÚñÑüÜàèìòùÀÈÌÒÙâêîôûÂÊÎÔÛäëïöÄËÏÖ]';
+  const guion = '[\\-­‐‑]';
   const pat = new RegExp(`(${letras})${guion}\\s*\\n\\s*(${letras})`, 'g');
   t = t.replace(pat, '$1$2');
   const pat2 = new RegExp(`(${letras})${guion}\\s+(${letras})`, 'g');
@@ -76,16 +56,10 @@ function unirPalabrasPartidasPorGuion(texto: string): string {
   return t;
 }
 
-/**
- * Reemplaza tabs por espacios y colapsa espacios múltiples (dentro de línea).
- */
 function colapsarEspacios(texto: string): string {
   return texto.replace(/\t/g, ' ').replace(/[ \t]+/g, ' ');
 }
 
-/**
- * Trim por línea y colapsa líneas vacías múltiples (máx. 2 saltos = 1 párrafo).
- */
 function trimLineasYColapsarParrafos(texto: string): string {
   let t = texto
     .split('\n')
@@ -97,16 +71,10 @@ function trimLineasYColapsarParrafos(texto: string): string {
   return t.trim();
 }
 
-/**
- * Quita marcadores de página embebidos (ej. "-- 1 of 35 --") que aparecen en medio del texto.
- */
 function quitarMarcadoresPaginaEmbebidos(texto: string): string {
   return texto.replace(PAGINA_EMBEBIDA, (m) => (m.startsWith('\n') ? '\n' : ''));
 }
 
-/**
- * Elimina líneas que parecen número de página o header/footer repetido.
- */
 function quitarLineasHeaderFooter(texto: string): string {
   const lineas = texto.split('\n');
   const filtradas = lineas.filter((linea) => {
@@ -117,43 +85,23 @@ function quitarLineasHeaderFooter(texto: string): string {
   return filtradas.join('\n');
 }
 
-/**
- * Simplifica líneas de índice: "Agradecimientos ......... 11" -> "Agradecimientos"
- */
 function simplificarLineasIndice(texto: string): string {
+  // Simplifica "Texto ........ 11" → "Texto" (quita número de página del ToC).
+  // NO elimina la línea para no perder encabezados de capítulo reales.
   const lineas = texto.split('\n');
-  const simplificadas = lineas.map((linea) => {
-    const t = linea.trim();
-    const m = t.match(LINEA_INDICE);
-    if (m) return m[1]!.trim();
-    return t;
-  });
-  return simplificadas.join('\n');
+  return lineas
+    .map((linea) => {
+      const t = linea.trim();
+      const m = t.match(LINEA_INDICE);
+      return m ? m[1]!.trim() : t;
+    })
+    .join('\n');
 }
 
 /**
- * Quita líneas que son solo títulos de capítulo/sección (Introducción, Capítulo 1, etc.)
- * para dejar solo el contenido real del libro.
- */
-function quitarLineasTitulo(texto: string): string {
-  const lineas = texto.split('\n');
-  const resultado: string[] = [];
-
-  for (let i = 0; i < lineas.length; i++) {
-    const linea = lineas[i]!.trim();
-    if (!linea) {
-      resultado.push('');
-      continue;
-    }
-    if (TITULO_CAPITULO.test(linea)) continue;
-    resultado.push(linea);
-  }
-
-  return resultado.join('\n');
-}
-
-/**
- * Pipeline completo de limpieza.
+ * Pipeline completo de limpieza. Preserva estructura de \n y \n\n
+ * para que la detección de capítulos y párrafos funcione correctamente.
+ * NO aplica reemplazarSaltosPorEspacio — eso se hace por segmento al final.
  */
 export function limpiarTextoPdf(texto: string): string {
   let t = texto;
@@ -169,22 +117,19 @@ export function limpiarTextoPdf(texto: string): string {
   t = quitarLineasHeaderFooter(t);
   t = simplificarLineasIndice(t);
   t = trimLineasYColapsarParrafos(t);
-  t = quitarLineasTitulo(t);
-  t = trimLineasYColapsarParrafos(t);
-  t = t.replace(/\u00AD/g, '');
-  t = reemplazarSaltosPorEspacio(t);
+  // Elimina soft hyphens residuales
+  t = t.replace(/­/g, '');
   return t;
 }
 
 /**
- * Reemplaza saltos de línea por espacio para lectura fluida.
- * Los \n del PDF (saltos de página/línea) dañan la lectura; un espacio fluye mejor.
+ * Normaliza el contenido de un segmento individual para lectura fluida.
+ * Convierte saltos de línea simples (word-wrap del PDF) en espacios,
+ * pero preserva párrafos reales (\n\n).
  */
-function reemplazarSaltosPorEspacio(texto: string): string {
+export function normalizarContenidoSegmento(texto: string): string {
   return texto
-    .replace(/\r\n/g, ' ')
-    .replace(/\n/g, ' ')
-    .replace(/\r/g, ' ')
+    .replace(/([^\n])\n([^\n])/g, '$1 $2')
     .replace(/[ \t]+/g, ' ')
     .trim();
 }

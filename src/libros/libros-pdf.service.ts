@@ -10,7 +10,7 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { PDF, SEGMENTOS, ORACION_REGEX, TITULO_CAPITULO } from './constants/pdf.constants';
-import { limpiarTextoPdf } from './pdf-text-cleaner';
+import { limpiarTextoPdf, normalizarContenidoSegmento } from './pdf-text-cleaner';
 
 export interface TextoExtraido {
   texto: string;
@@ -270,7 +270,7 @@ export class LibrosPdfService {
     paginaActual: number,
     allowSmall = false,
   ): void {
-    const c = contenido.trim();
+    const c = normalizarContenidoSegmento(contenido);
     if (!c) return;
     const palabras = this.contarPalabras(c);
     const min = allowSmall ? SEGMENTOS.MIN_WORDS_FLUSH_REST : SEGMENTOS.MIN_WORDS_SEGMENT;
@@ -559,31 +559,106 @@ export class LibrosPdfService {
   }
 
   /**
+   * Detecta si una página es de portada/metadatos (título, autor, editorial, etc.).
+   * Se consideran portada las primeras páginas con muy poco texto real.
+   */
+  private esPageMetadata(textoPagina: string): boolean {
+    const palabras = this.contarPalabras(textoPagina);
+    if (palabras > SEGMENTOS.MAX_WORDS_PORTADA) return false;
+    const lineas = textoPagina.split('\n').filter((l) => l.trim());
+    if (lineas.length === 0) return true;
+    // Portada: todas las líneas son cortas (sin párrafos densos)
+    return lineas.every((l) => this.contarPalabras(l) < 20);
+  }
+
+  /**
+   * Recorta las páginas iniciales de metadatos (portada, portadilla, derechos, índice inicial).
+   * Devuelve el texto a partir de la primera página con contenido real.
+   */
+  private saltarPaginasMetadata(textoPorPagina: string[]): string {
+    let inicio = 0;
+    for (let i = 0; i < Math.min(textoPorPagina.length, SEGMENTOS.MAX_PAGINAS_METADATA); i++) {
+      if (!this.esPageMetadata(textoPorPagina[i] ?? '')) {
+        inicio = i;
+        break;
+      }
+      inicio = i + 1;
+    }
+    return textoPorPagina.slice(inicio).join('\n\n');
+  }
+
+  /**
    * Pipeline con detección de capítulos: divide el texto por TITULO_CAPITULO
    * y crea una unidad por capítulo. Si no hay capítulos, una sola "Unidad 1".
+   * Salta automáticamente las páginas de portada y metadatos del inicio.
    */
   async procesarPdfConUnidades(buffer: Buffer): Promise<{
     texto: string;
     numPaginas: number;
     unidades: UnidadConSegmentosDto[];
   }> {
-    const { texto: raw, numPaginas } = await this.extraerTexto(buffer);
-    const limpio = this.limpiarTexto(raw);
+    const { texto: raw, numPaginas, textoPorPagina } = await this.extraerTexto(buffer);
+    const textoContenido =
+      textoPorPagina && textoPorPagina.length > 0
+        ? this.saltarPaginasMetadata(textoPorPagina)
+        : raw;
+    const limpio = this.limpiarTexto(textoContenido);
     const bloques = this.dividirPorCapítulos(limpio);
-    const unidades: UnidadConSegmentosDto[] = [];
+    const unidadesConSegmentos: UnidadConSegmentosDto[] = [];
     let ordenGlobalSegmentos = 0;
 
-    for (let i = 0; i < bloques.length; i++) {
-      const { titulo, contenido } = bloques[i]!;
-      const nombreUnidad = titulo ? titulo.slice(0, 150) : `Unidad ${i + 1}`;
+    for (const bloque of bloques) {
+      const { titulo, contenido } = bloque;
       const segmentos = this.dividirEnSegmentos(contenido, numPaginas);
+      // Saltar bloques sin segmentos (líneas del ToC detectadas como capítulos)
+      if (segmentos.length === 0) continue;
+      // Saltar secciones que son tabla de contenidos (Índice, Contenido, etc.)
+      if (this.esSeccionIndice(titulo, contenido)) continue;
+      // Saltar bloques sin título (pre-capítulo) con muy poco contenido: son portada/metadatos
+      if (!titulo && this.contarPalabras(contenido) < 50) continue;
       for (const s of segmentos) {
         s.orden = ++ordenGlobalSegmentos;
       }
-      unidades.push({ nombre: nombreUnidad, orden: i + 1, segmentos });
+      const nombreUnidad = titulo ? titulo.slice(0, 150) : `Unidad ${unidadesConSegmentos.length + 1}`;
+      unidadesConSegmentos.push({
+        nombre: nombreUnidad,
+        orden: unidadesConSegmentos.length + 1,
+        segmentos,
+      });
     }
 
+    const unidades = this.deduplicarUnidades(unidadesConSegmentos);
+    // Renumerar orden tras deduplicación
+    unidades.forEach((u, i) => (u.orden = i + 1));
+
     return { texto: limpio, numPaginas, unidades };
+  }
+
+  /**
+   * Detecta si un bloque es una tabla de contenidos / índice que no debe
+   * convertirse en unidad de lectura. Solo filtra por nombre del título.
+   */
+  private esSeccionIndice(titulo: string | null, _contenido: string): boolean {
+    if (!titulo) return false;
+    const NOMBRES_INDICE = /^(índice|indice|contenido|tabla\s+de\s+contenidos?|contents?|table\s+of\s+contents?)$/i;
+    return NOMBRES_INDICE.test(titulo.trim());
+  }
+
+  /**
+   * Elimina unidades duplicadas del ToC: si el nombre de una unidad es
+   * prefijo exacto del nombre de otra (ej. "Capítulo 1" vs "Capítulo 1. Título"),
+   * la más corta es un remanente del índice.
+   */
+  private deduplicarUnidades(unidades: UnidadConSegmentosDto[]): UnidadConSegmentosDto[] {
+    return unidades.filter((u) => {
+      const esPrefijoDuplicado = unidades.some(
+        (otra) =>
+          otra !== u &&
+          otra.nombre.toLowerCase().startsWith(u.nombre.toLowerCase()) &&
+          otra.nombre.length > u.nombre.length + 1,
+      );
+      return !esPrefijoDuplicado;
+    });
   }
 
   /**
