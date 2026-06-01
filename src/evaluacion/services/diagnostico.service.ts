@@ -129,7 +129,14 @@ export class DiagnosticoService {
       return { necesitaDiagnostico: false };
     }
 
-    const preguntas = await this.getOrSeedPreguntas();
+    const grado = await this.obtenerGradoLibro(libroId);
+    const todasLasPreguntas = await this.getOrSeedPreguntas();
+    // Seleccionar preguntas adaptadas al grado del libro:
+    // primaria (1-6) → preguntas más simples (índices 0-5)
+    // secundaria (7-9) → preguntas intermedias (índices 2-7)
+    // prepa (10+) → preguntas más complejas (índices 4-9)
+    const preguntas = this.seleccionarPorGrado(todasLasPreguntas, grado);
+
     return {
       necesitaDiagnostico: true,
       preguntas: preguntas.map((p) => ({
@@ -141,6 +148,21 @@ export class DiagnosticoService {
         opcionD: p.opcionD,
       })),
     };
+  }
+
+  private async obtenerGradoLibro(libroId: bigint): Promise<number> {
+    const libro = await this.prisma.libro.findUnique({
+      where: { id: libroId },
+      select: { grado: true },
+    });
+    return Number(libro?.grado ?? 6);
+  }
+
+  private seleccionarPorGrado<T>(preguntas: T[], grado: number): T[] {
+    if (preguntas.length <= 6) return preguntas;
+    if (grado <= 6) return preguntas.slice(0, 6);
+    if (grado <= 9) return preguntas.slice(2, 8);
+    return preguntas.slice(4, 10);
   }
 
   async procesarDiagnostico(
@@ -190,7 +212,7 @@ export class DiagnosticoService {
         nivelActual: nivelAsignado,
         tiempoMinimoActual: tiempoMinimo,
         diagnosticoCompletado: true,
-        rachaPosiva: 0,
+        rachaPositiva: 0,
         rachaNegativa: 0,
       },
     });
@@ -201,16 +223,20 @@ export class DiagnosticoService {
   private async getOrSeedPreguntas() {
     const activas = await this.prisma.preguntaDiagnostico.findMany({
       where: { activa: true },
+      orderBy: { id: 'asc' },
     });
 
-    if (activas.length > 0) return activas;
+    if (activas.length >= PREGUNTAS_DIAGNOSTICO_SEED.length) return activas;
 
-    // Seed hardcoded questions
+    // Thread-safe: skipDuplicates evita fallo en concurrencia
     await this.prisma.preguntaDiagnostico.createMany({
       data: PREGUNTAS_DIAGNOSTICO_SEED,
       skipDuplicates: true,
     });
 
-    return this.prisma.preguntaDiagnostico.findMany({ where: { activa: true } });
+    return this.prisma.preguntaDiagnostico.findMany({
+      where: { activa: true },
+      orderBy: { id: 'asc' },
+    });
   }
 }

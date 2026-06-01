@@ -30,7 +30,7 @@ export class PerfilAprendizajeService {
         libroId,
         nivelActual: 'basico',
         tiempoMinimoActual: PerfilAprendizajeService.TIEMPO_MIN_BASE['basico'],
-        rachaPosiva: 0,
+        rachaPositiva: 0,
         rachaNegativa: 0,
         diagnosticoCompletado: false,
       },
@@ -51,23 +51,23 @@ export class PerfilAprendizajeService {
   ) {
     const perfil = await this.getOrCreatePerfil(alumnoId, libroId);
 
-    let { nivelActual, tiempoMinimoActual, rachaPosiva, rachaNegativa } = perfil;
+    let { nivelActual, tiempoMinimoActual, rachaPositiva, rachaNegativa } = perfil;
 
     if (aprobadoPrimerIntento && score >= 80) {
-      rachaPosiva += 1;
+      rachaPositiva += 1;
       rachaNegativa = 0;
 
-      if (rachaPosiva >= PerfilAprendizajeService.RACHA_PARA_SUBIR) {
+      if (rachaPositiva >= PerfilAprendizajeService.RACHA_PARA_SUBIR) {
         nivelActual = this.subirNivel(nivelActual);
         tiempoMinimoActual = Math.max(
           PerfilAprendizajeService.TIEMPO_MIN_LIMITE,
           tiempoMinimoActual + PerfilAprendizajeService.DELTA_TIEMPO_SUBIDA,
         );
-        rachaPosiva = 0;
+        rachaPositiva = 0;
       }
     } else {
       rachaNegativa += 1;
-      rachaPosiva = 0;
+      rachaPositiva = 0;
 
       if (rachaNegativa >= PerfilAprendizajeService.RACHA_PARA_BAJAR) {
         nivelActual = this.bajarNivel(nivelActual);
@@ -84,7 +84,7 @@ export class PerfilAprendizajeService {
       data: {
         nivelActual,
         tiempoMinimoActual,
-        rachaPosiva,
+        rachaPositiva,
         rachaNegativa,
       },
     });

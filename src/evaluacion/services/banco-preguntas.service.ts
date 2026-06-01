@@ -96,69 +96,16 @@ export class BancoPreguntasService {
   ): PreguntaMCQParaAlumno[] {
     if (preguntas.length === 0) return [];
 
-    // On retries, rotate the question pool
+    // Rotar el pool según intento para mostrar preguntas distintas cada vez.
+    // NO mezclamos opciones A/B/C/D porque la validación compara contra
+    // respuesta_correcta en BD — si se reordena sin actualizar la BD,
+    // el alumno que elige la respuesta visualmente correcta sería marcado mal.
     const desplazamiento = (intento - 1) * BancoPreguntasService.PREGUNTAS_POR_SET;
     const rotadas = [
       ...preguntas.slice(desplazamiento % preguntas.length),
       ...preguntas.slice(0, desplazamiento % preguntas.length),
     ];
 
-    const seleccionadas = rotadas.slice(0, BancoPreguntasService.PREGUNTAS_POR_SET);
-
-    // On retries, shuffle option order
-    if (intento > 1) {
-      return seleccionadas.map((p) => this.mezclarOpciones(p));
-    }
-
-    return seleccionadas;
-  }
-
-  private mezclarOpciones(pregunta: PreguntaMCQParaAlumno): PreguntaMCQParaAlumno {
-    const opciones = [
-      pregunta.opcionA,
-      pregunta.opcionB,
-      pregunta.opcionC,
-      pregunta.opcionD,
-    ];
-
-    // Simple deterministic shuffle based on preguntaId
-    const seed = pregunta.preguntaId % 24;
-    const permutaciones = [
-      [0, 1, 2, 3],
-      [0, 1, 3, 2],
-      [0, 2, 1, 3],
-      [0, 2, 3, 1],
-      [0, 3, 1, 2],
-      [0, 3, 2, 1],
-      [1, 0, 2, 3],
-      [1, 0, 3, 2],
-      [1, 2, 0, 3],
-      [1, 2, 3, 0],
-      [1, 3, 0, 2],
-      [1, 3, 2, 0],
-      [2, 0, 1, 3],
-      [2, 0, 3, 1],
-      [2, 1, 0, 3],
-      [2, 1, 3, 0],
-      [2, 3, 0, 1],
-      [2, 3, 1, 0],
-      [3, 0, 1, 2],
-      [3, 0, 2, 1],
-      [3, 1, 0, 2],
-      [3, 1, 2, 0],
-      [3, 2, 0, 1],
-      [3, 2, 1, 0],
-    ];
-
-    const perm = permutaciones[seed] ?? [0, 1, 2, 3];
-    const mezcladas = perm.map((i) => opciones[i] ?? '');
-
-    return {
-      ...pregunta,
-      opcionA: mezcladas[0] ?? '',
-      opcionB: mezcladas[1] ?? '',
-      opcionC: mezcladas[2] ?? '',
-      opcionD: mezcladas[3] ?? '',
-    };
+    return rotadas.slice(0, BancoPreguntasService.PREGUNTAS_POR_SET);
   }
 }

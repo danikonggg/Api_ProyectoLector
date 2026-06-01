@@ -3,6 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { LicenciasService } from '../../licencias/licencias.service';
 import { BancoPreguntasService } from '../../evaluacion/services/banco-preguntas.service';
 import { PerfilAprendizajeService } from '../../evaluacion/services/perfil-aprendizaje.service';
+import { ApoyosPedagogicosService } from '../../evaluacion/services/apoyos-pedagogicos.service';
 import { NivelPregunta } from '../../libros/preguntas-segmento.service';
 import { GamificacionEngineService } from '../../gamificacion/services/gamificacion-engine.service';
 
@@ -17,6 +18,7 @@ export class AlumnoEvaluacionSegmentoService {
     private readonly bancoPreguntasService: BancoPreguntasService,
     private readonly perfilService: PerfilAprendizajeService,
     private readonly gamificacion: GamificacionEngineService,
+    private readonly apoyosService: ApoyosPedagogicosService,
   ) {}
 
   private async validarAcceso(alumnoId: number, libroId: number, segmentoId: number) {
@@ -89,50 +91,57 @@ export class AlumnoEvaluacionSegmentoService {
   ) {
     const { alumnoIdBig, libroIdBig, segmentoIdBig } = await this.validarAcceso(alumnoId, libroId, segmentoId);
 
-    const intentosPrevios = await this.prisma.alumnoSegmentoEvaluacion.count({
-      where: { alumnoId: alumnoIdBig, libroId: libroIdBig, segmentoId: segmentoIdBig },
-    });
-
-    if (intentosPrevios >= AlumnoEvaluacionSegmentoService.MAX_INTENTOS_EVALUACION) {
-      throw new BadRequestException('Ya agotaste los intentos de evaluacion para este segmento.');
-    }
-
     if (!dto.respuestas?.length) {
       throw new BadRequestException('Debes enviar al menos una respuesta.');
     }
 
     const perfil = await this.perfilService.getOrCreatePerfil(alumnoIdBig, libroIdBig);
     const nivel = perfil.nivelActual as NivelPregunta;
-    const intento = intentosPrevios + 1;
 
     // ✅ Score real: compara respuestas contra respuesta_correcta en BD
     const { score, tiposError } = await this.bancoPreguntasService.validarRespuestas(dto.respuestas);
-
-    const aprobado = score >= AlumnoEvaluacionSegmentoService.UMBRAL_APROBACION;
-    const aprobadoPrimerIntento = aprobado && intento === 1;
     const tiempoTotal = dto.respuestas.reduce((acc, r) => acc + (r.tiempoMs ?? 0), 0);
 
+    // ✅ Transacción serializable para evitar race condition en conteo de intentos
+    const { intento, aprobado } = await this.prisma.$transaction(async (tx) => {
+      const intentosPrevios = await tx.alumnoSegmentoEvaluacion.count({
+        where: { alumnoId: alumnoIdBig, libroId: libroIdBig, segmentoId: segmentoIdBig },
+      });
+
+      if (intentosPrevios >= AlumnoEvaluacionSegmentoService.MAX_INTENTOS_EVALUACION) {
+        throw new BadRequestException('Ya agotaste los intentos de evaluacion para este segmento.');
+      }
+
+      const intento = intentosPrevios + 1;
+      const aprobado = score >= AlumnoEvaluacionSegmentoService.UMBRAL_APROBACION;
+
+      await tx.alumnoSegmentoEvaluacion.create({
+        data: {
+          alumnoId: alumnoIdBig,
+          libroId: libroIdBig,
+          segmentoId: segmentoIdBig,
+          nivelPregunta: nivel,
+          intento,
+          preguntas: dto.respuestas.map((r) => ({ preguntaId: r.preguntaId })) as unknown as object,
+          respuestas: dto.respuestas as unknown as object,
+          score,
+          aprobado,
+          puedeAvanzar: aprobado,
+          apoyos: [] as unknown as object,
+          tiempoRespuestaMs: tiempoTotal > 0 ? tiempoTotal : null,
+          tiposError: tiposError as unknown as object,
+        },
+      });
+
+      return { intento, aprobado };
+    }, { isolationLevel: 'Serializable' });
+
+    const aprobadoPrimerIntento = aprobado && intento === 1;
+
+    // Apoyos progresivos: pista → glosario → resumen según número de fallo
     const apoyos = aprobado
       ? []
-      : [{ tipo: 'pista', contenido: 'Relee el fragmento con atención: identifica la idea principal, un detalle clave y una relación causa-efecto.' }];
-
-    await this.prisma.alumnoSegmentoEvaluacion.create({
-      data: {
-        alumnoId: alumnoIdBig,
-        libroId: libroIdBig,
-        segmentoId: segmentoIdBig,
-        nivelPregunta: nivel,
-        intento,
-        preguntas: dto.respuestas.map((r) => ({ preguntaId: r.preguntaId })) as unknown as object,
-        respuestas: dto.respuestas as unknown as object,
-        score,
-        aprobado,
-        puedeAvanzar: aprobado,
-        apoyos: apoyos as unknown as object,
-        tiempoRespuestaMs: tiempoTotal > 0 ? tiempoTotal : null,
-        tiposError: tiposError as unknown as object,
-      },
-    });
+      : await this.apoyosService.getApoyos(alumnoIdBig, libroIdBig, segmentoIdBig, intento);
 
     // ✅ Actualiza el perfil adaptativo (sube/baja nivel según rachas)
     await this.perfilService.aplicarResultadoEvaluacion(alumnoIdBig, libroIdBig, aprobadoPrimerIntento, score);

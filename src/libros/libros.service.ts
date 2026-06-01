@@ -277,24 +277,42 @@ export class LibrosService {
       }
     }
 
-    const preguntasVacias = {
-      basico: [] as string[],
-      intermedio: [] as string[],
-      avanzado: [] as string[],
-    };
     const idsSegmentos: number[] = [];
     for (const u of libro.unidades ?? []) {
       for (const seg of u.segmentos ?? []) {
         idsSegmentos.push(Number(seg.id));
       }
     }
+
+    // Contar preguntas por nivel para cada segmento (no las devuelve, solo el conteo)
+    const conteoPreguntas = idsSegmentos.length
+      ? await this.prisma.preguntaSegmento.groupBy({
+          by: ['segmentoId', 'nivel'],
+          where: { segmentoId: { in: idsSegmentos.map(BigInt) }, opcionA: { not: null } },
+          _count: true,
+        })
+      : [];
+
+    const mapaConteoPreguntas = new Map<number, { basico: number; intermedio: number; avanzado: number }>();
+    for (const row of conteoPreguntas) {
+      const sid = Number(row.segmentoId);
+      if (!mapaConteoPreguntas.has(sid)) {
+        mapaConteoPreguntas.set(sid, { basico: 0, intermedio: 0, avanzado: 0 });
+      }
+      const entry = mapaConteoPreguntas.get(sid)!;
+      if (row.nivel === 'basico') entry.basico = row._count;
+      if (row.nivel === 'intermedio') entry.intermedio = row._count;
+      if (row.nivel === 'avanzado') entry.avanzado = row._count;
+    }
+
     const mapaGlosario =
       await this.glosarioSegmentoService.obtenerMapaGlosarioPorSegmentos(idsSegmentos);
 
     for (const u of libro.unidades ?? []) {
       for (const seg of u.segmentos ?? []) {
-        (seg as any).preguntas = preguntasVacias;
-        (seg as any).glosario = mapaGlosario.get(Number(seg.id)) ?? [];
+        const sid = Number((seg as any).id);
+        (seg as any).preguntasGeneradas = mapaConteoPreguntas.get(sid) ?? { basico: 0, intermedio: 0, avanzado: 0 };
+        (seg as any).glosario = mapaGlosario.get(sid) ?? [];
         (seg as any).contenidoHtml = textoAHtml((seg as any).contenido ?? '');
       }
     }

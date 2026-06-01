@@ -58,7 +58,9 @@ export class AlumnoEstadisticasService {
     ]);
 
     const evalAgg = await this.prisma.$queryRaw<[{ avgScore: string | null; aprobados: string }]>`
-      SELECT AVG(score)::text AS "avgScore", COUNT(*) FILTER (WHERE aprobado = true)::text AS "aprobados"
+      SELECT
+        AVG(score)::text AS "avgScore",
+        COUNT(DISTINCT segmento_id) FILTER (WHERE aprobado = true)::text AS "aprobados"
       FROM "Alumno_Segmento_Evaluacion"
       WHERE alumno_id = ${alumnoIdBig}
     `;

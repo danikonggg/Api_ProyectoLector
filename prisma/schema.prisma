@@ -15,7 +15,7 @@ model Persona {
   nombre          String    @db.VarChar(100)
   apellidoPaterno String    @map("apellido_paterno") @db.VarChar(100)
   apellidoMaterno String?   @map("apellido_materno") @db.VarChar(100)
-  correo          String?   @db.VarChar(150)
+  correo          String?   @unique @db.VarChar(150)
   telefono        String?   @db.VarChar(20)
   fechaNacimiento DateTime? @map("fecha_nacimiento") @db.Date
   genero          String?   @db.VarChar(30)
@@ -400,7 +400,7 @@ model AlumnoPerfilAprendizaje {
   libroId               BigInt   @map("libro_id")
   nivelActual           String   @default("basico") @map("nivel_actual") @db.VarChar(20)
   tiempoMinimoActual    Int      @default(300) @map("tiempo_minimo_actual")
-  rachaPosiva           Int      @default(0) @map("racha_positiva")
+  rachaPositiva         Int      @default(0) @map("racha_positiva")
   rachaNegativa         Int      @default(0) @map("racha_negativa")
   diagnosticoCompletado Boolean  @default(false) @map("diagnostico_completado")
   creadoEn              DateTime @default(now()) @map("creado_en") @db.Timestamptz()

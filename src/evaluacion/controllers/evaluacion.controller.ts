@@ -226,7 +226,7 @@ export class EvaluacionController {
         perfil: {
           nivelActual: perfil.nivelActual,
           tiempoMinimoActual: perfil.tiempoMinimoActual,
-          rachaPosiva: perfil.rachaPosiva,
+          rachaPositiva: perfil.rachaPositiva,
           rachaNegativa: perfil.rachaNegativa,
           diagnosticoCompletado: perfil.diagnosticoCompletado,
         },
