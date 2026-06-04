@@ -40,5 +40,44 @@ export class ProfesorController {
     if (!maestroId) throw new ForbiddenException('No se encontró el profesor.');
     return await this.profesorService.getAlumnosPorGrupo(maestroId, grupoId);
   }
+
+  @Get('libros/:libroId/alumnos')
+  @ApiOperation({ summary: 'Progreso de un libro con todos mis alumnos' })
+  @ApiParam({ name: 'libroId', type: 'number' })
+  @ApiResponse({ status: 200, description: 'Progreso del libro por alumno' })
+  async progresoLibro(
+    @Request() req: { user?: RequestUser },
+    @Param('libroId', ParseIntPipe) libroId: number,
+  ) {
+    const maestroId = req.user?.maestro?.id;
+    if (!maestroId) throw new ForbiddenException('No se encontró el profesor.');
+    return await this.profesorService.getProgresoLibro(maestroId, libroId);
+  }
+
+  @Get('alumnos/:alumnoId/libros')
+  @ApiOperation({ summary: 'Detalle libro por libro de un alumno de mis grupos' })
+  @ApiParam({ name: 'alumnoId', type: 'number' })
+  @ApiResponse({ status: 200, description: 'Libros del alumno con progreso' })
+  async detalleAlumnoLibros(
+    @Request() req: { user?: RequestUser },
+    @Param('alumnoId', ParseIntPipe) alumnoId: number,
+  ) {
+    const maestroId = req.user?.maestro?.id;
+    if (!maestroId) throw new ForbiddenException('No se encontró el profesor.');
+    return await this.profesorService.getDetalleAlumnoLibros(maestroId, alumnoId);
+  }
+
+  @Get('alumnos/:alumnoId/evaluaciones')
+  @ApiOperation({ summary: 'Detalle de evaluaciones de un alumno de mis grupos' })
+  @ApiParam({ name: 'alumnoId', type: 'number' })
+  @ApiResponse({ status: 200, description: 'Evaluaciones del alumno agrupadas por libro' })
+  async evaluacionesAlumno(
+    @Request() req: { user?: RequestUser },
+    @Param('alumnoId', ParseIntPipe) alumnoId: number,
+  ) {
+    const maestroId = req.user?.maestro?.id;
+    if (!maestroId) throw new ForbiddenException('No se encontró el profesor.');
+    return await this.profesorService.getEvaluacionesAlumno(maestroId, alumnoId);
+  }
 }
 

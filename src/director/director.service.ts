@@ -9,13 +9,35 @@ import { CrearGrupoDto } from './dto/crear-grupo.dto';
 import { ActualizarGrupoDto } from './dto/actualizar-grupo.dto';
 import { AuditService } from '../audit/audit.service';
 import type { AuditContext } from '../common/utils/audit.utils';
+import { EstadisticasProgresoService } from '../estadisticas/estadisticas-progreso.service';
 
 @Injectable()
 export class DirectorService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly estadisticas: EstadisticasProgresoService,
   ) {}
+
+  /** IDs (bigint) de los alumnos activos de la escuela. */
+  private async getAlumnoIdsDeEscuela(escuelaId: number): Promise<bigint[]> {
+    const alumnos = await this.prisma.alumno.findMany({
+      where: { escuelaId: BigInt(escuelaId), activo: true },
+      select: { id: true },
+    });
+    return alumnos.map((a) => a.id);
+  }
+
+  /** Lanza 403 si el alumno no pertenece a la escuela del director. */
+  private async verificarAlumnoDeEscuela(escuelaId: number, alumnoId: number): Promise<void> {
+    const alumno = await this.prisma.alumno.findFirst({
+      where: { id: BigInt(alumnoId), escuelaId: BigInt(escuelaId) },
+      select: { id: true },
+    });
+    if (!alumno) {
+      throw new ForbiddenException('Este alumno no pertenece a tu escuela.');
+    }
+  }
 
   async getDashboard(escuelaId: number) {
     const escuelaIdBig = BigInt(escuelaId);
@@ -26,16 +48,31 @@ export class DirectorService {
 
     if (!escuela) throw new NotFoundException('No se encontró la escuela del director');
 
-    const [totalEstudiantes, totalProfesores, librosDisponibles] = await Promise.all([
+    const [totalEstudiantes, totalProfesores, librosDisponibles, alumnoIds] = await Promise.all([
       this.prisma.alumno.count({ where: { escuelaId: escuelaIdBig } }),
       this.prisma.maestro.count({ where: { escuelaId: escuelaIdBig } }),
       this.prisma.escuelaLibro.count({ where: { escuelaId: escuelaIdBig, activo: true } }),
+      this.getAlumnoIdsDeEscuela(escuelaId),
     ]);
+
+    const agregados = await this.estadisticas.agregadosDeAlumnos(alumnoIds);
 
     return {
       message: 'Dashboard obtenido correctamente',
-      data: { escuela, totalEstudiantes, totalProfesores, librosDisponibles },
+      data: { escuela, totalEstudiantes, totalProfesores, librosDisponibles, agregados },
     };
+  }
+
+  /** #1 — Progreso de un libro con todos los alumnos de la escuela. */
+  async getProgresoLibro(escuelaId: number, libroId: number) {
+    const alumnoIds = await this.getAlumnoIdsDeEscuela(escuelaId);
+    return this.estadisticas.progresoLibroPorAlumnos(libroId, alumnoIds);
+  }
+
+  /** #3 — Detalle de evaluaciones de un alumno de la escuela. */
+  async getEvaluacionesAlumno(escuelaId: number, alumnoId: number) {
+    await this.verificarAlumnoDeEscuela(escuelaId, alumnoId);
+    return this.estadisticas.evaluacionesDeAlumno(alumnoId);
   }
 
   async listarGrupos(escuelaId: number) {

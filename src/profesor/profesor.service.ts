@@ -1,6 +1,7 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
+import { EstadisticasProgresoService } from '../estadisticas/estadisticas-progreso.service';
 
 function estadoActividad(ultimaActividad: Date | null): 'active' | 'warning' | 'alert' {
   if (!ultimaActividad) return 'alert';
@@ -13,7 +14,63 @@ function estadoActividad(ultimaActividad: Date | null): 'active' | 'warning' | '
 
 @Injectable()
 export class ProfesorService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly estadisticas: EstadisticasProgresoService,
+  ) {}
+
+  /** IDs de los grupos asignados al maestro. */
+  private async getGrupoIdsDelMaestro(maestroId: number): Promise<bigint[]> {
+    const asignaciones = await this.prisma.maestroGrupo.findMany({
+      where: { maestroId: BigInt(maestroId) },
+      select: { grupoId: true },
+    });
+    return Array.from(new Set(asignaciones.map((x) => x.grupoId)));
+  }
+
+  /** IDs (bigint) de alumnos activos en los grupos del maestro. */
+  private async getAlumnoIdsDelMaestro(maestroId: number): Promise<bigint[]> {
+    const grupoIds = await this.getGrupoIdsDelMaestro(maestroId);
+    if (grupoIds.length === 0) return [];
+    const alumnos = await this.prisma.alumno.findMany({
+      where: { grupoId: { in: grupoIds }, activo: true },
+      select: { id: true },
+    });
+    return alumnos.map((a) => a.id);
+  }
+
+  /** Lanza 403 si el alumno no pertenece a un grupo del maestro. */
+  private async verificarAlumnoDeMisGrupos(maestroId: number, alumnoId: number): Promise<void> {
+    const grupoIds = await this.getGrupoIdsDelMaestro(maestroId);
+    if (grupoIds.length === 0) {
+      throw new ForbiddenException('No tienes grupos asignados.');
+    }
+    const alumno = await this.prisma.alumno.findFirst({
+      where: { id: BigInt(alumnoId), grupoId: { in: grupoIds }, activo: true },
+      select: { id: true },
+    });
+    if (!alumno) {
+      throw new ForbiddenException('Este alumno no pertenece a tus grupos.');
+    }
+  }
+
+  /** #1 — Progreso de un libro con todos los alumnos de los grupos del maestro. */
+  async getProgresoLibro(maestroId: number, libroId: number) {
+    const alumnoIds = await this.getAlumnoIdsDelMaestro(maestroId);
+    return this.estadisticas.progresoLibroPorAlumnos(libroId, alumnoIds);
+  }
+
+  /** #2 — Detalle libro por libro de un alumno (validado que sea de sus grupos). */
+  async getDetalleAlumnoLibros(maestroId: number, alumnoId: number) {
+    await this.verificarAlumnoDeMisGrupos(maestroId, alumnoId);
+    return this.estadisticas.detalleLibrosDeAlumno(alumnoId);
+  }
+
+  /** #3 — Detalle de evaluaciones de un alumno (validado que sea de sus grupos). */
+  async getEvaluacionesAlumno(maestroId: number, alumnoId: number) {
+    await this.verificarAlumnoDeMisGrupos(maestroId, alumnoId);
+    return this.estadisticas.evaluacionesDeAlumno(alumnoId);
+  }
 
   async getGrupos(maestroId: number) {
     const asignaciones = await this.prisma.maestroGrupo.findMany({

@@ -148,6 +148,44 @@ export class DirectorController {
   }
 
   /**
+   * GET /director/libros/:libroId/alumnos
+   * Progreso de un libro con todos los alumnos de mi escuela.
+   */
+  @Get('libros/:libroId/alumnos')
+  @ApiTags('Solo Director')
+  @ApiOperation({ summary: 'Progreso de un libro con todos los alumnos de mi escuela' })
+  @ApiResponse({ status: 200, description: 'Progreso del libro por alumno' })
+  async getProgresoLibro(
+    @Request()
+    req: ExpressRequest & {
+      user?: { director?: { escuelaId?: number; escuela?: { id: number } } };
+    },
+    @Param('libroId', ParseIntPipe) libroId: number,
+  ) {
+    const escuelaId = getEscuelaId(req);
+    return await this.directorService.getProgresoLibro(escuelaId, libroId);
+  }
+
+  /**
+   * GET /director/alumnos/:alumnoId/evaluaciones
+   * Detalle de evaluaciones de un alumno de mi escuela.
+   */
+  @Get('alumnos/:alumnoId/evaluaciones')
+  @ApiTags('Solo Director')
+  @ApiOperation({ summary: 'Detalle de evaluaciones de un alumno de mi escuela' })
+  @ApiResponse({ status: 200, description: 'Evaluaciones del alumno agrupadas por libro' })
+  async getEvaluacionesAlumno(
+    @Request()
+    req: ExpressRequest & {
+      user?: { director?: { escuelaId?: number; escuela?: { id: number } } };
+    },
+    @Param('alumnoId', ParseIntPipe) alumnoId: number,
+  ) {
+    const escuelaId = getEscuelaId(req);
+    return await this.directorService.getEvaluacionesAlumno(escuelaId, alumnoId);
+  }
+
+  /**
    * PATCH /director/alumnos/:id
    * Cambiar el grupo de un alumno. Solo director, alumno de su escuela.
    */
