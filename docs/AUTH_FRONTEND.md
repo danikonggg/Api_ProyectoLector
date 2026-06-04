@@ -66,7 +66,7 @@ Inicia sesión y devuelve un `access_token` (corto) y un `refresh_token` (largo)
 | `access_token` | Úsalo en cada petición autenticada. Dura **2 días** |
 | `refresh_token` | Úsalo para renovar el `access_token` sin pedir contraseña. Dura **2 días** (sin rememberMe) o **50 días** (con rememberMe) |
 | `tipoPersona` | Puede ser: `alumno`, `maestro`, `director`, `administrador`, `padre` |
-
+ 
 ### Errores
 
 | Status | Mensaje | Causa |
