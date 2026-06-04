@@ -21,6 +21,11 @@ export function validateEnv(): void {
   }
 
   if (isProd) {
+    if (!refreshSecret) {
+      errors.push(
+        'JWT_REFRESH_SECRET es obligatorio en producción. Usar el mismo secreto que JWT_SECRET crea un único punto de falla.',
+      );
+    }
     if (!process.env.CORS_ORIGINS?.trim()) {
       errors.push('CORS_ORIGINS es obligatorio en producción.');
     }

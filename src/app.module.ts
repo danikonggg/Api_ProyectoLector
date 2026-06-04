@@ -29,6 +29,8 @@ import { NoopQueuesModule } from './queues/noop-queues.module';
 import { isRedisConfigured } from './config/redis-env';
 import { correlationIdMiddleware } from './common/middleware/correlation-id.middleware';
 import { buildLoggerParams } from './config/pino-logger.config';
+import { RolesGuard } from './auth/guards/roles.guard';
+import { GamificacionModule } from './gamificacion/gamificacion.module';
 
 @Module({
   imports: [
@@ -50,7 +52,8 @@ import { buildLoggerParams } from './config/pino-logger.config';
           {
             name: 'default',
             ttl: 60000,
-            limit: configService.get<number>('THROTTLE_LIMIT_PER_MIN', 2000),
+            // Reduced from 2000: prevents scraping/abuse while allowing normal usage
+            limit: configService.get<number>('THROTTLE_LIMIT_PER_MIN', 120),
           },
         ],
         getTracker: (req: Record<string, unknown>) => {
@@ -86,11 +89,13 @@ import { buildLoggerParams } from './config/pino-logger.config';
     AlumnoModule,
     ProfesorModule,
     EvaluacionModule,
+    GamificacionModule,
   ],
   controllers: [AppController],
   providers: [
     AppService,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: RolesGuard },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     {
       provide: APP_INTERCEPTOR,

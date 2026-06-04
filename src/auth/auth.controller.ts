@@ -18,6 +18,21 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { AdminGuard } from './guards/admin.guard';
 import { Public } from './decorators/public.decorator';
+import { Roles } from './decorators/roles.decorator';
+import { RequestUser } from '../common/interfaces/request-user.interface';
+
+type AuthRequest = Request & {
+  user: RequestUser;
+  ip?: string;
+  headers: Record<string, string | string[] | undefined>;
+};
+
+function extractIp(req: AuthRequest): string | undefined {
+  const fwd = req.headers['x-forwarded-for'];
+  const forwarded = Array.isArray(fwd) ? fwd[0] : fwd;
+  const ip = req.ip ?? forwarded ?? req.headers['x-real-ip'];
+  return typeof ip === 'string' ? ip : undefined;
+}
 
 @Controller('auth')
 export class AuthController {
@@ -58,17 +73,8 @@ export class AuthController {
     },
   })
   @ApiResponse({ status: 401, description: 'Credenciales inválidas' })
-  async login(
-    @Body() loginDto: LoginDto,
-    @Request() req: { ip?: string; headers?: Record<string, string | string[] | undefined> },
-  ) {
-    const ip =
-      req.ip ??
-      (Array.isArray(req.headers?.['x-forwarded-for'])
-        ? req.headers['x-forwarded-for'][0]
-        : req.headers?.['x-forwarded-for']) ??
-      req.headers?.['x-real-ip'];
-    return await this.authService.login(loginDto, typeof ip === 'string' ? ip : undefined);
+  async login(@Body() loginDto: LoginDto, @Request() req: AuthRequest) {
+    return this.authService.login(loginDto, extractIp(req));
   }
 
   /**
@@ -98,21 +104,8 @@ export class AuthController {
     },
   })
   @ApiResponse({ status: 401, description: 'Refresh token inválido o expirado' })
-  async refresh(
-    @Body() refreshTokenDto: RefreshTokenDto,
-    @Request() req: { ip?: string; headers?: Record<string, string | string[] | undefined> },
-  ) {
-    const ip =
-      req.ip ??
-      (Array.isArray(req.headers?.['x-forwarded-for'])
-        ? req.headers['x-forwarded-for'][0]
-        : req.headers?.['x-forwarded-for']) ??
-      req.headers?.['x-real-ip'];
-
-    return await this.authService.refreshAccessToken(
-      refreshTokenDto.refresh_token,
-      typeof ip === 'string' ? ip : undefined,
-    );
+  async refresh(@Body() refreshTokenDto: RefreshTokenDto, @Request() req: AuthRequest) {
+    return this.authService.refreshAccessToken(refreshTokenDto.refresh_token, extractIp(req));
   }
 
   /**
@@ -169,20 +162,8 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'No autenticado' })
   @ApiResponse({ status: 403, description: 'Solo administradores' })
   @ApiResponse({ status: 409, description: 'Email ya registrado o límite alcanzado' })
-  async registrarAdmin(
-    @Body() registroDto: RegistroAdminDto,
-    @Request() req: { ip?: string; headers?: Record<string, string | string[] | undefined> },
-  ) {
-    const ip =
-      req.ip ??
-      (Array.isArray(req.headers?.['x-forwarded-for'])
-        ? req.headers['x-forwarded-for'][0]
-        : req.headers?.['x-forwarded-for']) ??
-      req.headers?.['x-real-ip'];
-    return await this.authService.registrarAdmin(
-      registroDto,
-      typeof ip === 'string' ? ip : undefined,
-    );
+  async registrarAdmin(@Body() registroDto: RegistroAdminDto, @Request() req: AuthRequest) {
+    return this.authService.registrarAdmin(registroDto, extractIp(req));
   }
 
   /**
@@ -204,17 +185,8 @@ export class AuthController {
       },
     },
   })
-  async forgotPassword(
-    @Body() dto: ForgotPasswordDto,
-    @Request() req: { ip?: string; headers?: Record<string, string | string[] | undefined> },
-  ) {
-    const ip =
-      req.ip ??
-      (Array.isArray(req.headers?.['x-forwarded-for'])
-        ? req.headers['x-forwarded-for'][0]
-        : req.headers?.['x-forwarded-for']) ??
-      req.headers?.['x-real-ip'];
-    return await this.authService.forgotPassword(dto, typeof ip === 'string' ? ip : undefined);
+  async forgotPassword(@Body() dto: ForgotPasswordDto, @Request() req: AuthRequest) {
+    return this.authService.forgotPassword(dto, extractIp(req));
   }
 
   /**
@@ -229,17 +201,8 @@ export class AuthController {
   @ApiOperation({ summary: 'Restablecer contraseña con token' })
   @ApiResponse({ status: 200, description: 'Contraseña restablecida exitosamente' })
   @ApiResponse({ status: 400, description: 'Token inválido o expirado' })
-  async resetPassword(
-    @Body() dto: ResetPasswordDto,
-    @Request() req: { ip?: string; headers?: Record<string, string | string[] | undefined> },
-  ) {
-    const ip =
-      req.ip ??
-      (Array.isArray(req.headers?.['x-forwarded-for'])
-        ? req.headers['x-forwarded-for'][0]
-        : req.headers?.['x-forwarded-for']) ??
-      req.headers?.['x-real-ip'];
-    return await this.authService.resetPassword(dto, typeof ip === 'string' ? ip : undefined);
+  async resetPassword(@Body() dto: ResetPasswordDto, @Request() req: AuthRequest) {
+    return this.authService.resetPassword(dto, extractIp(req));
   }
 
   /**
@@ -252,7 +215,21 @@ export class AuthController {
   @ApiOperation({ summary: 'Obtener perfil del usuario autenticado' })
   @ApiResponse({ status: 200, description: 'Perfil del usuario' })
   @ApiResponse({ status: 401, description: 'No autenticado' })
-  async getProfile(@Request() req) {
-    return await this.authService.getProfile(req.user.id);
+  async getProfile(@Request() req: AuthRequest) {
+    return this.authService.getProfile(req.user.id);
+  }
+
+  /**
+   * POST /auth/logout
+   * Revokes the current refresh token, invalidating all sessions.
+   */
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('JWT-auth')
+  @ApiTags('Cualquier autenticado')
+  @ApiOperation({ summary: 'Cerrar sesión y revocar refresh token' })
+  @ApiResponse({ status: 200, description: 'Sesión cerrada correctamente' })
+  async logout(@Request() req: AuthRequest) {
+    return this.authService.logout(req.user.id);
   }
 }

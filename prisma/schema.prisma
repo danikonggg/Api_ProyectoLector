@@ -25,6 +25,7 @@ model Persona {
   ultimaConexion       DateTime? @map("ultima_conexion") @db.Timestamptz()
   resetPasswordToken   String?   @unique @map("reset_password_token") @db.VarChar(255)
   resetPasswordExpires DateTime? @map("reset_password_expires") @db.Timestamptz()
+  refreshTokenHash     String?   @map("refresh_token_hash") @db.VarChar(255)
 
   administrador Administrador?
   padre         Padre?
@@ -32,6 +33,9 @@ model Persona {
   maestro       Maestro?
   director      Director?
 
+  @@index([correo])
+  @@index([tipoPersona])
+  @@index([activo])
   @@map("Persona")
 }
 
@@ -71,12 +75,18 @@ model Alumno {
   escuela        Escuela                  @relation(fields: [escuelaId], references: [id])
   padre          Padre?                   @relation(fields: [padreId], references: [id])
   grupoEntidad   Grupo?                   @relation(fields: [grupoId], references: [id])
-  alumnoMaestros AlumnoMaestro[]
-  vinculaciones  AlumnoVinculacionPadre[]
-  alumnoLibros   AlumnoLibro[]
-  anotaciones    Anotacion[]
-  licencias      LicenciaLibro[]
+  alumnoMaestros  AlumnoMaestro[]
+  vinculaciones   AlumnoVinculacionPadre[]
+  alumnoLibros    AlumnoLibro[]
+  anotaciones     Anotacion[]
+  licencias       LicenciaLibro[]
+  insignias       AlumnoInsignia[]
+  progreso        AlumnoProgreso?
+  mapaLecturas    MapaLectura[]
 
+  @@index([escuelaId])
+  @@index([padreId])
+  @@index([activo])
   @@map("Alumno")
 }
 
@@ -93,6 +103,8 @@ model Maestro {
   alumnoMaestros AlumnoMaestro[]
   maestroGrupos  MaestroGrupo[]
 
+  @@index([escuelaId])
+  @@index([activo])
   @@map("Maestro")
 }
 
@@ -106,6 +118,8 @@ model Director {
   persona Persona @relation(fields: [personaId], references: [id])
   escuela Escuela @relation(fields: [escuelaId], references: [id])
 
+  @@index([escuelaId])
+  @@index([activo])
   @@map("Director")
 }
 
@@ -201,6 +215,7 @@ model Libro {
   anotaciones             Anotacion[]
   segmentos               Segmento[]
   preguntasSegmento       PreguntaSegmento[]
+  mapaLecturas            MapaLectura[]
 
   @@map("Libro")
 }
@@ -313,6 +328,8 @@ model AlumnoLibro {
   libro          Libro     @relation(fields: [libroId], references: [id], onDelete: Cascade)
   ultimoSegmento Segmento? @relation("ultimoSegmento", fields: [ultimoSegmentoId], references: [id], onDelete: SetNull)
 
+  @@unique([alumnoId, libroId])
+  @@index([libroId])
   @@map("Alumno_Libro")
 }
 
@@ -372,6 +389,8 @@ model AlumnoSegmentoEvaluacion {
   tiposError        Json?    @map("tipos_error")
   creadoEn          DateTime @default(now()) @map("creado_en") @db.Timestamptz()
 
+  @@index([alumnoId, libroId])
+  @@index([alumnoId, segmentoId])
   @@map("Alumno_Segmento_Evaluacion")
 }
 
@@ -492,6 +511,89 @@ model PreferenciasAlumno {
   actualizadoEn         DateTime @updatedAt @map("actualizado_en") @db.Timestamptz()
 
   @@map("Preferencias_Alumno")
+}
+
+// ============================================
+// GAMIFICACIÓN
+// ============================================
+
+model Insignia {
+  id          BigInt   @id @default(autoincrement())
+  clave       String   @unique @db.VarChar(60)
+  nombre      String   @db.VarChar(100)
+  descripcion String   @db.VarChar(255)
+  icono       String   @db.VarChar(100)
+  categoria   String   @db.VarChar(40)
+  activa      Boolean  @default(true)
+  creadoEn    DateTime @default(now()) @map("creado_en") @db.Timestamptz()
+
+  alumnoInsignias AlumnoInsignia[]
+
+  @@map("Insignia")
+}
+
+model AlumnoInsignia {
+  id          BigInt   @id @default(autoincrement())
+  alumnoId    BigInt   @map("alumno_id")
+  insigniaId  BigInt   @map("insignia_id")
+  obtenidaEn  DateTime @default(now()) @map("obtenida_en") @db.Timestamptz()
+  visto       Boolean  @default(false)
+
+  alumno   Alumno   @relation(fields: [alumnoId], references: [id], onDelete: Cascade)
+  insignia Insignia @relation(fields: [insigniaId], references: [id])
+
+  @@unique([alumnoId, insigniaId])
+  @@index([alumnoId])
+  @@map("Alumno_Insignia")
+}
+
+model NivelLector {
+  id          BigInt  @id @default(autoincrement())
+  nivel       Int     @unique
+  nombre      String  @db.VarChar(60)
+  puntosMin   Int     @map("puntos_min")
+  puntosMax   Int     @map("puntos_max")
+  icono       String  @db.VarChar(100)
+  color       String  @db.VarChar(20)
+
+  @@map("Nivel_Lector")
+}
+
+model AlumnoProgreso {
+  id                BigInt   @id @default(autoincrement())
+  alumnoId          BigInt   @unique @map("alumno_id")
+  puntosTotales     Int      @default(0) @map("puntos_totales")
+  nivelActual       Int      @default(1) @map("nivel_actual")
+  librosCompletados Int      @default(0) @map("libros_completados")
+  segmentosLeidos   Int      @default(0) @map("segmentos_leidos")
+  evaluacionesOk    Int      @default(0) @map("evaluaciones_ok")
+  rachaActual       Int      @default(0) @map("racha_actual")
+  rachaMasLarga     Int      @default(0) @map("racha_mas_larga")
+  ultimaActividad   DateTime? @map("ultima_actividad") @db.Timestamptz()
+  creadoEn          DateTime @default(now()) @map("creado_en") @db.Timestamptz()
+  actualizadoEn     DateTime @updatedAt @map("actualizado_en") @db.Timestamptz()
+
+  alumno Alumno @relation(fields: [alumnoId], references: [id], onDelete: Cascade)
+
+  @@map("Alumno_Progreso")
+}
+
+model MapaLectura {
+  id           BigInt   @id @default(autoincrement())
+  alumnoId     BigInt   @map("alumno_id")
+  libroId      BigInt   @map("libro_id")
+  segmentosIds Json     @map("segmentos_ids")
+  completados  Json     @default("[]")
+  porcentaje   Int      @default(0)
+  creadoEn     DateTime @default(now()) @map("creado_en") @db.Timestamptz()
+  actualizadoEn DateTime @updatedAt @map("actualizado_en") @db.Timestamptz()
+
+  alumno Alumno @relation(fields: [alumnoId], references: [id], onDelete: Cascade)
+  libro  Libro  @relation(fields: [libroId], references: [id], onDelete: Cascade)
+
+  @@unique([alumnoId, libroId])
+  @@index([alumnoId])
+  @@map("Mapa_Lectura")
 }
 
 // ============================================

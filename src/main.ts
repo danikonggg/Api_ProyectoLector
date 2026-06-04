@@ -1,5 +1,5 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, VersioningType, VERSION_NEUTRAL } from '@nestjs/common';
 import { Logger } from 'nestjs-pino';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import helmet from 'helmet';
@@ -7,16 +7,11 @@ import express from 'express';
 import { AppModule } from './app.module';
 import { validateEnv } from './config/env.validation';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
+import { BigIntSerializerInterceptor } from './common/interceptors/bigint-serializer.interceptor';
 import { initOpenTelemetry } from './infra/telemetry/otel-init';
 import './infra/telemetry/prometheus-metrics';
 
-/** Límite de tamaño del body para evitar payloads enormes (DoS) */
 const BODY_LIMIT = '1mb';
-
-// Serialización de BigInt para JSON (Prisma devuelve bigint en IDs)
-(BigInt.prototype as unknown as { toJSON: () => number }).toJSON = function () {
-  return Number(this);
-};
 
 async function bootstrap() {
   await initOpenTelemetry();
@@ -28,15 +23,40 @@ async function bootstrap() {
   });
   app.useLogger(app.get(Logger));
 
+  const isProd = process.env.NODE_ENV === 'production';
   app.use(
     helmet({
-      contentSecurityPolicy: false,
+      // CSP off in dev to allow Swagger UI assets; enforced in prod
+      contentSecurityPolicy: isProd
+        ? {
+            directives: {
+              defaultSrc: ["'self'"],
+              scriptSrc: ["'self'"],
+              styleSrc: ["'self'", "'unsafe-inline'"],
+              imgSrc: ["'self'", 'data:'],
+              connectSrc: ["'self'"],
+              fontSrc: ["'self'"],
+              objectSrc: ["'none'"],
+              frameSrc: ["'none'"],
+            },
+          }
+        : false,
+      crossOriginEmbedderPolicy: isProd,
     }),
   );
   app.use(express.json({ limit: BODY_LIMIT }));
   app.use(express.urlencoded({ extended: true, limit: BODY_LIMIT }));
 
+  // VERSION_NEUTRAL preserves existing routes (no /v1/ prefix).
+  // New controllers can opt in with @Controller({ version: '1' }).
+  app.enableVersioning({
+    type: VersioningType.URI,
+    defaultVersion: VERSION_NEUTRAL,
+    prefix: 'v',
+  });
+
   app.useGlobalFilters(new AllExceptionsFilter());
+  app.useGlobalInterceptors(new BigIntSerializerInterceptor());
 
   app.useGlobalPipes(
     new ValidationPipe({

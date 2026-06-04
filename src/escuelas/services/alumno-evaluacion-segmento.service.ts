@@ -4,6 +4,7 @@ import { LicenciasService } from '../../licencias/licencias.service';
 import { BancoPreguntasService } from '../../evaluacion/services/banco-preguntas.service';
 import { PerfilAprendizajeService } from '../../evaluacion/services/perfil-aprendizaje.service';
 import { NivelPregunta } from '../../libros/preguntas-segmento.service';
+import { GamificacionEngineService } from '../../gamificacion/services/gamificacion-engine.service';
 
 @Injectable()
 export class AlumnoEvaluacionSegmentoService {
@@ -15,6 +16,7 @@ export class AlumnoEvaluacionSegmentoService {
     private readonly licenciasService: LicenciasService,
     private readonly bancoPreguntasService: BancoPreguntasService,
     private readonly perfilService: PerfilAprendizajeService,
+    private readonly gamificacion: GamificacionEngineService,
   ) {}
 
   private async validarAcceso(alumnoId: number, libroId: number, segmentoId: number) {
@@ -135,6 +137,10 @@ export class AlumnoEvaluacionSegmentoService {
     // ✅ Actualiza el perfil adaptativo (sube/baja nivel según rachas)
     await this.perfilService.aplicarResultadoEvaluacion(alumnoIdBig, libroIdBig, aprobadoPrimerIntento, score);
 
+    // ✅ Gamificación: puntos, racha e insignias
+    const sinErrores = score === 100;
+    const gamificacionResult = await this.gamificacion.onEvaluacionAprobada(alumnoId, aprobado, sinErrores);
+
     return {
       message: 'Evaluacion registrada correctamente.',
       data: {
@@ -144,6 +150,7 @@ export class AlumnoEvaluacionSegmentoService {
         siguienteAccion: aprobado ? 'continuar' : 'refuerzo',
         apoyos,
         tiposError,
+        gamificacion: gamificacionResult,
       },
     };
   }

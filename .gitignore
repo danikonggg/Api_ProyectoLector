@@ -2,6 +2,12 @@
 /dist
 /node_modules
 
+# Prisma generated client (auto-generado con prisma generate)
+/generated
+
+# Build info
+*.tsbuildinfo
+
 # Logs
 logs
 *.log

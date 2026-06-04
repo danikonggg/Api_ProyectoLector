@@ -7,12 +7,14 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { CrearAnotacionDto } from '../dto/crear-anotacion.dto';
 import { LicenciasService } from '../../licencias/licencias.service';
+import { GamificacionEngineService } from '../../gamificacion/services/gamificacion-engine.service';
 
 @Injectable()
 export class AlumnoAnotacionesProgresoService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly licenciasService: LicenciasService,
+    private readonly gamificacion: GamificacionEngineService,
   ) {}
 
   private async libroAsignadoAlAlumno(alumnoId: number, libroId: number): Promise<boolean> {
@@ -114,18 +116,30 @@ export class AlumnoAnotacionesProgresoService {
     });
     if (!asignacion) throw new NotFoundException('No tienes asignado este libro.');
 
+    const porcentajeAnterior = asignacion.porcentaje;
+    const nuevoPorcentaje = dto.porcentaje !== undefined
+      ? Math.max(0, Math.min(100, dto.porcentaje))
+      : asignacion.porcentaje;
+
     const updated = await this.prisma.alumnoLibro.update({
       where: { id: asignacion.id },
       data: {
-        ...(dto.porcentaje !== undefined && {
-          porcentaje: Math.max(0, Math.min(100, dto.porcentaje)),
-        }),
+        porcentaje: nuevoPorcentaje,
         ...(dto.ultimoSegmentoId !== undefined && {
           ultimoSegmentoId: dto.ultimoSegmentoId != null ? BigInt(dto.ultimoSegmentoId) : null,
         }),
         ultimaLectura: new Date(),
       },
     });
+
+    // ✅ Gamificación: segmento leído y libro completado
+    let gamificacion = null;
+    if (dto.ultimoSegmentoId) {
+      gamificacion = await this.gamificacion.onSegmentoLeido(alumnoId, libroId, dto.ultimoSegmentoId);
+    }
+    if (nuevoPorcentaje === 100 && porcentajeAnterior < 100) {
+      gamificacion = await this.gamificacion.onLibroCompletado(alumnoId);
+    }
 
     return {
       message: 'Progreso actualizado correctamente.',
@@ -135,6 +149,7 @@ export class AlumnoAnotacionesProgresoService {
         progreso: updated.porcentaje,
         ultimoSegmentoId: updated.ultimoSegmentoId != null ? Number(updated.ultimoSegmentoId) : null,
         ultimaLectura: updated.ultimaLectura,
+        ...(gamificacion && { gamificacion }),
       },
     };
   }

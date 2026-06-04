@@ -1,5 +1,10 @@
-import { Injectable, UnauthorizedException, ConflictException, Logger, BadRequestException } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
+import {
+  Injectable,
+  UnauthorizedException,
+  ConflictException,
+  Logger,
+  BadRequestException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
@@ -10,83 +15,22 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { AuditService } from '../audit/audit.service';
 import { MailService } from '../mail/mail.service';
+import { TokenService } from './services/token.service';
+import { BUSINESS_RULES } from '../common/constants/business-rules.constants';
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
-  private readonly MAX_ADMINS = 3;
 
   constructor(
     private readonly prisma: PrismaService,
-    private jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly auditService: AuditService,
     private readonly mailService: MailService,
+    private readonly tokenService: TokenService,
   ) {}
 
-  private getAccessTokenTtl(): string {
-    return this.configService.get<string>('JWT_EXPIRES_IN', '2d');
-  }
-
-  private getRefreshTokenTtlLong(): string {
-    return this.configService.get<string>('JWT_REFRESH_EXPIRES_IN', '50d');
-  }
-
-  private getRefreshTokenTtlShort(): string {
-    return this.configService.get<string>('JWT_REFRESH_EXPIRES_IN_SHORT', '2d');
-  }
-
-  private getRefreshTokenSecret(): string {
-    return this.configService.get<string>('JWT_REFRESH_SECRET')?.trim() ||
-      this.configService.getOrThrow<string>('JWT_SECRET');
-  }
-
-  private buildTokenPayload(persona: {
-    id: bigint;
-    correo: string | null;
-    tipoPersona: string | null;
-  }) {
-    return {
-      sub: Number(persona.id),
-      email: persona.correo ?? undefined,
-      tipoPersona: persona.tipoPersona ?? undefined,
-    };
-  }
-
-  private generateTokenPair(persona: {
-    id: bigint;
-    correo: string | null;
-    tipoPersona: string | null;
-  }, rememberMe = false) {
-    const payload = this.buildTokenPayload(persona);
-    const refreshExpiresIn = rememberMe
-      ? this.getRefreshTokenTtlLong()
-      : this.getRefreshTokenTtlShort();
-
-    const accessToken = this.jwtService.sign(payload, {
-      expiresIn: this.getAccessTokenTtl(),
-    });
-
-    const refreshToken = this.jwtService.sign(
-      {
-        ...payload,
-        tokenType: 'refresh',
-        rememberMe,
-      },
-      {
-        secret: this.getRefreshTokenSecret(),
-        expiresIn: refreshExpiresIn,
-      },
-    );
-
-    return {
-      accessToken,
-      refreshToken,
-      accessExpiresIn: this.getAccessTokenTtl(),
-      refreshExpiresIn,
-      rememberMe,
-    };
-  }
+  // ─── Login ────────────────────────────────────────────────────────────────
 
   async login(loginDto: LoginDto, ip?: string) {
     this.logger.log(`Intento de login: ${loginDto.email}`);
@@ -102,77 +46,43 @@ export class AuthService {
       },
     });
 
-    if (!persona) {
-      this.logger.warn(`Login fallido: Usuario no encontrado - ${loginDto.email}`);
+    if (!persona || !(await bcrypt.compare(loginDto.password, persona.password ?? ''))) {
       await this.auditService.log('login_fallido', {
-        usuarioId: null,
+        usuarioId: persona ? Number(persona.id) : null,
         ip: ip ?? null,
-        detalles: `usuario_no_encontrado | ${loginDto.email}`,
-      });
-      throw new UnauthorizedException('Credenciales inválidas');
-    }
-
-    const isPasswordValid = await bcrypt.compare(loginDto.password, persona.password ?? '');
-
-    if (!isPasswordValid) {
-      this.logger.warn(`Login fallido: Contraseña incorrecta - ${loginDto.email}`);
-      await this.auditService.log('login_fallido', {
-        usuarioId: Number(persona.id),
-        ip: ip ?? null,
-        detalles: `contraseña_incorrecta | ${persona.correo}`,
+        detalles: persona ? 'contraseña_incorrecta' : `usuario_no_encontrado | ${loginDto.email}`,
       });
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
     if (!persona.activo) {
-      this.logger.warn(`Login fallido: Usuario inactivo - ${loginDto.email}`);
       await this.auditService.log('login_fallido', {
         usuarioId: Number(persona.id),
         ip: ip ?? null,
-        detalles: `usuario_inactivo | ${persona.correo}`,
+        detalles: 'usuario_inactivo',
       });
       throw new UnauthorizedException('Usuario inactivo');
     }
 
-    const escuelaInactivaMsg = 'Tu escuela no está activa. Contacta al administrador.';
-    if (persona.director) {
-      const d = persona.director as typeof persona.director & { escuela?: { estado?: string } };
-      if (!d.activo || (d as any).escuela?.estado === 'inactiva' || (d as any).escuela?.estado === 'suspendida') {
-        await this.auditService.log('login_fallido', { usuarioId: Number(persona.id), ip: ip ?? null, detalles: `escuela_inactiva | ${persona.correo}` });
-        throw new UnauthorizedException(escuelaInactivaMsg);
-      }
-    }
-    if (persona.maestro) {
-      const m = persona.maestro as any;
-      if (!m.activo || m.escuela?.estado === 'inactiva' || m.escuela?.estado === 'suspendida') {
-        await this.auditService.log('login_fallido', { usuarioId: Number(persona.id), ip: ip ?? null, detalles: `escuela_inactiva | ${persona.correo}` });
-        throw new UnauthorizedException(escuelaInactivaMsg);
-      }
-    }
-    if (persona.alumno) {
-      const a = persona.alumno as any;
-      if (!a.activo || a.escuela?.estado === 'inactiva' || a.escuela?.estado === 'suspendida') {
-        await this.auditService.log('login_fallido', { usuarioId: Number(persona.id), ip: ip ?? null, detalles: `escuela_inactiva | ${persona.correo}` });
-        throw new UnauthorizedException(escuelaInactivaMsg);
-      }
-    }
+    this.assertEscuelaActiva(persona);
 
-    const tokens = this.generateTokenPair(persona, Boolean(loginDto.rememberMe));
+    const tokens = await this.tokenService.generateTokenPair(persona, Boolean(loginDto.rememberMe));
 
     this.logger.log(
-      `Login exitoso: ${persona.nombre} ${persona.apellidoPaterno} (${persona.tipoPersona}) - ID: ${persona.id}`,
+      `Login exitoso: ${persona.nombre} ${persona.apellidoPaterno} (${persona.tipoPersona}) ID:${persona.id}`,
     );
 
-    await this.auditService.log('login', {
-      usuarioId: Number(persona.id),
-      ip: ip ?? null,
-      detalles: persona.correo,
-    });
-
-    await this.prisma.persona.update({
-      where: { id: persona.id },
-      data: { ultimaConexion: new Date() },
-    });
+    await Promise.all([
+      this.auditService.log('login', {
+        usuarioId: Number(persona.id),
+        ip: ip ?? null,
+        detalles: persona.correo,
+      }),
+      this.prisma.persona.update({
+        where: { id: persona.id },
+        data: { ultimaConexion: new Date() },
+      }),
+    ]);
 
     return {
       message: 'Login exitoso',
@@ -195,40 +105,24 @@ export class AuthService {
     };
   }
 
-  async refreshAccessToken(refreshToken: string, ip?: string) {
-    type RefreshPayload = {
-      sub: number;
-      email?: string;
-      tipoPersona?: string;
-      tokenType?: string;
-      rememberMe?: boolean;
-    };
+  // ─── Refresh ───────────────────────────────────────────────────────────────
 
-    let payload: RefreshPayload;
+  async refreshAccessToken(refreshToken: string, ip?: string) {
+    let verified: Awaited<ReturnType<TokenService['verifyAndConsumeRefreshToken']>>;
+
     try {
-      payload = this.jwtService.verify<RefreshPayload>(refreshToken, {
-        secret: this.getRefreshTokenSecret(),
-      });
-    } catch {
+      verified = await this.tokenService.verifyAndConsumeRefreshToken(refreshToken);
+    } catch (err) {
       await this.auditService.log('refresh_fallido', {
         usuarioId: null,
         ip: ip ?? null,
-        detalles: 'token_refresh_invalido',
+        detalles: err instanceof Error ? err.message : 'token_refresh_invalido',
       });
-      throw new UnauthorizedException('Refresh token inválido o expirado');
+      throw err;
     }
 
-    if (payload.tokenType !== 'refresh' || payload.sub == null) {
-      await this.auditService.log('refresh_fallido', {
-        usuarioId: payload?.sub ?? null,
-        ip: ip ?? null,
-        detalles: 'tipo_token_invalido',
-      });
-      throw new UnauthorizedException('Refresh token inválido');
-    }
-
-    const persona = await this.prisma.persona.findFirst({
-      where: { id: BigInt(payload.sub) },
+    const persona = await this.prisma.persona.findUnique({
+      where: { id: BigInt(verified.storedPersonaId) },
       include: {
         administrador: true,
         padre: true,
@@ -239,39 +133,12 @@ export class AuthService {
     });
 
     if (!persona || !persona.activo) {
-      await this.auditService.log('refresh_fallido', {
-        usuarioId: payload.sub,
-        ip: ip ?? null,
-        detalles: 'usuario_invalido_o_inactivo',
-      });
       throw new UnauthorizedException('Usuario no autorizado para refrescar sesión');
     }
 
-    const escuelaInactivaMsg = 'Tu escuela no está activa. Contacta al administrador.';
-    if (persona.director) {
-      const d = persona.director as typeof persona.director & { escuela?: { estado?: string } };
-      if (
-        !d.activo ||
-        (d as any).escuela?.estado === 'inactiva' ||
-        (d as any).escuela?.estado === 'suspendida'
-      ) {
-        throw new UnauthorizedException(escuelaInactivaMsg);
-      }
-    }
-    if (persona.maestro) {
-      const m = persona.maestro as any;
-      if (!m.activo || m.escuela?.estado === 'inactiva' || m.escuela?.estado === 'suspendida') {
-        throw new UnauthorizedException(escuelaInactivaMsg);
-      }
-    }
-    if (persona.alumno) {
-      const a = persona.alumno as any;
-      if (!a.activo || a.escuela?.estado === 'inactiva' || a.escuela?.estado === 'suspendida') {
-        throw new UnauthorizedException(escuelaInactivaMsg);
-      }
-    }
+    this.assertEscuelaActiva(persona);
 
-    const tokens = this.generateTokenPair(persona, Boolean(payload.rememberMe));
+    const tokens = await this.tokenService.generateTokenPair(persona, Boolean(verified.rememberMe));
 
     await this.auditService.log('refresh_ok', {
       usuarioId: Number(persona.id),
@@ -291,6 +158,15 @@ export class AuthService {
     };
   }
 
+  // ─── Logout ────────────────────────────────────────────────────────────────
+
+  async logout(userId: number): Promise<{ message: string }> {
+    await this.tokenService.revokeAllTokens(userId);
+    return { message: 'Sesión cerrada correctamente' };
+  }
+
+  // ─── Admin registration ────────────────────────────────────────────────────
+
   async registrarPrimerAdmin(registroDto: RegistroAdminDto) {
     const cantidadAdmins = await this.prisma.administrador.count();
     if (cantidadAdmins > 0) {
@@ -298,7 +174,7 @@ export class AuthService {
         'Ya existe al menos un administrador. Usa el endpoint /auth/registro-admin con autenticación.',
       );
     }
-    return await this.registrarAdmin(registroDto);
+    return this.registrarAdmin(registroDto);
   }
 
   async registrarAdmin(registroDto: RegistroAdminDto, ip?: string) {
@@ -306,9 +182,9 @@ export class AuthService {
 
     const cantidadAdmins = await this.prisma.administrador.count();
 
-    if (cantidadAdmins >= this.MAX_ADMINS) {
+    if (cantidadAdmins >= BUSINESS_RULES.MAX_ADMINS) {
       throw new ConflictException(
-        `Ya se han registrado los ${this.MAX_ADMINS} administradores permitidos.`,
+        `Ya se han registrado los ${BUSINESS_RULES.MAX_ADMINS} administradores permitidos.`,
       );
     }
 
@@ -318,12 +194,13 @@ export class AuthService {
     });
 
     if (personaExistente) {
-      this.logger.warn(`Registro fallido: Email ya registrado - ${registroDto.email}`);
       throw new ConflictException('El email ya está registrado');
     }
 
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(registroDto.password, saltRounds);
+    const hashedPassword = await bcrypt.hash(
+      registroDto.password,
+      BUSINESS_RULES.BCRYPT_SALT_ROUNDS,
+    );
 
     const personaGuardada = await this.prisma.persona.create({
       data: {
@@ -333,21 +210,20 @@ export class AuthService {
         correo: registroDto.email,
         password: hashedPassword,
         telefono: registroDto.telefono,
-        fechaNacimiento: registroDto.fechaNacimiento ? new Date(registroDto.fechaNacimiento) : null,
+        fechaNacimiento: registroDto.fechaNacimiento
+          ? new Date(registroDto.fechaNacimiento)
+          : null,
         tipoPersona: 'administrador',
         activo: true,
       },
     });
 
     const administrador = await this.prisma.administrador.create({
-      data: {
-        personaId: personaGuardada.id,
-        fechaAlta: new Date(),
-      },
+      data: { personaId: personaGuardada.id, fechaAlta: new Date() },
     });
 
     this.logger.log(
-      `Administrador creado exitosamente: ${personaGuardada.nombre} ${personaGuardada.apellidoPaterno} - ID: ${personaGuardada.id}`,
+      `Administrador creado: ${personaGuardada.nombre} ${personaGuardada.apellidoPaterno} ID:${personaGuardada.id}`,
     );
 
     await this.auditService.log('registro_admin', {
@@ -356,18 +232,20 @@ export class AuthService {
       detalles: personaGuardada.correo,
     });
 
-    const result = { ...personaGuardada } as Record<string, unknown>;
-    delete result.password;
+    const { password: _pw, ...personaSinPassword } = personaGuardada as typeof personaGuardada & {
+      password?: string;
+    };
+    void _pw;
+
     return {
       message: 'Administrador registrado exitosamente',
-      description: `El administrador ha sido creado correctamente. Total de administradores: ${cantidadAdmins + 1}/${this.MAX_ADMINS}`,
-      data: result,
-      administrador: {
-        id: Number(administrador.id),
-        fechaAlta: administrador.fechaAlta,
-      },
+      description: `El administrador ha sido creado. Total: ${cantidadAdmins + 1}/${BUSINESS_RULES.MAX_ADMINS}`,
+      data: personaSinPassword,
+      administrador: { id: Number(administrador.id), fechaAlta: administrador.fechaAlta },
     };
   }
+
+  // ─── Password reset ────────────────────────────────────────────────────────
 
   async forgotPassword(dto: ForgotPasswordDto, ip?: string) {
     const persona = await this.prisma.persona.findFirst({
@@ -375,15 +253,15 @@ export class AuthService {
       select: { id: true, nombre: true, correo: true, activo: true },
     });
 
-    // Respuesta genérica para no revelar si el correo existe o no
     const genericResponse = {
-      message: 'Si el correo existe en nuestro sistema, recibirás un enlace para restablecer tu contraseña.',
+      message:
+        'Si el correo existe en nuestro sistema, recibirás un enlace para restablecer tu contraseña.',
     };
 
     if (!persona || !persona.activo) return genericResponse;
 
     const token = crypto.randomBytes(32).toString('hex');
-    const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
+    const expires = new Date(Date.now() + BUSINESS_RULES.RESET_PASSWORD_TTL_MS);
 
     await this.prisma.persona.update({
       where: { id: persona.id },
@@ -401,7 +279,6 @@ export class AuthService {
       detalles: persona.correo,
     });
 
-    this.logger.log(`Solicitud de recuperación de contraseña: ${dto.email}`);
     return genericResponse;
   }
 
@@ -419,7 +296,7 @@ export class AuthService {
       throw new BadRequestException('El token ha expirado. Solicita uno nuevo.');
     }
 
-    const hashedPassword = await bcrypt.hash(dto.nuevaPassword, 10);
+    const hashedPassword = await bcrypt.hash(dto.nuevaPassword, BUSINESS_RULES.BCRYPT_SALT_ROUNDS);
 
     await this.prisma.persona.update({
       where: { id: persona.id },
@@ -427,6 +304,7 @@ export class AuthService {
         password: hashedPassword,
         resetPasswordToken: null,
         resetPasswordExpires: null,
+        refreshTokenHash: null, // Invalidate all sessions on password reset
       },
     });
 
@@ -436,16 +314,19 @@ export class AuthService {
       detalles: persona.correo,
     });
 
-    // Enviar confirmación — si falla el correo no rompemos el flujo
     try {
-      await this.mailService.sendPasswordChangedEmail(persona.correo!, persona.nombre ?? 'usuario');
+      await this.mailService.sendPasswordChangedEmail(
+        persona.correo!,
+        persona.nombre ?? 'usuario',
+      );
     } catch (err) {
-      this.logger.warn(`No se pudo enviar el correo de confirmación a ${persona.correo}: ${err}`);
+      this.logger.warn(`No se pudo enviar confirmación a ${persona.correo}: ${err}`);
     }
 
-    this.logger.log(`Contraseña restablecida exitosamente para: ${persona.correo}`);
     return { message: 'Contraseña restablecida exitosamente. Ya puedes iniciar sesión.' };
   }
+
+  // ─── Profile ───────────────────────────────────────────────────────────────
 
   async getProfile(userId: number) {
     const persona = await this.prisma.persona.findUnique({
@@ -476,5 +357,31 @@ export class AuthService {
       description: 'Información del usuario autenticado',
       data: persona,
     };
+  }
+
+  // ─── Private helpers ───────────────────────────────────────────────────────
+
+  private assertEscuelaActiva(persona: {
+    correo: string | null;
+    id: bigint;
+    director?: { activo: boolean; escuela?: { estado?: string } } | null;
+    maestro?: { activo: boolean; escuela?: { estado?: string } } | null;
+    alumno?: { activo: boolean; escuela?: { estado?: string } } | null;
+  }): void {
+    const ESTADOS_INACTIVOS = ['inactiva', 'suspendida'];
+    const msg = 'Tu escuela no está activa. Contacta al administrador.';
+
+    for (const rol of ['director', 'maestro', 'alumno'] as const) {
+      const member = persona[rol] as
+        | { activo: boolean; escuela?: { estado?: string } }
+        | null
+        | undefined;
+      if (
+        member &&
+        (!member.activo || ESTADOS_INACTIVOS.includes(member.escuela?.estado ?? ''))
+      ) {
+        throw new UnauthorizedException(msg);
+      }
+    }
   }
 }

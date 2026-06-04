@@ -6,7 +6,10 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { RolesGuard } from './guards/roles.guard';
 import { JwtPersonaLoaderService } from './services/jwt-persona-loader.service';
+import { TokenService } from './services/token.service';
+import { AuthorizationService } from '../common/services/authorization.service';
 import { MailModule } from '../mail/mail.module';
 
 @Module({
@@ -26,7 +29,23 @@ import { MailModule } from '../mail/mail.module';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, JwtAuthGuard, JwtPersonaLoaderService],
-  exports: [AuthService, JwtModule, JwtAuthGuard, JwtPersonaLoaderService],
+  providers: [
+    AuthService,
+    TokenService,
+    JwtStrategy,
+    JwtAuthGuard,
+    RolesGuard,
+    JwtPersonaLoaderService,
+    AuthorizationService,
+  ],
+  exports: [
+    AuthService,
+    TokenService,
+    JwtModule,
+    JwtAuthGuard,
+    RolesGuard,
+    JwtPersonaLoaderService,
+    AuthorizationService,
+  ],
 })
 export class AuthModule {}
